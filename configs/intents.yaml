@@ -256,6 +256,10 @@ intents:
   query_nearest_waypoint: { id: G50, keywords: ["最近的航点是哪个", "离我最近的航点"], slots: [], route: fastpath, auth: L0 }
   query_distance_to: { id: G51, keywords: ["去那里有多远", "到那里要多久"], slots: [waypoint], route: fastpath, auth: L0 }
   query_route_length: { id: G52, keywords: ["路径有多长", "路线有多长"], slots: [route], route: fastpath, auth: L0 }
+  # G53 (2026-11-06, 99 U149): "X在哪" -- a named place, answered by the PTP
+  # rule layer (the keyword leg carries no name); before it "返航终点站在哪"
+  # matched B08 and dispatched a return.
+  query_waypoint_location: { id: G53, keywords: ["那个航点在哪里"], slots: [waypoint], route: fastpath, auth: L0 }
 
   # -- H 系统 (H01/H03 carry auth_by_slot; see header) --
   run_bit: { id: H01, keywords: ["做个自检", "自检一下", "检查系统", "做个深度自检", "全面检查一遍"], slots: [scope], route: fastpath, auth: L1a, auth_by_slot: { scope: { quick: L1a, deep: L2 } } }

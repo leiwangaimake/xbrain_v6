@@ -46,7 +46,7 @@ import math  # hypot / ceil
 from typing import Any, Callable, Dict, List, Mapping, Optional, Tuple  # plain value types
 
 from xbrain.common.geo.goto_plan import RouteGeom, plan_goto  # the U127 plan P3 drives
-from xbrain.common.geo.polyline import Plane, Polyline  # shared geometry
+from xbrain.common.geo.polyline import Plane, Polyline, distance_to_route_m  # shared geometry
 from xbrain.p4_agent.slots.name_slots import canonical_name  # 一号 == 1号
 
 #: (template key, format fields) -- the orchestrator owns the spoken strings.
@@ -125,6 +125,31 @@ def _spoken_time(seconds: float) -> str:
     return "约%d分钟" % int(math.ceil(seconds / 60.0))  # whole minutes, up
 
 
+def _where(name: str, points: List[Mapping], routes: List[Mapping],
+           here: Optional[Tuple[float, float]], limit: float) -> Answer:
+    """G53 (99 U149): a waypoint -> the routes it belongs to (the U127 rule,
+    the same one P3 navigates by) plus the straight distance from the robot
+    when there is a position; a route -> how far its nearest point is.
+    Without a position the membership is still answered (it needs none)."""
+    target = _find(points, name)  # a keypoint first
+    if target is not None:
+        p = (float(target["lat"]), float(target["lon"]))  # where it is
+        on = [str(r.get("name")) for r in routes
+              if distance_to_route_m(p, _ll(r), r.get("loop_mode") == "closed") <= limit]  # U127 membership
+        dist = "" if here is None else ", 离你直线约%d米" % int(round(_straight_m(here, p)))  # optional tail
+        if on:
+            return "where_on_routes", {"name": target.get("name"), "routes": ",".join(on),
+                                       "dist": dist}
+        return "where_off_routes", {"name": target.get("name"), "dist": dist}
+    route = _find(routes, name)  # then a route
+    if route is not None:
+        if here is None:  # its distance needs a position
+            return "no_pose", {}
+        d = distance_to_route_m(here, _ll(route), route.get("loop_mode") == "closed")  # to the nearest point
+        return "where_route", {"name": route.get("name"), "dist": int(round(d))}
+    return "not_found", {"name": name}  # neither: say what was looked for
+
+
 def make_geo_query_fn(membership_m: float) -> Callable[..., Answer]:
     """fn(kind, name, objects, pose, mode) -> (template key, fields).
 
@@ -148,6 +173,8 @@ def make_geo_query_fn(membership_m: float) -> Callable[..., Answer]:
             poly = Polyline([plane.xy(p) for p in line], route.get("loop_mode") == "closed")  # metres
             return "route_length", {"route": route.get("name"), "length": int(round(poly.length))}  # metres
         here = _robot(pose)  # the robot now
+        if kind == "where":  # G53 (99 U149): where is X
+            return _where(name, points, routes, here, limit)  # its routes, and how far
         if here is None:  # no position
             return "no_pose", {}  # cannot measure from nowhere
         if kind == "nearest_point":  # G50

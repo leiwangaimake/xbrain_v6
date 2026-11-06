@@ -147,3 +147,51 @@ def test_an_enveloped_pose_is_read():  # 2026-11-05 runtime test
     assert _Q("nearest_point", "", _objects(), env, None)[0] == "nearest_point"  # measured
     assert _Q("distance_to", "1号测试点", _objects(), env, {"v": 1, "data": _MODE})[1]["dist"] == 141  # measured
 
+
+# -- 99 U149 G53: "X在哪" -------------------------------------------------------
+@pytest.mark.parametrize("name,pose,key,fields", [
+    ("1号测试点", _POSE, "where_on_routes", {"routes": "1号路径", "dist": ", 离你直线约130米"}),  # on the route
+    ("东门岗亭", _POSE, "where_off_routes", {"dist": ", 离你直线约38米"}),  # 40 m off it
+    ("1号测试点", None, "where_on_routes", {"routes": "1号路径", "dist": ""}),  # no position: membership only
+    ("1号路径", _POSE, "where_route", {"dist": 8}),  # a route: its nearest point
+    ("西门", _POSE, "not_found", {"name": "西门"}),  # unknown
+])
+def test_where_answers(name, pose, key, fields):  # G53
+    """MUTATION: use a 50 m membership -> 东门岗亭 on the route -> red; demand
+    a position for membership -> no_pose without a pose -> red."""
+    k, f = _Q("where", name, _objects(), pose, None)  # the question
+    assert k == key and all(f[x] == v for x, v in fields.items())  # the answer
+
+
+@pytest.mark.parametrize("text,want", [
+    ("返航终点站在哪", ("where", "返航终点站")), ("1号测试点在哪里", ("where", "1号测试点")),
+    ("东门岗亭在什么地方", ("where", "东门岗亭")), ("请问1号路径在哪儿", ("where", "1号路径")),
+    ("我在哪", None), ("机器人在哪里", None), ("充电桩在哪", None),  # G01 / G23 keep theirs
+    ("这里在哪", None),  # deictic
+    ("1号测试点在哪条路径上", ("point_routes", "1号测试点")),  # G49 stays G49
+])
+def test_where_rule_layer(text, want):  # parse
+    """MUTATION: claim "我在哪" -> G01 lost -> red; check G53 before G49 ->
+    the route question becomes a where -> red."""
+    got = parse_ptp(text)  # one parse
+    assert (None if got is None else (got.kind, got.name)) == want
+
+
+def test_a_where_question_never_dispatches_a_return():  # the bench defect
+    """2026-11-06 bench: "返航终点站在哪" matched B08 and sent a return task.
+    MUTATION: drop the G53 rule -> B08, a cmd/task frame -> red."""
+    objs = _objects()  # add the home point the operator asked about
+    objs["waypoints"].append({"geo_id": "w-h", "name": "返航终点站", "state": "active", **_ll(0, 2)})
+    with open(os.path.join(_CONFIGS, "intents.yaml"), encoding="utf-8") as fh:
+        reg = load_intent_registry(yaml.safe_load(fh))
+    with open(os.path.join(_CONFIGS, "chitchat.yaml"), encoding="utf-8") as fh:
+        cc = ChitchatResponder(yaml.safe_load(fh))
+    state = {"state/geo/objects": objs, "state/pose": _POSE, "state/mode": _MODE,
+             "state/geo/manifest": {"items": [{"type": "waypoint", "geo_id": "w-h",
+                                                "name": "返航终点站", "state": "active"}]}}
+    orch = build_orchestrator(reg, cc, tier2_fn=None, state_fn=lambda: state, geo_query_fn=_Q)
+    d = orch.handle_turn("返航终点站在哪", OrchestratorSession(), 1000, channel="mic_local")
+    frames = [k for k, _ in decision_to_publishes(d) if k != "cmd/audio/speak"]
+    assert d.intent_id == "G53" and not frames  # answered, nothing sent
+    assert d.tts_text == "返航终点站在1号路径上, 离你直线约21米"  # (20,8) -> (0,2)
+

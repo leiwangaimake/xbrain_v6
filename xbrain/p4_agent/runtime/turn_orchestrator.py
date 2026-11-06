@@ -233,6 +233,10 @@ _PTP_CN = {
     "distance_route": "去{name}约{dist}米, 沿{route}走{time}",
     "distance_straight": "去{name}直线约{dist}米{time}",
     "route_length": "{route}全长约{length}米",
+    # 99 U149: G53 "X在哪"; {dist} is ", 离你直线约N米" or "" without a position.
+    "where_on_routes": "{name}在{routes}上{dist}",
+    "where_off_routes": "{name}不在任何路径上{dist}",
+    "where_route": "{name}离你最近约{dist}米",
     "no_pose": "现在拿不到定位, 算不出距离",
 }
 
@@ -258,7 +262,7 @@ _REC_STARTS = frozenset({"record_route_start", "record_fence_start"})
 
 #: 99 U136: rule-parsed geometry questions -> their G ids.
 _GEO_QUERY_IDS = {"nearest_point": "G50", "distance_to": "G51",
-                  "route_length": "G52"}
+                  "route_length": "G52", "where": "G53"}  # G53: 99 U149
 
 #: F06 / F10: the captures whose name must follow their keyword.
 _CAPTURE_INTENTS = frozenset({"record_waypoint", "record_dock"})
@@ -1167,7 +1171,7 @@ class TurnOrchestrator:
         rec = self._recording()
         if rec is not None and ptp.kind not in ("route_points", "point_routes",
                                                 "nearest_point", "distance_to",
-                                                "route_length"):
+                                                "route_length", "where"):
             # 99 U133: go / patrol / delete / rename are control commands
             return self._rec_reply("B01", "busy", "ptp_rule", name=rec["name"])
         if ptp.kind == "goto":
