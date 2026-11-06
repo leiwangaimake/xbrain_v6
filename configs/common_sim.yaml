@@ -58,11 +58,9 @@ common:
   #   cmdset.version 的 v1.0-sim 不再需要: 真机值 1.0.0 取自 16 逐字, 仿真没有
   #   要与之区分的理由(本键是标签, 不进任何判定).
   fence:
-    margin_by_fix:
-      dgps: 1.5
-      rtk_fixed: 0.5
-      rtk_float: 1.0
-      single: 3.0
+    # margin_by_fix: removed 2026-11-06 (99 U142) -- the real common.yaml now
+    #   carries the four values, and a variant may only fill keys that are
+    #   null there (10 S5.4.7).
     predict_dt_s: 0.45         # 12 S7.3: t_lat_s 0.4 + one 20 Hz tick (S-4a lower bound)
     soft_margin_min_m: 2.0     # 11 S9A.6 declared floor of the soft band
   motion:

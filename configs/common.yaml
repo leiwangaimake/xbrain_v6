@@ -274,11 +274,14 @@ common:
     #   读者: P1 围栏内缩 / P2 U34 降级判定 / HMI 三线叠加.
     #   TODO(11 V-03 与 U-01): 取值待车体半宽与道路宽度确定; 落值后其单调性由
     #     12 S12.1 S-6 断言 (定位越差内缩越大), 落值时必须让四项满足该单调性.
+    #   99 U142 用户裁决 2026-11-06 落值 (单调: 0.3 <= 1.0 <= 1.5 <= 3.0, S-6).
+    #     dgps 1.5 = rtk_driver dgps_h_m 标称 1 sigma; 4 m 路两侧各缩 1.5 余 1 m.
+    #     single 不参与自主运动, 值只为满足单调性. 现场量过路宽 (U-01) 后复核.
     margin_by_fix:
-      rtk_fixed: null
-      rtk_float: null
-      dgps: null
-      single: null
+      rtk_fixed: 0.3
+      rtk_float: 1.0
+      dgps: 1.5
+      single: 3.0
 
     # soft_margin_min_m / predict_dt_s: 软围栏最小带宽与预测步长.
     #   读者: P1 软围栏 / P3 录制校验 / HMI 绘制.

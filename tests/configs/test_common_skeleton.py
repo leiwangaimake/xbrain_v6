@@ -577,6 +577,15 @@ _LANDED = {
     # listen endpoints of configs/zenoh/router_rt.json5 and router_gen.json5.
     # gen_listen is NOT here and must stay null: it needs LAN2_IP / WIFI_IP,
     # which hw_profile/*.yaml.template leaves null on purpose.
+    # fence inset by fix quality: user ruling 2026-11-06 (99 U142), the values
+    # of the 11 S3.2.1 table with dgps now driving (1.5 = rtk_driver dgps_h_m
+    # nominal 1 sigma); single never drives and is set only so the four keep
+    # 12 S12.1 S-6 monotonicity (0.3 <= 1.0 <= 1.5 <= 3.0).
+    "common.fence.margin_by_fix.rtk_fixed": 0.3,
+    "common.fence.margin_by_fix.rtk_float": 1.0,
+    "common.fence.margin_by_fix.dgps": 1.5,
+    "common.fence.margin_by_fix.single": 3.0,
+
     "common.zenoh.rt_endpoint": "tcp/127.0.0.1:7449",
     "common.zenoh.gen_connect": "tcp/127.0.0.1:7447",
 
