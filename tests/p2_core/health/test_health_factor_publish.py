@@ -79,13 +79,13 @@ def test_blocked_body_never_carries_none_on_the_wire():
 
 def test_reason_is_the_min_factor_item_when_slowed():
     """mutant: pick the max-factor item instead of the min -> red."""
-    # 99 U117: lidar no longer counts, so the pair is now cam_rgbd degraded
-    # (fatal x degraded 0.3) vs battery unknown (0.5).
-    st = dict(ALL_OK, cam_rgbd=HealthState.DEGRADED, battery=HealthState.UNKNOWN)
+    # 99 U117: lidar no longer counts; 99 U146: battery no longer counts. The
+    # pair is now cam_rgbd degraded (fatal x degraded 0.3) vs clock unknown (0.5).
+    st = dict(ALL_OK, cam_rgbd=HealthState.DEGRADED, clock=HealthState.UNKNOWN)
     out = compute_factor(st, CFG)
-    assert out.allow_motion and out.speed_factor == pytest.approx(0.3)     # cam_rgbd 0.3 < battery 0.5
+    assert out.allow_motion and out.speed_factor == pytest.approx(0.3)     # cam_rgbd 0.3 < clock 0.5
     assert dominant_reason(st, CFG, out) == "cam_rgbd_degraded"
-    assert build_health_factor(dict(ALL_OK, battery=HealthState.UNKNOWN), CFG)["reason"] == "battery_unknown"
+    assert build_health_factor(dict(ALL_OK, clock=HealthState.UNKNOWN), CFG)["reason"] == "clock_unknown"
 
 
 def test_every_single_item_state_round_trips_through_p1():

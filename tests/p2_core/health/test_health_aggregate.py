@@ -440,7 +440,10 @@ def test_u117_battery_threshold_slows_below_and_frees_above():
                        degraded_degraded=0.7, unknown=0.5)
     ok = {k: HealthState.OK for k in ITEMS}
     low = compute_factor(dict(ok, battery=HealthState.DEGRADED), cfg)
-    assert low.allow_motion and low.speed_factor == 0.3        # slows, does not stop
+    # 99 U146 (2026-11-06): a low battery no longer slows the robot -- the
+    # low-battery return keeps the normal speed (was 0.3 under U117).
+    # MUTATION: count battery in speed_factor again -> 0.3 -> red.
+    assert low.allow_motion and low.speed_factor == 1.0        # neither slows nor stops
     assert compute_factor(ok, cfg).speed_factor == 1.0         # above the threshold: free
 
 

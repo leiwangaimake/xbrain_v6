@@ -105,8 +105,12 @@ ITEMS: Dict[str, HealthItem] = {
     # still forbids motion (11 S5.1A column unchanged).
     "compute":         HealthItem(HealthKind.CAP, HealthLevel.FATAL,
                                   False, True),
+    # 99 U146 (2026-11-06): the battery no longer slows the robot. U117 had
+    # it degraded at <= 20 % and so multiplied in x0.3; the low-battery rule
+    # (P3 lifecycle/low_battery.py) keeps the normal speed and drives to a dock
+    # instead. The item still reports its state in health/summary.
     "battery":         HealthItem(HealthKind.CAP, HealthLevel.FATAL,
-                                  True, True),
+                                  False, True),
     "cam_rgbd":        HealthItem(HealthKind.DEVICE, HealthLevel.FATAL,
                                   True, True),
     # Counted toward speed_factor until 99 U117 (2026-11-04, user ruling):
