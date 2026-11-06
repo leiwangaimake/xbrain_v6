@@ -141,7 +141,9 @@ def run_voice_loop_wiring(stop_flag: dict,
                           recorded_arrive_radius_m: Optional[float] = None,
                           route_membership_m: Optional[float] = None,
                           teach_sample_hz: Optional[float] = None,
-                          teach_min_dist_m: Optional[float] = None) -> int:
+                          teach_min_dist_m: Optional[float] = None,
+                          rtk_lost_sustain_s: Optional[float] = None,
+                          rtk_recover_sustain_s: Optional[float] = None) -> int:
     """Block until stop_flag['stop'] is truthy. Returns 0 on clean shutdown.
 
     enu_origin 来自 common.geo.enu_origin(L4 sites/{site_id}.yaml), 由
@@ -166,13 +168,21 @@ def run_voice_loop_wiring(stop_flag: dict,
     teach.min_dist_m (= common.recording.*, 99 U132): the S12A.6 sampling
     pair. None (tests) refuses every recording start by key name; the
     production __main__ refuses to start without them.
+
+    rtk_lost_sustain_s / rtk_recover_sustain_s are p3_task.yaml rtk_loss.*
+    (11 S3.3.3, 99 U142): how long single / no_fix must last before the task
+    is suspended and the alarm raised, and how long a usable fix must last
+    before recovery is reported. None (tests) leaves the judgement off; the
+    production __main__ refuses to start without them.
     """
     return asyncio.run(
         _amain(stop_flag, heartbeat_period_s, task_db_path, geo_db_path,
                fence_db_path, enu_origin, teach_snap_max_age_ms,
                recorded_arrive_radius_m, route_membership_m,
                teach_sample_hz=teach_sample_hz,
-               teach_min_dist_m=teach_min_dist_m))
+               teach_min_dist_m=teach_min_dist_m,
+               rtk_lost_sustain_s=rtk_lost_sustain_s,
+               rtk_recover_sustain_s=rtk_recover_sustain_s))
 
 
 async def _amain(stop_flag: dict, heartbeat_period_s: float,
@@ -183,8 +193,12 @@ async def _amain(stop_flag: dict, heartbeat_period_s: float,
                  recorded_arrive_radius_m: Optional[float] = None,
                  route_membership_m: Optional[float] = None,
                  teach_sample_hz: Optional[float] = None,
-                 teach_min_dist_m: Optional[float] = None) -> int:
-    from xbrain.common.errors import E_GEO_INCOMPLETE, E_NOT_FOUND, E_SCHEMA
+                 teach_min_dist_m: Optional[float] = None,
+                 rtk_lost_sustain_s: Optional[float] = None,
+                 rtk_recover_sustain_s: Optional[float] = None) -> int:
+    from xbrain.common.errors import E_DEGRADED, E_GEO_INCOMPLETE, E_NOT_FOUND, E_SCHEMA
+    from xbrain.p3_task.ingest.task_command import task_ack
+    from xbrain.p3_task.lifecycle.rtk_loss import RtkLossMonitor, suspend_running_for_rtk
     from xbrain.common.runtime.session_ctx import open_planes
     from xbrain.p3_task.dao.simple_daos import FencesDAO, PatrolProgressDAO, SnapshotDAO
     from xbrain.p3_task.dao.tasks_dao import TasksDAO
@@ -1010,6 +1024,72 @@ async def _amain(stop_flag: dict, heartbeat_period_s: float,
                                                   E_GEO_INCOMPLETE, res.cause,
                                                   withdraw=True)  # an earlier push is out
 
+            # 11 S3.3.4 positioning loss (99 U142): judged from state/pose each
+            # pass. None in tests that pass no sustain times (the judgement is
+            # off there); the production __main__ refuses to start without them.
+            rtk_monitor = (RtkLossMonitor(rtk_lost_sustain_s, rtk_recover_sustain_s)
+                           if rtk_lost_sustain_s is not None else None)
+            _rtk_seq = [0]  # eid counter, boot-unique with _BOOT_ID
+            _rtk_task = {"id": None}  # the task this loss suspended (named on recovery)
+
+            def _emit_rtk(sev: str, title: str, detail: dict, *, dedup: bool) -> None:
+                """event/{sev}/rtk (11 S3.3.4; key segment == payload sev, V-2).
+                channel alarm by category (U18); the loss carries the 60 s dedup
+                window of the contract example, the recovery none."""
+                _rtk_seq[0] += 1
+                pose = state_cache.get("pose") or {}
+                body = {"eid": "rtk-%s-%d" % (_BOOT_ID, _rtk_seq[0]), "sev": sev,
+                        "cat": "rtk", "channel": "alarm", "title": title,
+                        "detail": detail,
+                        "pos": {"lat": pose.get("lat"), "lon": pose.get("lon"),
+                                "heading_rad": pose.get("heading_rad")},
+                        # WALL-CLOCK-OK(record): 11 S6.1 Event.ts of this transition.
+                        "src": "p3_task", "ts": time.time()}
+                if dedup:
+                    body.update(dedup_key="rtk:lost", dedup_window_s=60)
+                gen.put("event/%s/rtk" % sev, json.dumps(
+                    body, ensure_ascii=False).encode("utf-8"))
+
+            async def _on_rtk_lost(now_s: float) -> None:
+                """RL-2 then RL-4: suspend the running task (its mission is
+                withdrawn by the route clear, so recovery cannot restart it),
+                then raise the alarm with the task facts (11 S3.3.4)."""
+                pose = state_cache.get("pose") or {}
+                detail = rtk_monitor.lost_detail(pose, now_s)
+                susp = await suspend_running_for_rtk(dao, conn, _now_mono_ms())
+                detail["task_id"] = susp[0] if susp else None
+                _rtk_task["id"] = detail["task_id"]  # P4 says "请说继续" only if one waits
+                detail["action_taken"] = "stop_and_suspend" if susp else "stop_and_hold"
+                detail["task_progress"] = None
+                if susp:
+                    row = await progress_dao.fetch_active(susp[0])
+                    if row is not None:  # U07a breakpoint, 11 S4.4 field names
+                        detail["task_progress"] = {"waypoint_index": row[4],
+                                                   "seg_done_m": row[6],
+                                                   "dist_done_m": row[7]}
+                    await _make_publish(
+                        state_pub, _emit_task_event, _publish_task_state,
+                        fetch_terminal=_fetch_terminal_facts,
+                        stop_motion=_stop_motion)(susp[0], "running", susp[1], susp[2])
+                _logger.warning("p3 RL-2: positioning lost (fix %s), task %s -> %s",
+                                pose.get("fix_type"), detail["task_id"],
+                                detail["action_taken"])
+                _emit_rtk("alarm", "positioning lost, robot stopped", detail, dedup=True)
+
+            def _on_rtk_recovered(now_s: float) -> None:
+                """The recovery report (11 S3.3.3 L3 -> L2/L1). Nothing resumes:
+                RL-7, the suspended task waits for a human resume."""
+                pose = state_cache.get("pose") or {}
+                lost_s = (round(now_s - rtk_monitor.lost_since, 1)
+                          if rtk_monitor.lost_since is not None else None)
+                _logger.info("p3 positioning recovered (fix %s) after %ss",
+                             pose.get("fix_type"), lost_s)
+                _emit_rtk("info", "positioning recovered",
+                          {"type": "heading_recovered", "fix_type": pose.get("fix_type"),
+                           "heading_source": pose.get("heading_source"),
+                           "lost_s": lost_s, "task_id": _rtk_task["id"]}, dedup=False)
+                _rtk_task["id"] = None
+
             # 15 S10 INIT / 11 S9.14: a `running` row at start-up is left over
             # from an unclean shutdown -- suspend it (passive, unclean_shutdown)
             # before the first scheduler tick, or it blocks every dispatch for
@@ -1071,7 +1151,17 @@ async def _amain(stop_flag: dict, heartbeat_period_s: float,
                         # 2026-08-20 every task-CREATE arrives that way --
                         # p4_agent, the HMI and the cloud all send S7.2, and
                         # p4's private task_request shape is gone.
-                        if isinstance(payload, dict) and "action" in payload:
+                        if (isinstance(payload, dict) and rtk_monitor is not None
+                                and rtk_monitor.lost and payload.get("action") == "submit"):
+                            # 11 S3.2.1 single / no_fix: no task is accepted
+                            # (99 U142). Refused, not queued: a queued task would
+                            # start by itself on recovery (RL-7).
+                            task_ack_pub.put(json.dumps(task_ack(
+                                str(payload.get("cmd_id") or ""), "rejected", E_DEGRADED,
+                                {"reason": "rtk_lost",
+                                 "fix_type": (state_cache.get("pose") or {}).get("fix_type")}),
+                                ensure_ascii=False).encode("utf-8"))
+                        elif isinstance(payload, dict) and "action" in payload:
                             ack = await handle_task_payload(
                                 payload, task_ctx, now_mono_ms=_now_mono_ms(),
                                 created_at=_now_utc_iso(),
@@ -1179,6 +1269,17 @@ async def _amain(stop_flag: dict, heartbeat_period_s: float,
                                 last_geo = last_fence = 0.0
                     except Exception as exc:      # noqa: BLE001
                         _logger.error("p3 teach sampling failed: %s", exc)
+                    if rtk_monitor is not None:
+                        # 11 S3.3.4 (99 U142): before the scheduler block, so a
+                        # loss declared this pass already holds this pass.
+                        try:
+                            _rtk_ev = rtk_monitor.update(state_cache.get("pose"), now_mono_s)
+                            if _rtk_ev == "lost":
+                                await _on_rtk_lost(now_mono_s)
+                            elif _rtk_ev == "recovered":
+                                _on_rtk_recovered(now_mono_s)
+                        except Exception as exc:      # noqa: BLE001
+                            _logger.error("p3 positioning-loss step failed: %s", exc)
                     while not teach_queue.empty():
                         # S12A.3 arming check 2 needs the running task types;
                         # until 99 U133 none were passed, so the check never
@@ -1285,6 +1386,10 @@ async def _amain(stop_flag: dict, heartbeat_period_s: float,
                             _logger.error("p3 ES-2 suspend failed: %s", exc)
                     elif _takeover:
                         # 15 S4.1A: no new task is dispatched during B / D.
+                        pass
+                    elif rtk_monitor is not None and rtk_monitor.lost:
+                        # 11 S3.2.1 single / no_fix (99 U142): nothing is
+                        # dispatched -- queued and timed tasks wait for a fix.
                         pass
                     elif teach.active:
                         # 11 S12A.3 CMD-16 / 99 U133: nothing is dispatched

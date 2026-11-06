@@ -66,3 +66,15 @@ route:
   #   P4 的路径/航点查询引用同一个键 (99 U130), 两边判定永远一致.
   #   缺失 / null / <= 0 时 p3 拒绝启动 (EX_CONFIG 78).
   membership_m: ${common.geo.route_membership_m}
+
+# -- 定位失效 (11 S3.3.4, 99 U142) -------------------------------------------
+#   用户 2026-11-06 裁决: 只有 single / no_fix (及无定位) 才算定位失效;
+#   rtk_fixed / rtk_float / dgps 照常作业 (后两者 P1 限速 0.5 m/s).
+#   失效持续 lost_sustain_s 后: 挂起当前任务 (passive / rtk_degraded, 撤销 P1
+#   路线), 暂停派发, 拒收新任务, 发 event/alarm/rtk; 可用定位持续
+#   recover_sustain_s 后发 event/info/rtk, 任务不自动续跑 (RL-7).
+#   取值即 11 S3.3.3 的 fix_lost 1.0 s / 恢复 2.0 s (工程缺省, 待 T7 标定).
+#   缺失 / null / <= 0 时 p3 拒绝启动 (EX_CONFIG 78).
+rtk_loss:
+  lost_sustain_s: 1.0
+  recover_sustain_s: 2.0

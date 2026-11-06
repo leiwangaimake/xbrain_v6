@@ -123,10 +123,11 @@ def goto_row(task_id: str, state: str, seq: int, priority: int = 5, **extra) -> 
                    resume_policy="continue", **extra)  # 15 S7.5 default for goto
 
 
-async def start_p3(tmp_path, monkeypatch, rows=()):
+async def start_p3(tmp_path, monkeypatch, rows=(), **amain_kw):
     """Start the real loop over the fake planes; return (harness, stop, task,
     task_db). rows are written to task.db BEFORE the loop starts (what a power
-    cut leaves behind); the robot pose is delivered once subscribers exist."""
+    cut leaves behind); the robot pose is delivered once subscribers exist.
+    amain_kw reach _amain unchanged (e.g. the rtk_loss sustain pair)."""
     from xbrain.p3_task.runtime import main_wiring as mw  # the code under test
     import xbrain.common.runtime.session_ctx as sctx  # where _amain gets its planes
     h = Harness()  # fresh planes per scenario
@@ -146,7 +147,8 @@ async def start_p3(tmp_path, monkeypatch, rows=()):
             await t.commit()  # durable before the loop reads
     stop = {"stop": False}  # _amain polls this every pass
     loop = asyncio.create_task(mw._amain(stop, 99.0, task_db, geo_db_path=geo_db,
-                                         fence_db_path=str(tmp_path / "fence.db")))  # run it
+                                         fence_db_path=str(tmp_path / "fence.db"),
+                                         **amain_kw))  # run it
     ready = await wait_for(lambda: mw.CMD_TASK_TOPIC in h.subs and mw.STATE_POSE_TOPIC in h.subs)
     assert ready, "p3 loop never declared its subscribers"  # start-up failed
     h.send(mw.STATE_POSE_TOPIC, ROBOT_POSE)  # a push needs the robot's position

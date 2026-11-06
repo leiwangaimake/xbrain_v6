@@ -166,6 +166,19 @@ def main(argv: Optional[list] = None) -> int:
                     "p3_task config: teach.%s=%r must be a positive number "
                     "(99 U132 recording sampling)", _tk, _tv)
                 return 78
+        # 99 U142 / 11 S3.3.3: how long single / no_fix must last before the
+        # running task is suspended and the alarm raised, and how long a usable
+        # fix before recovery is reported. Refused by key path: without them a
+        # lost fix would leave the task "running" and the robot silent.
+        _rtk = (_cfg.get("rtk_loss") or {}) if hasattr(_cfg, "get") else {}
+        for _rk in ("lost_sustain_s", "recover_sustain_s"):
+            _rv = _rtk.get(_rk)
+            if (isinstance(_rv, bool) or not isinstance(_rv, (int, float))
+                    or _rv <= 0.0):
+                _logger.error(
+                    "p3_task config: rtk_loss.%s=%r must be a positive number "
+                    "(99 U142 positioning loss, 11 S3.3.3)", _rk, _rv)
+                return 78
         return run_voice_loop_wiring(
             stop_flag=stop_flag,
             task_db_path=args.task_db or DEFAULT_TASK_DB,
@@ -174,7 +187,9 @@ def main(argv: Optional[list] = None) -> int:
             recorded_arrive_radius_m=float(_radius),
             route_membership_m=float(_member),
             teach_sample_hz=float(_teach["sample_hz"]),
-            teach_min_dist_m=float(_teach["min_dist_m"]))
+            teach_min_dist_m=float(_teach["min_dist_m"]),
+            rtk_lost_sustain_s=float(_rtk["lost_sustain_s"]),
+            rtk_recover_sustain_s=float(_rtk["recover_sustain_s"]))
 
     return main_loop(tick_seconds=args.heartbeat_seconds, stop_flag=stop_flag)
 
