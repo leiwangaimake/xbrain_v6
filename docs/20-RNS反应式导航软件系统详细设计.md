@@ -405,7 +405,7 @@ plan(x_now -> W_b):
 | ★★★ **`NM-3`** 引导规划层退役 | §4A 在记忆栅格上寻路，无记忆即退化为「直指目标」⇒ 不再构造（`_planner` 恒为 `None`，各消费者走既有的 v1.0 回退）；`guidance.*` 键无运行时消费者。★ `no_path_in_domain` 随之**不可能再出现** —— 2026-11-04 的判死正是由它报出 |
 | ★★ **`NM-4`** 无路时原地等 | 本帧没有可行的穿插 / 绕障候选（含 DETOUR 子目标变得不可行且无替代）⇒ **本拍零速、回 FOLLOW**，下一拍用新的感知重问；🚫 升级到贴墙。看门狗（§7.3A）的 `ESCALATE_WALL` 不再有动作，计时继续，由 `report_after_windows` 有界上报 `watchdog_no_progress` |
 | ★★ **`NM-5`** 避障速度地板 | 避障压速项（§8.1A 的穿缝紧度、横向偏差、UNKNOWN 占比）一律 `≥ speed.avoid_floor_mps`（0.2 m/s）。★★★ **只抬这三项**：人停等、接触熔断、T-51、宿主门 U54 停车段（前方 < 1.25 m）、急停、航向 / RTK 否决、围栏照样到 0；航向余弦收速不变 |
-| ★★ **`NM-6`** 门限与限速 | `WP-1` 改为两个门限：`world.object_min_confidence` = 0.4（非人）、`world.person_min_confidence` = 0.1（人，故意低：无几何兜底时漏一个人代价最高）。`world.v_max_mps` 上限可到底盘规格 2.0，**首次实测配 1.0**，通过后改 2.0。`perception.unlocalized_speed_cap_mps` 0.5 → **1.0**。整体限速只在 `RnsSource` 出口执行一处（贴墙退役后所有候选都经出口） |
+| ★★ **`NM-6`** 门限与限速 | `WP-1` 改为两个门限：`world.object_min_confidence` = 0.4（非人）、`world.person_min_confidence` = 0.1（人，故意低：无几何兜底时漏一个人代价最高）。`world.v_max_mps` 上限可到底盘规格 2.0，**首次实测配 1.0**，通过后改 2.0（★ `99` U153，2026-11-07：6 号路径巡逻通过，**现值 2.0**；P1 速度门只让双天线 ＋ `rtk_fixed` 跑满，COG / 桥接 / 爬升 1.0，float / dgps 0.5–0.6）。`perception.unlocalized_speed_cap_mps` 0.5 → **1.0**。整体限速只在 `RnsSource` 出口执行一处（贴墙退役后所有候选都经出口） |
 | ★★★ **`NM-7`** `RNS-I-2` 退役（v1.48 · `99` U116） | 「`invalid_pixel_ratio` 超阈值 ⇒ 强制限速」整条退役，含 v1.43 的「该字段 `null` ⇒ 质量未知 ⇒ 限速」。★ 依据：perception 在**先验地平面掩膜**上统计该比例（`ros2_ws/perception/src/service/geometry_setup.cpp`「the prior-plane mask」），衡量的是地面深度缺失 —— 正是 §3.0 已裁定 RNS 不再依据的可通行数据；2026-11-04 室外该值约 0.55，把每次运行压在 `no_seg_speed_cap_mps` 0.5 m/s。★ **保留**：status 报文断供超 T-53 仍限速（健康心跳停了是感知故障，不是地面读数，A-AGE-3），objects 断供超 T-52 仍限速并按禁止类（A-AGE-2）。键 `health.invalid_ratio_limit` 与 `classify.health_speed_capped` 无运行时消费者，保留未接线。★ 代价：玻璃 / 水面这类深度成片无效处不再因此降速（目标世界里它们本就不可见） |
 | ★★ **`NM-8`** 退役代码的保留理由（v1.50 · `99` U120） | `NM-2` / `NM-3` 退役的 `rns/wallfollow.py`、`rns/planner.py` 及其 `wall_follow.*` / `guidance.*` 键、`classify` 里的静止判据与 `health_speed_capped` **暂不删除**。★ **理由（用户 2026-11-05 原话）**：「先保留并写下保留的原因，即：等后面的路径导航实机测试彻底通过再删除」—— 实机测试期间若需退回记忆式设计，只差一次回退。★ 期限：路径导航实机测试彻底通过 ⇒ 整体删除（另起一条裁决记录）。🚫 未经新裁决不得重新接线。（★ 与 CLAUDE.md §9.3「不留口子」的关系：这是**有期限、有裁决**的保留，不是为将来留的扩展点） |
 
@@ -1615,7 +1615,7 @@ rns:
     object_min_confidence: null  # 低于它的非人目标整条丢弃（WP-1）；v1.47 现值 0.4（原 0.3）
     person_min_confidence: null  # ★ v1.47 新增：人的门限（WP-1 / NM-6）；现值 0.1
     person_max_height_m: null    # ★ v1.49 新增：人的高度上限，z_max - z_min 大于它即丢弃（WP-1a / 99 U118）；现值 2.0；缺失或 null 拒绝启动
-    v_max_mps: null              # 目标驱动世界整体限速（§8.1，出口一处执行）；v1.47 现值 1.0（首次实测，原 0.6），上限可到 2.0
+    v_max_mps: null              # 目标驱动世界整体限速（§8.1，出口一处执行）；~~v1.47 现值 1.0（首次实测，原 0.6），上限可到 2.0~~ **被替代的表述**（`99` U153，2026-11-07）：现值 2.0（底盘规格上限）；仅双天线 ＋ rtk_fixed 跑满，其余航向源由 P1 速度门压低
   follow:                        # ★ v1.4 新增（§2.10 RNS-N-14）；2026-09-08 本期不实现，本段仅预留，运行期无消费者
     target_min_dist_m: 1.0       # ★ 用户 2026-09-07 指定默认值: 豁免目标的保距下限
     lost_extrapolate_s: null     # 丢失后按 velocity 外推的窗口（§2.10.4）
