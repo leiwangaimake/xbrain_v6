@@ -38,6 +38,11 @@ nav:
   degraded_fix_cap_mps: 0.5           # 99 U142 用户裁决 2026-11-06: rtk_float / dgps 与 fixed 同样作业, 限速 0.5 m/s
   cog_drive_fixed_mps: 1.0            # 99 U142 用户裁决 2026-11-06: 航向 L2 (COG) + rtk_fixed 固定 1.0 m/s (COG 门槛 0.5, 余量大, 航向更准)
   cog_drive_degraded_mps: 0.6         # 99 U142 用户裁决 2026-11-06: 航向 L2 (COG) + rtk_float / dgps 固定 0.6 m/s (维持 COG 的最低速)
+  climb_track_seg_m: 1.0              # 99 U151 用户裁决 2026-11-06: 航向死锁时取最后移动 >= 1 m 的位移方向作爬升航向
+  climb_max_s: 30.0                   # 99 U151: 爬升最长时间 (同 rtk_driver blind_timeout_s), 超时仍无 GNSS 航向则停车
+  heading_bridge_max_s: 30.0          # 99 U152 用户裁决 2026-11-06: GNSS 航向断开时用底盘 IMU yaw 变化量从最后一个可信航向接续的最长时间
+  heading_consistency_deg: 20.0       # 99 U152: COG 与 IMU 推算航向之差超过此值即不用该 COG; 爬升轨迹段内 yaw 变化超过此值视为转弯段不用
+  cog_blend_tau_s: 1.0                # 99 U152: 通过一致性检查的 COG 以此时间常数把估计航向拉向自己 (不整拍替换, 防低速转弯时滞后的 COG 逐拍带偏锚点); 双天线直接替换
 relative_move:                        # 12 S12 的五个有消费者的键 (nav/relmove_intake.py);
                                       #   tolerance_* / a_dec_ratio 属 #20-9 已删的里程计执行器, 随其落地
   max_distance_m: 20.0

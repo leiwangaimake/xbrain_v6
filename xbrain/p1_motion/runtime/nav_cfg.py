@@ -65,6 +65,17 @@ class NavConfig:
     degraded_fix_cap_mps: float
     cog_drive_fixed_mps: float
     cog_drive_degraded_mps: float
+    # 99 U151 heading-deadlock climb (path/climb.py): the track segment that
+    # gives the climb heading, and the longest climb on it.
+    climb_track_seg_m: float
+    climb_max_s: float
+    # 99 U152 IMU yaw bridge (path/heading_bridge.py): how long a GNSS gap
+    # is bridged from the last trusted heading, and the tolerance of the COG
+    # check (also the straightness limit of a climb track segment), and the
+    # time constant with which an accepted COG pulls the estimate.
+    heading_bridge_max_s: float
+    heading_consistency_deg: float
+    cog_blend_tau_s: float
     relmove: RelMoveLimits
     gnss_dead_ms: int
     health_degrade_ms: int
@@ -333,6 +344,11 @@ def build_nav_config(p1_tree: Mapping[str, Any], rns_tree: Mapping[str, Any]) ->
         degraded_fix_cap_mps=_pos(p1_tree, "nav.degraded_fix_cap_mps"),
         cog_drive_fixed_mps=_pos(p1_tree, "nav.cog_drive_fixed_mps"),
         cog_drive_degraded_mps=_pos(p1_tree, "nav.cog_drive_degraded_mps"),
+        climb_track_seg_m=_pos(p1_tree, "nav.climb_track_seg_m"),  # 99 U151
+        climb_max_s=_pos(p1_tree, "nav.climb_max_s"),  # 99 U151
+        heading_bridge_max_s=_pos(p1_tree, "nav.heading_bridge_max_s"),  # 99 U152
+        heading_consistency_deg=_pos(p1_tree, "nav.heading_consistency_deg"),  # 99 U152
+        cog_blend_tau_s=_pos(p1_tree, "nav.cog_blend_tau_s"),  # 99 U152
         relmove=RelMoveLimits(
             max_distance_m=_pos(p1_tree, "relative_move.max_distance_m"),
             max_yaw_rad=_pos(p1_tree, "relative_move.max_yaw_rad"),

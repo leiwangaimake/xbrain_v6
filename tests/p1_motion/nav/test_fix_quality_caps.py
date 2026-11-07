@@ -48,6 +48,8 @@ CAP, COG, COG_LOW = 0.5, 1.0, 0.6  # degraded_fix_cap / cog_drive_fixed / cog_dr
     ("rtk_float", "cog", (None, COG_LOW)),        # L2 on float: 0.6, not 1.0
     ("dgps", "cog", (None, COG_LOW)),             # COG beats the cap: 0.5 would starve COG
     ("rtk_fixed", None, (None, None)),            # no valid heading: the gate vetoes anyway
+    ("rtk_fixed", "bridge", (None, COG)),         # 99 U153: only L1 + fixed runs at 2.0
+    ("rtk_fixed", "climb", (None, COG)),          # 99 U153: likewise
 ])
 def test_quality_caps(fix, source, want):
     """MUTATION: check the fix before the source -> dgps + cog gets the 0.5
@@ -120,6 +122,8 @@ def test_pose_view_passes_only_a_valid_source(valid, want):
     False case); drop the field -> None for the valid case -> red."""
     import time  # the caches age on the monotonic clock
     from xbrain.p1_motion.path.local_frame import LocalFrame  # site frame
+    from xbrain.p1_motion.path.climb import Climb, TrackHeading  # 99 U151 stub fields
+    from xbrain.p1_motion.path.heading_bridge import HeadingBridge  # 99 U152 stub field
     from xbrain.p1_motion.runtime.nav_wiring import NavRuntime  # owner of _pose_view
     now = time.monotonic()  # fresh caches
 
@@ -132,5 +136,13 @@ def test_pose_view_passes_only_a_valid_source(valid, want):
         _gnss = {"rx": now, "data": {"heading_valid": valid, "heading_rad": 0.1 if valid else None,
                                      "source": "cog", "level": 2, "i_heading": 1.0}}
         _fix = {"rx": now, "data": {"fix_type": "rtk_fixed", "lat": 35.0, "lon": 135.0}}
+        # 99 U151 climb inputs: no route running, no odometry -> never climbs here
+        _track = TrackHeading(1.0, 20.0)
+        _climb = Climb(30.0)
+        _bridge = HeadingBridge(30.0, 20.0, 1.0)  # 99 U152: no odometry -> GNSS passes through
+        _host = type("H", (), {"route_state": "idle"})()
+
+        def _odom_yaw(self, t0):  # no chassis state in this stub
+            return None
     view = NavRuntime._pose_view(_Rt(), now)  # unbound call on the stub
     assert view.heading_source == want  # source only with a valid heading

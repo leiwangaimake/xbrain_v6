@@ -234,11 +234,26 @@ def quality_caps(fix_type: Optional[str], heading_source: Optional[str],
         slowest speed that still keeps COG alive. The 0.5 fix cap does not
         apply on top of either -- it would hold the robot at the threshold;
       * rtk_float / dgps -> capped at fix_cap_mps, otherwise like rtk_fixed;
-      * rtk_fixed with an L1 heading -> neither term.
+      * rtk_fixed with an L1 heading -> neither term: the ONLY case that runs
+        at the navigation top speed (2.0 since 99 U153);
+      * climb / bridge (99 U151 / U152) -> cog_fixed_mps on rtk_fixed (99 U153),
+        cog_degraded_mps on float / dgps.
     single / no_fix never get here as a moving case: their i_fix is absent and
     the gate vetoes on rtk (11 S3.2.1, unchanged).
     """
     if heading_source == "cog":  # L2: a fixed COG speed, by fix quality
+        return None, (cog_degraded_mps if fix_type in DEGRADED_FIXES else cog_fixed_mps)
+    if heading_source in ("climb", "bridge"):
+        # 99 U151: the heading-deadlock climb runs at the navigation top speed
+        # (no extra term on rtk_fixed); on float / dgps the 0.5 fix cap would
+        # pin it AT the COG threshold, so it gets the L2 degraded COG speed.
+        # 99 U152: the IMU-bridged heading is driven the same way -- it is not
+        # an L2 heading (no fixed COG speed), and a slow bridge would keep COG
+        # from coming back.
+        # 99 U153 (user ruling 2026-11-07): the navigation top speed went to
+        # 2.0 for the dual antenna on rtk_fixed ONLY, so on rtk_fixed a climb /
+        # bridge no longer takes the top speed: it is held at the COG fixed
+        # speed (1.0), which still keeps COG alive for the hand-back.
         return None, (cog_degraded_mps if fix_type in DEGRADED_FIXES else cog_fixed_mps)
     if fix_type in DEGRADED_FIXES:
         return fix_cap_mps, None  # float / dgps: capped

@@ -28,7 +28,12 @@ P1 = {
     "nav": {"max_vx_mps": 2.0, "max_wz_radps": 1.2, "holonomic": True, "v_nom_mps": 1.5,
             "v_obstacle_avoid_mps": 0.5,
             # 99 U142: float / dgps cap and the fixed L2 (COG) speed
-            "degraded_fix_cap_mps": 0.5, "cog_drive_fixed_mps": 1.0, "cog_drive_degraded_mps": 0.6},
+            "degraded_fix_cap_mps": 0.5, "cog_drive_fixed_mps": 1.0, "cog_drive_degraded_mps": 0.6,
+            # 99 U151: the heading-deadlock climb
+            "climb_track_seg_m": 1.0, "climb_max_s": 30.0,
+            # 99 U152: the IMU yaw bridge and the COG check
+            "heading_bridge_max_s": 30.0, "heading_consistency_deg": 20.0,
+            "cog_blend_tau_s": 1.0},
     "relative_move": {"max_distance_m": 20.0, "max_yaw_rad": 6.2832,
                       "pure_rotation_eps_m": 0.02, "default_timeout_s": 20.0,
                       "abort_on_obstacle": True,
@@ -133,6 +138,8 @@ def test_missing_rotation_key_names_itself(key):
     "fence.brake_k", "fence.t_lat_s", "fence.margin_by_fix.rtk_fixed", "fence.projection_iters",
     "fence.margin_by_fix.dgps", "nav.degraded_fix_cap_mps", "nav.cog_drive_fixed_mps",  # 99 U142
     "nav.cog_drive_degraded_mps",
+    "nav.climb_track_seg_m", "nav.climb_max_s",  # 99 U151
+    "nav.heading_bridge_max_s", "nav.heading_consistency_deg", "nav.cog_blend_tau_s",  # 99 U152
     "speed_gate.hysteresis.speed_up_hold_s", "speed_gate.hysteresis.d_up_margin_m",
 ])
 def test_null_leaf_refused_by_name(dotted):

@@ -116,6 +116,8 @@ from xbrain.p1_motion.nav.mission_host import (
     MissionHost,
 )
 from xbrain.p1_motion.nav.nav_tick import NavInputs, NavOutput, NavTick, ctrl_state_for
+from xbrain.p1_motion.path.climb import Climb, TrackHeading  # 99 U151
+from xbrain.p1_motion.path.heading_bridge import BRIDGE, HeadingBridge  # 99 U152
 from xbrain.p1_motion.teleop.velocity import (  # 99 U134 teleop drive
     TeleopSpeeds,
     source_for,
@@ -285,6 +287,12 @@ class NavRuntime:
         self._lock = threading.Lock()
         self._route_q: Deque[Any] = collections.deque()
         self._teleop_unconditional = False  # 99 U150: the cloud keyboard drives this tick
+        # 99 U152: the IMU yaw bridge over GNSS heading gaps + the COG check
+        self._bridge = HeadingBridge(cfg.heading_bridge_max_s, cfg.heading_consistency_deg,
+                                     cfg.cog_blend_tau_s)
+        # 99 U151 / U152: last straight >= 1 m movement bearing, paired with its yaw
+        self._track = TrackHeading(cfg.climb_track_seg_m, cfg.heading_consistency_deg)
+        self._climb = Climb(cfg.climb_max_s)  # 99 U151: heading-deadlock climb
         self._relmove_q: Deque[Any] = collections.deque()
         # P1-3 mode hold (99 U99). Written by the behavior callback (Rust
         # thread, a bool assignment), read once per tick. False at start: a P1
@@ -740,6 +748,20 @@ class NavRuntime:
                 self._overruns += 1
                 next_t = time.monotonic()
 
+    def _odom_yaw(self, t0: float) -> Optional[float]:
+        """The chassis odom yaw (rt/chassis/state odom.yaw_rad, IMU-integrated,
+        relative), or None when absent, not valid or older than the GNSS
+        staleness (timeouts_ms.gnss) -- the 99 U151 climb and the U152 bridge."""
+        if self._chassis_rx < 0.0 or t0 - self._chassis_rx > self._cfg.gnss_dead_ms / 1000.0:
+            return None  # never received / stale
+        o = self._chassis_body.get("odom") if isinstance(self._chassis_body, dict) else None
+        if not isinstance(o, dict) or o.get("valid") is not True:
+            return None  # untrusted odometry
+        v = o.get("yaw_rad")
+        if isinstance(v, bool) or not isinstance(v, (int, float)):
+            return None  # malformed
+        return float(v)
+
     def _pose_view(self, t0: float) -> PoseView:
         """The gnss caches aged by RX time (timeouts_ms.gnss): a stale fix is
         no fix (12 S3.3 gnss row: stop), a stale heading is no heading."""
@@ -761,11 +783,42 @@ class NavRuntime:
         i_heading = pose.get("i_heading") if heading_valid else None
         fix_type = pose.get("fix_type")
         source = pose.get("heading_source")
+        oy = self._odom_yaw(t0)
+        # 99 U152: GNSS gaps are bridged with the IMU yaw change from the last
+        # trusted heading, and a COG that disagrees with that yaw is not used
+        # (patrol t-20261106-007 hit a wall on a COG 119 degrees off).
+        b = self._bridge.step(t0, heading_valid, None if yaw is None else float(yaw),
+                              source if isinstance(source, str) else None, oy)
+        # 99 U151: every movement feeds the track heading; when no heading is
+        # usable (bridge expired too) during a route task, climb on it.
+        self._track.update(xy, oy)
+        c = self._climb.step(t0, b.valid, self._host.route_state == "running",
+                             self._track, oy)
+        raw_ih = pose.get("i_heading")
+        ih_ok = (isinstance(raw_ih, (int, float)) and not isinstance(raw_ih, bool)
+                 and raw_ih > 0.0)  # the heading quality factor the gate needs
+        ft = fix_type if isinstance(fix_type, str) else None
+        if c.climbing and xy is not None and ih_ok:
+            return PoseView(xy=xy, yaw=c.heading_rad, heading_valid=True,
+                            i_fix=float(i_fix), i_heading=float(raw_ih),
+                            fix_type=ft, yaw_capable=False, heading_source="climb")
+        if b.valid and b.source == BRIDGE:
+            if xy is None or not ih_ok:  # the gate could not use it anyway
+                return PoseView(xy=xy, yaw=None, heading_valid=False,
+                                i_fix=None if xy is None else float(i_fix),
+                                i_heading=None, fix_type=ft)
+            return PoseView(xy=xy, yaw=b.heading_rad, heading_valid=True,
+                            i_fix=float(i_fix), i_heading=float(raw_ih),
+                            fix_type=ft, yaw_capable=False, heading_source=BRIDGE)
+        if heading_valid and not b.valid:
+            # a COG that failed the U152 check with nothing to bridge from:
+            # no heading this tick (the gate stops, as on an L2-blind COG)
+            heading_valid, yaw, i_heading = False, None, None
         return PoseView(xy=xy, yaw=None if yaw is None else float(yaw),
                         heading_valid=heading_valid,
                         i_fix=None if xy is None else float(i_fix),
                         i_heading=None if i_heading is None else float(i_heading),
-                        fix_type=fix_type if isinstance(fix_type, str) else None,
+                        fix_type=ft,
                         yaw_capable=heading_valid and yaw is not None
                         and bool(pose.get("yaw_capable")),
                         # only a VALID heading names its source to the gate: an

@@ -153,7 +153,7 @@ rns:
     object_min_confidence: 0.4     # [doc] 99 U114 用户裁决(原 0.3): 低于它的非 person 目标整条丢弃 (WP-1); 范围 (0, 1]
     person_min_confidence: 0.1     # [doc] 99 U114 用户裁决: person 单独门限, 故意低 -- 无几何兜底时漏一个人代价最高 (WP-1); 范围 (0, 1]
     person_max_height_m: 2.0       # [doc] 99 U118 用户裁决: person 高度 (z_max - z_min) 大于它即丢弃 (WP-1a, 树干上叠出的假人); 不可定位的人保留; > 0
-    v_max_mps: 1.0                 # [doc] 99 U114 用户裁决: 上限可到底盘规格 2.0, 首次实测先用 1.0, 通过后改 2.0 (20 S8.1); > 0
+    v_max_mps: 2.0                 # [doc] 99 U153 用户裁决 2026-11-07 (原 1.0, U114 首次实测值): 6 号路径巡逻通过后改 2.0; 仅双天线 + rtk_fixed 跑满, COG / 桥接 / 爬升由 P1 速度门压 1.0 (12 S6.2), float / dgps 压 0.5 (20 S8.1); > 0
   class_map:                       # class_name -> 行为类; person 锁死在代码 (20 S5.1.1)
     car: vehicle_dynamic
     truck: vehicle_dynamic
