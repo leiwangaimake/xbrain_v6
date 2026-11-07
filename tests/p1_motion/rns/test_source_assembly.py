@@ -330,3 +330,31 @@ def test_detour_stall_drop_present():
     assert m, "detour stall drop missing"
     assert int(m.group(1)) <= 200, "stall threshold too lax"
     assert '"detour_stalled"' in body
+
+
+@dataclass
+class _TimedCtx(Ctx):
+    """Ctx with the monotonic clock the watchdog's dt is taken from and a
+    perception frame (without one RNS runs the bare spine, no watchdog)."""
+    now_mono_ms: Optional[int] = None
+    perception: object = None
+
+
+def test_an_idle_gap_between_orders_is_not_one_watchdog_tick():
+    """Outdoor patrol 2026-11-06 (99 U151 audit): the third patrol failed with
+    watchdog_no_progress / escalations_exhausted on its FIRST tick. dt_ms was
+    taken from the previous order's last tick, ~3 min earlier, so one tick
+    carried more than the whole budget (20 s x 6 windows). A new order must
+    start its dt from scratch. MUTATION: keep _last_now across load_mission
+    -> the first tick after a 5 min gap reports a failure -> red."""
+    s = RnsSource(cfg=_cfg(), r_eff_m=R_EFF)
+    s.load_mission(_mission())
+    from tests.p1_motion.nav.test_nav_tick import _open  # an open-field frame
+    s.compute(_TimedCtx(pose_xy=(2.0, 0.0), v_nom_mps=2.0, now_mono_ms=1000,
+                        perception=_open(1000)))
+    s.clear_mission()  # the order ends (fail / cancel / arrive)
+    s.load_mission(_mission())  # the next order, 5 minutes later
+    s.compute(_TimedCtx(pose_xy=(2.0, 0.0), v_nom_mps=2.0, now_mono_ms=301000,
+                        perception=_open(301000)))
+    assert s.take_failure() is None  # no instant watchdog report
+

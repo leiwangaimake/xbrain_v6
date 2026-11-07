@@ -279,6 +279,15 @@ class RnsSource:
         # and per-track dwell clocks leaked the previous order's state.
         self._wall_cooldown_until = None
         self._wall_entry_dwell = 0
+        # 99 U151 audit (outdoor 2026-11-06): the tick clock is per order too.
+        # dt_ms is now - _last_now; left from the previous order, the first
+        # tick after a 3 min idle carried ~180 s -- more than the watchdog's
+        # whole budget (window x report_after_windows) -- and the new patrol
+        # failed with watchdog_no_progress / escalations_exhausted on tick 1.
+        self._last_now = None
+        # Same residue class; today an EQUIVALENT mutant (step_m feeds only the
+        # retired _wall_tick, U114 / U120), noted here rather than asserted.
+        self._last_pose = None
         self._detour_dwell = 0
         self._detour_best_d = float('inf')
         self._detour_stall_ticks = 0
