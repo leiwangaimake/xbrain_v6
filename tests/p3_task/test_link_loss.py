@@ -107,6 +107,9 @@ async def test_l3_injects_one_return_home(conn):
     tid = await maybe_inject_return_home(
         conn, dao, t, link, priority=RETURN_HOME_PRIORITY, now_mono_ms=123)
     assert tid == "rh-100-2"                      # 15 S4.2.1 deterministic task_id
+    # committed, not just inserted: an open transaction made every later submit
+    # fail (field 2026-11-07). MUTATION: drop the commit -> in_transaction True.
+    assert not conn.in_transaction
     rows = await _tasks(conn)
     assert len(rows) == 1
     assert rows[0]["task_type"] == "return_home"

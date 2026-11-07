@@ -26,6 +26,8 @@ Two things this must get right:
     13 had piled up, none ever finished (no executor), and at priority 95
     they ran ahead of every human task. A non-terminal one already queued
     means "the robot is already told to come home"; another adds nothing.
+  * The insert is COMMITTED before returning (2026-11-07 field fault: an
+    uncommitted insert held a transaction open and blocked every later submit).
   * The return_home is a NORMAL task on the one queue: same id_alloc + TaskRow +
     TasksDAO as any task, so it shares the scheduler / suspend-resume / retention.
     source='charge' + priority=95 per 15 S4.2.1 (the 11 S4.6.4 v0.7 correction: 90
@@ -162,4 +164,11 @@ async def maybe_inject_return_home(conn, dao, trigger: LinkLossReturnTrigger,
         link_epoch=epoch, gw_start_mono=gw,
         now_mono_ms=now_mono_ms, trace_id=trace_id, created_at=created_at)
     await dao.insert(row)
+    # COMMIT here, like every other task insert (task_apply, the low-battery
+    # inject). sqlite opens a transaction on the INSERT; left open, the row is
+    # invisible to the scheduler AND every later submit's BEGIN IMMEDIATE fails
+    # with "cannot start a transaction within a transaction" -- measured at a
+    # customer site 2026-11-07: 30 min after boot with no cloud link, F-5 fired
+    # and from then on no voice / text task could be admitted.
+    await conn.commit()
     return task_id
