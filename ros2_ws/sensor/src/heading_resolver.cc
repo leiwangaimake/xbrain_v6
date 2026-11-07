@@ -136,7 +136,26 @@ ResolveResult HeadingResolver::update(const HeadingInputs& in, double now_s) {
   h.baseline_m = in.baseline_m;
   h.baseline_valid = in.baseline_valid;
 
+  // 99 U151 (user ruling 2026-11-06): dual-antenna and COG switch to each other
+  // at once. The LEVEL above keeps its dwells (and its events), but the heading
+  // SOURCE is picked every tick from what is usable NOW: inside L1 a failed
+  // baseline with a live COG answers COG at once (no 0.5 s on a stale dual
+  // heading); inside L2 a blind COG with a usable dual antenna answers dual
+  // antenna at once (no 2.0 s recover hold with no heading at all). Both usable:
+  // the level decides -- dual antenna in L1, COG in L2 until the recover dwell
+  // promotes the level (dual antenna preferred once stable, no chatter).
+  // Measured 2026-11-06 outdoors: one slow COG tick in L2 stopped a patrol.
+  const bool cog_live = !in.fix_is_lost && speed_sustained && in.cog_present;
+  bool use_dual = false;
+  bool use_cog = false;
   if (level_ == 1) {
+    use_dual = l1_ok || !cog_live;   // L1 as before unless COG can take over now
+    use_cog = !use_dual;
+  } else if (level_ == 2) {
+    use_cog = !l2_blind_;            // L2-active: COG
+    use_dual = l2_blind_ && l1_ok;   // L2-blind: the dual antenna if usable now
+  }
+  if (use_dual) {
     h.source = "dual_antenna";
     h.level = 1;
     h.heading_rad = true_deg_to_enu(in.heading_true_deg);
@@ -148,7 +167,7 @@ ResolveResult HeadingResolver::update(const HeadingInputs& in, double now_s) {
     h.age_s = in.heading_age_s;
     last_valid_heading_rad_ = h.heading_rad;
     last_valid_mono_s_ = now_s;
-  } else if (level_ == 2) {
+  } else if (use_cog) {
     h.source = "cog";
     h.level = 2;
     h.yaw_capable = false;
@@ -156,21 +175,26 @@ ResolveResult HeadingResolver::update(const HeadingInputs& in, double now_s) {
     // 11 S3.3 L2 cov estimate: cov_h / max(speed, thresh) / dt.
     const double v = std::max(in.speed_mps, cfg_.cog_speed_thresh_mps);
     h.cov_rad = cfg_.cov_h_m / v / cfg_.cog_diff_dt_s;
-    if (l2_blind_) {
-      // L2-blind: COG undefined at low speed -> heading_valid FALSE, but stay
-      // level 2 and do NOT fire rtk_lost (11 S3.3.1 blind note). Hold the last
-      // valid heading (H-2: heading_rad may carry the last known value).
-      h.heading_valid = false;
-      if (last_valid_heading_rad_) h.heading_rad = *last_valid_heading_rad_;
-      h.age_s = last_valid_heading_rad_ ? (now_s - last_valid_mono_s_) : 0.0;
-    } else {
-      h.heading_valid = true;
-      h.heading_rad = true_deg_to_enu(in.cog_true_deg);
-      h.heading_true_north_rad = true_deg_to_rad(in.cog_true_deg);
-      h.age_s = 0.0;
-      last_valid_heading_rad_ = h.heading_rad;
-      last_valid_mono_s_ = now_s;
-    }
+    h.heading_valid = true;
+    h.heading_rad = true_deg_to_enu(in.cog_true_deg);
+    h.heading_true_north_rad = true_deg_to_rad(in.cog_true_deg);
+    h.age_s = 0.0;
+    last_valid_heading_rad_ = h.heading_rad;
+    last_valid_mono_s_ = now_s;
+  } else if (level_ == 2) {
+    // L2-blind and no dual antenna: COG undefined at low speed -> heading_valid
+    // FALSE, but stay level 2 and do NOT fire rtk_lost (11 S3.3.1 blind note).
+    // Hold the last valid heading (H-2: heading_rad may carry the last known
+    // value). P1's U151 climb drives out of this state during a route task.
+    h.source = "cog";
+    h.level = 2;
+    h.yaw_capable = false;
+    h.i_heading = cfg_.i_heading_l2;
+    const double v = std::max(in.speed_mps, cfg_.cog_speed_thresh_mps);
+    h.cov_rad = cfg_.cov_h_m / v / cfg_.cog_diff_dt_s;
+    h.heading_valid = false;
+    if (last_valid_heading_rad_) h.heading_rad = *last_valid_heading_rad_;
+    h.age_s = last_valid_heading_rad_ ? (now_s - last_valid_mono_s_) : 0.0;
   } else {
     h.source = "none";
     h.level = 3;

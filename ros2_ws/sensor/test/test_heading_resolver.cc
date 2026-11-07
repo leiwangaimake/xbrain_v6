@@ -210,6 +210,55 @@ static void test_anti_chatter_dwell() {
   CHECK(r.level() == 1);
 }
 
+// 99 U151: the two sources switch to each other on the tick, both ways.
+static void test_cog_blind_falls_to_a_usable_dual_antenna_at_once() {
+  // In L2 (dual antenna had failed), COG blind on one slow tick, the dual
+  // antenna usable again but not yet 2 s stable: the heading must stay VALID
+  // from the dual antenna. Mutation: keep the old L2-blind output -> invalid.
+  HeadingResolver r(cfg());
+  double now = 0.0;
+  drive(r, l1_good(), now, 2.5, 0.1);
+  drive(r, l2_only(), now, 1.0, 0.1);             // -> L2 active
+  CHECK(r.level() == 2);
+  HeadingInputs slow = l1_good();                 // dual antenna back, speed dips
+  slow.speed_mps = 0.2;
+  ResolveResult res = r.update(slow, now); now += 0.1;
+  CHECK(r.level() == 2);                          // level dwell unchanged
+  CHECK(res.heading.heading_valid);
+  CHECK(res.heading.source == "dual_antenna");
+  CHECK(res.heading.yaw_capable);
+  CHECK(near(res.heading.heading_rad, 0.0, 1e-9));   // 90 deg true -> 0 ENU
+}
+
+static void test_failed_baseline_falls_to_a_live_cog_at_once() {
+  // In L1 while moving, the baseline fails: COG is already live, so the very
+  // first bad tick answers COG (no 0.5 s on a stale dual heading). Mutation:
+  // old L1 output -> source dual_antenna on the bad tick.
+  HeadingResolver r(cfg());
+  double now = 0.0;
+  drive(r, l1_good(), now, 2.5, 0.1);             // L1, moving, COG live
+  ResolveResult res = r.update(l2_only(), now); now += 0.1;
+  CHECK(r.level() == 1);                          // the degrade dwell still runs
+  CHECK(res.heading.heading_valid);
+  CHECK(res.heading.source == "cog");
+  CHECK(!res.heading.yaw_capable);
+}
+
+static void test_both_usable_keeps_the_level_preference() {
+  // L2 active and the dual antenna usable again: COG until the 2 s recover
+  // dwell promotes to L1, then dual antenna (preferred once stable). Mutation:
+  // prefer dual antenna at once -> chatter on every flicker.
+  HeadingResolver r(cfg());
+  double now = 0.0;
+  drive(r, l1_good(), now, 2.5, 0.1);
+  drive(r, l2_only(), now, 1.0, 0.1);
+  ResolveResult res = r.update(l1_good(), now); now += 0.1;
+  CHECK(res.heading.source == "cog" && res.heading.heading_valid);
+  drive(r, l1_good(), now, 2.5, 0.1);
+  res = r.update(l1_good(), now);
+  CHECK(r.level() == 1 && res.heading.source == "dual_antenna");
+}
+
 int main() {
   test_l3_to_l1_and_fields();
   test_l1_to_l2_degrade();
@@ -220,6 +269,9 @@ int main() {
   test_l3_fields();
   test_blind_timeout();
   test_anti_chatter_dwell();
+  test_cog_blind_falls_to_a_usable_dual_antenna_at_once();
+  test_failed_baseline_falls_to_a_live_cog_at_once();
+  test_both_usable_keeps_the_level_preference();
   if (g_failures == 0) {
     std::printf("ALL HEADING RESOLVER TESTS PASSED\n");
     return 0;
