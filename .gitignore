@@ -71,6 +71,9 @@ run/
 # ── 日志
 *.log
 logs/
+# Orbbec 相机 SDK 在进程当前目录写 Log/OrbbecSDK.log.txt，*.log 挡不住 .txt 后缀
+# （用户 2026-11-09 定：运行日志不入库）。已入库的 ros2_ws/perception 那份照旧跟踪
+**/Log/OrbbecSDK.log*
 
 # ── ★★★ 密钥与证书：🚫 绝不入库
 # CHS-A 走 DTLS/TLS，云端对接有鉴权 —— 任何一个泄漏都是现场事故
