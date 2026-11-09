@@ -1,0 +1,17 @@
+{
+  "record": "perception-engine-build-v1",
+  "model": "coco80",
+  "onnx": {"path": "/home/nvidia/perception_claude_20261020/models/inputs/yolo11n-seg.onnx", "sha256": "0ed76fd678a24eecd964f1ae72a025d19064d6f79aeee84421e8a84ad2d52a90", "bytes": 11719607},
+  "engine": {"path": "/home/nvidia/perception_claude_20261020/models_r5_608j26/coco80_dla0_int8_g0504_26.engine", "sha256": "ef768ab935ace25bf4c0d15b9f0c5ce0d9b0311e896f8ac57ddc6c927dab5321", "bytes": 5827948},
+  "flags": {"fp16": true, "int8": true, "dla": true, "dla_core": 0, "gpu_fallback": true, "workspace_mb": 1024, "input_size": 640, "input_height": 640},
+  "int8_plan": {"ranges": {"path": "/home/nvidia/perception_claude_20261020/int8_assets_coco80_20261010/COCO80_TRT103_MinMax_calibration1000.cache", "sha256": "e2405fdc09ae22dcaabe7185a428d3c4ffaa27e1e5123954a43e5d02d6469c03", "header": "TRT-100300-MinMaxCalibration", "entries": 378}, "fp16_layers": {"path": "/home/nvidia/perception_claude_20261020/int8_assets_coco80_20261010/coco80_int8_fp16_layers_g0504.txt", "sha256": "93495ada0f3cdd1f0db468a60b7e502e4461b3a7586b523255d91b1fd30138af", "count": 129}},
+  "tensorrt": {"header": "10.3.0.30", "library": 100300},
+  "cuda": {"runtime": 12060, "driver": 12060},
+  "l4t": "# R36 (release), REVISION: 4.3, GCID: 38968081, BOARD: generic, EABI: aarch64, DATE: Wed Jan  8 01:49:37 UTC 2025",
+  "model_name": "NVIDIA Jetson Orin NX Engineering Reference Developer Kit Super ",
+  "host": "miivii-tegra", "kernel": "5.15.148-tegra",
+  "boot_id": "24f2cd61-a12b-423d-938b-454d89c27916",
+  "builder_sha256": "5bdd73552067781f3feadcc81125c49286270a5f03219c50ac44d43e9c3e6e48",
+  "resolved_config": "/run/xbrain/resolved/perception.yaml", "pipeline_digest": "bbbac54c43d015c17745a945fd435c4730b9ec873215abf9efe3b29ceef36135", "runtime_digest": "c46f436ae74a370981635f32087592224ee76fa9004671f9bfc80b685331d4bf",
+  "wall_ms_all_engines": 128189
+}

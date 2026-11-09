@@ -1,0 +1,22 @@
+{
+  "build_env": {"detail": "active12_teacher608_dla1_fp16_gpufb.engine sha256 87d914625baee2097b38812a7ef0dc6670a00cdfc7f77ca35ced69b290df4ce0 (8010852 B) built on this machine by perception_engine_build; build record /opt/xbrain_v6/ros2_ws/perception/models/active12_teacher608_dla1_fp16_gpufb.engine.build_env.json sha256 847185add59665537b1b84703a78e6e4e3f808f9527252d2d07645009442a929: TensorRT 10.3.0.30, # R36 (release), REVISION: 4.3, GCID: 38968081, BOARD: generic, EABI: aarch64, DATE: Wed Jan  8 01:49:37 UTC 2025, onnx sha256 e4d19e972f02253173b47a05f0811aceff5c9862493928ed786ed1270f0c4535, flags {\"dla\": true, \"dla_core\": 1, \"fp16\": true, \"gpu_fallback\": true, \"input_height\": 608, \"input_size\": 896, \"int8\": false, \"workspace_mb\": 1024}", "status": "RECORDED_AT_BUILD"},
+  "consumed_inputs": {"dual_class_schema": "c00cdc6ef6d72101e60a405a54cf404ed12af54b458dfaf29dd2ed15a1ba8505", "dual_runtime_config": "dd6f857d79492973b0c2910ed11430587922c58c9f00da900521f3ea9fdc0aca"},
+  "engine_bytes": 8010852,
+  "engine_file": "active12_teacher608_dla1_fp16_gpufb.engine",
+  "engine_sha256": "87d914625baee2097b38812a7ef0dc6670a00cdfc7f77ca35ced69b290df4ce0",
+  "expected_detections": 1,
+  "expected_map_detections": 2,
+  "expected_sha256": "cad17e312f66a850e13c78026773ce77bc79dc14950c19591e0ccac6a717128f",
+  "input_cols": 1280,
+  "input_file": "input.png",
+  "input_pixels_sha256": "6256614b47dcfcb5081dde5b07b1fd798d492a9ffaef32ee754cda4b548b475c",
+  "input_rows": 800,
+  "input_sha256": "34b3bca4f5b60e388f5fc63815cda206ac73ee5bb31ef074c88e2f47db784880",
+  "partition": "active12",
+  "pipeline_digest": "740a2184f6399bff05ac7684da70409ea998243e7fd4ef1055d4b087b5c424d6",
+  "rule": "psc4-canon-v1",
+  "runtime_digest": "c0ac16b49ef399427af01b75ccc50f5c3e1329c9508bbf71469b6047fbc5c83f",
+  "sealed_repeats": 20,
+  "timeout_ms": 20000,
+  "version": 2
+}

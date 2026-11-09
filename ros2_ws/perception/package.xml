@@ -1,0 +1,45 @@
+<?xml version="1.0"?>
+<?xml-model href="http://download.ros.org/schema/package_format3.xsd" schematypens="http://www.w3.org/2001/XMLSchema"?>
+<!--
+  Copyright (c) 2026 Hachist Robotics
+  上海哈船智能船舶技术有限公司
+
+  File: package.xml
+  Description: ROS2 package manifest for the hacrobot perception wrapper node.
+  Author: diaofanghaiyang@hachist.com
+  Date: 2026-05-24
+-->
+<package format="3">
+  <name>perception</name>
+  <version>0.1.0</version>
+  <description>ROS2 wrapper node for the Hacrobot xBrain perception service.</description>
+  <maintainer email="diaofanghaiyang@hachist.com">Hachist Robotics</maintainer>
+  <license>Proprietary</license>
+
+  <buildtool_depend>ament_cmake</buildtool_depend>
+
+  <depend>rclcpp</depend>
+  <depend>std_msgs</depend>
+  <depend>tf2</depend>
+  <depend>tf2_geometry_msgs</depend>
+  <depend>tf2_ros</depend>
+
+  <build_depend>libopencv-dev</build_depend>
+  <build_depend>yaml-cpp</build_depend>
+  <build_depend>pkg-config</build_depend>
+  <build_depend>libavformat-dev</build_depend>
+  <build_depend>libavcodec-dev</build_depend>
+  <build_depend>libavutil-dev</build_depend>
+  <build_depend>libswscale-dev</build_depend>
+
+  <exec_depend>libopencv-dev</exec_depend>
+  <exec_depend>yaml-cpp</exec_depend>
+  <exec_depend>libavformat-dev</exec_depend>
+  <exec_depend>libavcodec-dev</exec_depend>
+  <exec_depend>libavutil-dev</exec_depend>
+  <exec_depend>libswscale-dev</exec_depend>
+
+  <export>
+    <build_type>ament_cmake</build_type>
+  </export>
+</package>

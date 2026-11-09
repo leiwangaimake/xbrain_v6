@@ -1,0 +1,75 @@
+[10/14 15:30:23.553352][info][1709554][HostTimestampProvider.cpp:36] Update clock type to: realtime(0)
+[10/14 15:30:23.553851][info][1709554][LinuxUsbPal.cpp:334] Create PollingDeviceWatcher!
+[10/14 15:30:23.553866][info][1709554][DeviceManager.cpp:25] Current found device(s): (0)
+[10/14 15:30:23.553871][info][1709554][DeviceManager.cpp:463] Enable net device enumeration: true
+[10/14 15:30:24.557097][info][1709554][DeviceManager.cpp:25] Current device(s) list: (1)
+[10/14 15:30:24.557120][info][1709554][DeviceManager.cpp:30] 	- Name: Gemini 338Le, PID: 0x081b, SN/ID: CHL5663000DS, Connection: Ethernet, MAC:54:14:FD:24:F4:BE, ip:192.168.1.10
+[10/14 15:30:28.477107][info][1709648][HostTimestampProvider.cpp:36] Update clock type to: realtime(0)
+[10/14 15:30:28.477353][info][1709648][LinuxUsbPal.cpp:334] Create PollingDeviceWatcher!
+[10/14 15:30:28.477363][info][1709648][DeviceManager.cpp:25] Current found device(s): (0)
+[10/14 15:30:28.477367][info][1709648][DeviceManager.cpp:463] Enable net device enumeration: true
+[10/14 15:30:29.480354][info][1709648][DeviceManager.cpp:25] Current device(s) list: (1)
+[10/14 15:30:29.480376][info][1709648][DeviceManager.cpp:30] 	- Name: Gemini 338Le, PID: 0x081b, SN/ID: CHL5663000DS, Connection: Ethernet, MAC:54:14:FD:24:F4:BE, ip:192.168.1.10
+[10/14 15:30:31.483458][info][1709648][GVCPClient.cpp:175] Change net device ip config successfully. MAC: 54:14:FD:24:F4:BE
+[10/14 15:30:31.483496][warning][1709648][NetDeviceEnumerator.cpp:277] 1 net device removed:
+[10/14 15:30:31.483540][warning][1709648][NetDeviceEnumerator.cpp:279]   - Name: Gemini 338Le, PID: 0x081B, SN/ID: CHL5663000DS, MAC:54:14:FD:24:F4:BE, IP:192.168.1.10
+[10/14 15:30:31.483599][info][1709733][DeviceManager.cpp:335] Device changed! removed: 1, added: 0
+[10/14 15:30:31.483612][info][1709733][DeviceManager.cpp:25] Removed device(s) list: (1)
+[10/14 15:30:31.483618][info][1709733][DeviceManager.cpp:30] 	- Name: Gemini 338Le, PID: 0x081b, SN/ID: CHL5663000DS, Connection: Ethernet, MAC:54:14:FD:24:F4:BE, ip:192.168.1.10
+[10/14 15:30:31.483622][info][1709733][DeviceManager.cpp:25] Current device(s) list: (0)
+[10/14 15:30:32.501253][info][1709782][HostTimestampProvider.cpp:36] Update clock type to: realtime(0)
+[10/14 15:30:32.501740][info][1709782][LinuxUsbPal.cpp:334] Create PollingDeviceWatcher!
+[10/14 15:30:32.501755][info][1709782][DeviceManager.cpp:25] Current found device(s): (0)
+[10/14 15:30:32.501759][info][1709782][DeviceManager.cpp:463] Enable net device enumeration: true
+[10/14 15:30:33.505063][info][1709782][DeviceManager.cpp:25] Current device(s) list: (1)
+[10/14 15:30:33.505085][info][1709782][DeviceManager.cpp:30] 	- Name: Gemini 338Le, PID: 0x081b, SN/ID: CHL5663000DS, Connection: Ethernet, MAC:54:14:FD:24:F4:BE, ip:192.168.13.10
+[10/14 15:34:27.506912][info][1715250][HostTimestampProvider.cpp:36] Update clock type to: realtime(0)
+[10/14 15:34:27.507343][info][1715250][LinuxUsbPal.cpp:334] Create PollingDeviceWatcher!
+[10/14 15:34:27.507357][info][1715250][DeviceManager.cpp:25] Current found device(s): (0)
+[10/14 15:34:27.507361][info][1715250][DeviceManager.cpp:463] Enable net device enumeration: true
+[10/14 15:34:28.510754][info][1715250][DeviceManager.cpp:25] Current device(s) list: (1)
+[10/14 15:34:28.510772][info][1715250][DeviceManager.cpp:30] 	- Name: Gemini 338Le, PID: 0x081b, SN/ID: CHL5663000DS, Connection: Ethernet, MAC:54:14:FD:24:F4:BE, ip:192.168.1.10
+[10/14 15:34:32.666448][info][1715336][HostTimestampProvider.cpp:36] Update clock type to: realtime(0)
+[10/14 15:34:32.666687][info][1715336][LinuxUsbPal.cpp:334] Create PollingDeviceWatcher!
+[10/14 15:34:32.666698][info][1715336][DeviceManager.cpp:25] Current found device(s): (0)
+[10/14 15:34:32.666702][info][1715336][DeviceManager.cpp:463] Enable net device enumeration: true
+[10/14 15:34:33.670198][info][1715336][DeviceManager.cpp:25] Current device(s) list: (1)
+[10/14 15:34:33.670221][info][1715336][DeviceManager.cpp:30] 	- Name: Gemini 338Le, PID: 0x081b, SN/ID: CHL5663000DS, Connection: Ethernet, MAC:54:14:FD:24:F4:BE, ip:192.168.1.10
+[10/14 15:34:35.673014][info][1715336][GVCPClient.cpp:175] Change net device ip config successfully. MAC: 54:14:FD:24:F4:BE
+[10/14 15:34:35.673052][warning][1715336][NetDeviceEnumerator.cpp:277] 1 net device removed:
+[10/14 15:34:35.673129][warning][1715336][NetDeviceEnumerator.cpp:279]   - Name: Gemini 338Le, PID: 0x081B, SN/ID: CHL5663000DS, MAC:54:14:FD:24:F4:BE, IP:192.168.1.10
+[10/14 15:34:35.673201][info][1715428][DeviceManager.cpp:335] Device changed! removed: 1, added: 0
+[10/14 15:34:35.673214][info][1715428][DeviceManager.cpp:25] Removed device(s) list: (1)
+[10/14 15:34:35.673220][info][1715428][DeviceManager.cpp:30] 	- Name: Gemini 338Le, PID: 0x081b, SN/ID: CHL5663000DS, Connection: Ethernet, MAC:54:14:FD:24:F4:BE, ip:192.168.1.10
+[10/14 15:34:35.673225][info][1715428][DeviceManager.cpp:25] Current device(s) list: (0)
+[10/14 15:34:36.692045][info][1715469][HostTimestampProvider.cpp:36] Update clock type to: realtime(0)
+[10/14 15:34:36.692501][info][1715469][LinuxUsbPal.cpp:334] Create PollingDeviceWatcher!
+[10/14 15:34:36.692518][info][1715469][DeviceManager.cpp:25] Current found device(s): (0)
+[10/14 15:34:36.692523][info][1715469][DeviceManager.cpp:463] Enable net device enumeration: true
+[10/14 15:34:37.696188][info][1715469][DeviceManager.cpp:25] Current device(s) list: (1)
+[10/14 15:34:37.696210][info][1715469][DeviceManager.cpp:30] 	- Name: Gemini 338Le, PID: 0x081b, SN/ID: CHL5663000DS, Connection: Ethernet, MAC:54:14:FD:24:F4:BE, ip:192.168.13.10
+[10/14 15:38:56.538631][info][1721198][HostTimestampProvider.cpp:36] Update clock type to: realtime(0)
+[10/14 15:38:56.538847][info][1721198][LinuxUsbPal.cpp:334] Create PollingDeviceWatcher!
+[10/14 15:38:56.538857][info][1721198][DeviceManager.cpp:25] Current found device(s): (0)
+[10/14 15:38:56.538861][info][1721198][DeviceManager.cpp:463] Enable net device enumeration: true
+[10/14 15:38:57.542342][info][1721198][DeviceManager.cpp:25] Current device(s) list: (1)
+[10/14 15:38:57.542361][info][1721198][DeviceManager.cpp:30] 	- Name: Gemini 338Le, PID: 0x081b, SN/ID: CHL5663000DS, Connection: Ethernet, MAC:54:14:FD:24:F4:BE, ip:192.168.1.10
+[10/14 15:39:01.293989][info][1721292][HostTimestampProvider.cpp:36] Update clock type to: realtime(0)
+[10/14 15:39:01.294221][info][1721292][LinuxUsbPal.cpp:334] Create PollingDeviceWatcher!
+[10/14 15:39:01.294231][info][1721292][DeviceManager.cpp:25] Current found device(s): (0)
+[10/14 15:39:01.294235][info][1721292][DeviceManager.cpp:463] Enable net device enumeration: true
+[10/14 15:39:02.297871][info][1721292][DeviceManager.cpp:25] Current device(s) list: (1)
+[10/14 15:39:02.297893][info][1721292][DeviceManager.cpp:30] 	- Name: Gemini 338Le, PID: 0x081b, SN/ID: CHL5663000DS, Connection: Ethernet, MAC:54:14:FD:24:F4:BE, ip:192.168.1.10
+[10/14 15:39:04.300823][info][1721292][GVCPClient.cpp:175] Change net device ip config successfully. MAC: 54:14:FD:24:F4:BE
+[10/14 15:39:04.300863][warning][1721292][NetDeviceEnumerator.cpp:277] 1 net device removed:
+[10/14 15:39:04.300927][warning][1721292][NetDeviceEnumerator.cpp:279]   - Name: Gemini 338Le, PID: 0x081B, SN/ID: CHL5663000DS, MAC:54:14:FD:24:F4:BE, IP:192.168.1.10
+[10/14 15:39:04.301009][info][1721347][DeviceManager.cpp:335] Device changed! removed: 1, added: 0
+[10/14 15:39:04.301020][info][1721347][DeviceManager.cpp:25] Removed device(s) list: (1)
+[10/14 15:39:04.301026][info][1721347][DeviceManager.cpp:30] 	- Name: Gemini 338Le, PID: 0x081b, SN/ID: CHL5663000DS, Connection: Ethernet, MAC:54:14:FD:24:F4:BE, ip:192.168.1.10
+[10/14 15:39:04.301031][info][1721347][DeviceManager.cpp:25] Current device(s) list: (0)
+[10/14 15:39:05.319222][info][1721393][HostTimestampProvider.cpp:36] Update clock type to: realtime(0)
+[10/14 15:39:05.319468][info][1721393][LinuxUsbPal.cpp:334] Create PollingDeviceWatcher!
+[10/14 15:39:05.319479][info][1721393][DeviceManager.cpp:25] Current found device(s): (0)
+[10/14 15:39:05.319482][info][1721393][DeviceManager.cpp:463] Enable net device enumeration: true
+[10/14 15:39:06.322815][info][1721393][DeviceManager.cpp:25] Current device(s) list: (1)
+[10/14 15:39:06.322837][info][1721393][DeviceManager.cpp:30] 	- Name: Gemini 338Le, PID: 0x081b, SN/ID: CHL5663000DS, Connection: Ethernet, MAC:54:14:FD:24:F4:BE, ip:192.168.13.10

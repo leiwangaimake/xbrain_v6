@@ -1,0 +1,348 @@
+# Copyright (c) 2026 Hachist Robotics
+# Author: diaofanghaiyang@hachist.com
+# 上海哈船智能船舶技术有限公司
+# File: perception.dev_candR.yaml
+# Brief: DEV-ONLY resolved product fixture for the formal R6 perception service.
+#
+# Description:
+# NOT a calibration result and NOT a production configuration. Sources:
+#   * perception.profile/objects/objects_inject/extrinsic: upstream
+#     contract_r6/tests/perception/samples/resolved_perception.dev.yaml ([dev]
+#     assumed values), plus the two 19 v1.5 normal-fit keys that sample lacks,
+#     filled with the synthetic values of tests/test_rns_geometry_config.cpp.
+#     Fallback-branch keys are null (branch closed, r6 reply L60).
+#   * angle_min_rad -0.78543 (not the sample's -0.785398): the implementation's
+#     float32 symmetric-domain rule; the discrepancy is raised for a ruling.
+#   * extrinsic transform null: legal no-geometry mode (reply Q12).
+#   * capture.latency_fallback_ms 23: 19 section 2.2 first three budget rows
+#     (17+4+2 ms), NOT measured; reproduces the cand_R estimate (reply Q5).
+#   * med2 1280x800@30, 4000 kbps: cand_R validated media load only; the MED-2
+#     media table is still pending (reply Q3) -- runs using it are diagnostic.
+#   * perception.pipeline: cand_R frozen template sha256
+#     346a9591542baae0a0bd95226d071d8f7ae663ce059356ee02cf7c9979855ba2 minus
+#     retired sections (rtsp, hevc, zenoh, pointcloud, rtsp_forward, lidar,
+#     extrinsic_base_lidar, calibration, visualization), plus runtime switches
+#     equal to cand_R candidate.env (diagnostic switches absent; the retired
+#     safe_mask_seed unset / safe_mask_build "0" pair left in the level-3 trim)
+#     except active12_mask_binary_impl: compare (bit-identical binary path,
+#     user decision 2026-09-29; cand_R had legacy), and media.
+
+perception:
+  profile:
+    angle_min_rad:    -0.78543   # [dev] exact float32 symmetric centre for step 0.008727, n 181; upstream sample -0.785398 is not symmetric (question batch 2)
+    angle_step_rad:   0.008727
+    n_bins:           181
+    range_max_m:      6.0
+    dr_m:             0.25
+    blind_near_lo_m:  0.59
+    h_tol_m:          0.08
+    z_pass_m:         0.75
+    cover_min:        0.6
+    omega_max_rps:    1.2
+    seg_max_age_ms:   300
+    dfree_cap_fallback_m: null
+    plane_fit_min_inlier_frac: 0.5
+    plane_fit_resid_max_m: 0.02
+    fallback_tilt_tol_deg: null
+    fallback_tilt_err_max_deg: null
+    fallback_align_err_m: null
+    tau_T:            0.7
+    slope_max_deg:    25.0
+    sigma_max_m:      0.06
+    eps_neg:          0.15
+    w_h_m:            0.5
+    v_ego_max_mps:    2.0
+    m_jitter_m:       0.10
+  objects:
+    depth_quality_fair: 0.6
+    depth_quality_poor: 0.3
+  status:
+    window_s:         10.0
+  capture:
+    latency_fallback_ms: 23
+  extrinsic_base_cam:
+    translation:      [null, null, null]
+    rotation_xyzw:    [null, null, null, null]
+    calib_record:     null
+    calib_sha256:     null
+    residual_max_m:   null
+  med2:
+    rgbd_rtsp_port:   18083
+    rgbd_pub_port:    null
+    width: 1280
+    height: 800
+    fps: 30
+    bitrate_kbps: 4000
+    gop: 30
+  objects_inject:
+    objects_stale_ms: 100
+  debug:
+    pointcloud_enable: false
+    legacy_keys_enable: false
+  zenoh:
+    rt_endpoint:      "tcp/127.0.0.1:7449"
+    gen_endpoint:     "tcp/127.0.0.1:7447"
+  pipeline:
+    runtime:
+      preprocess_impl: fused
+      coco_mask_resize: unset
+      coco_mask_roi2: "1"
+      active12_mask_rows: "1"
+      depth_scan_fast: "1"
+      async_log: "1"
+      inference_profile: "1"
+      mask_output_copy: clone
+      post_role_swap: "0"
+      active12_mask_binary_impl: compare
+      active12_mask_impl: serial
+      two_slot_jit: "1"
+      jit_async_submit: "1"
+      jit_bind_delay_ms: "10.6921890700000084"
+      jit_fresh_bind: "0"
+      jit_second_chance: "0"
+      jit_frame_move: "1"
+      jit_probe_log: compact
+      jit_empty_acquire: "2"
+      dla_active_lead_us: "2000"
+      infer_min_interval_ms: "0"
+      inference_handoff_first: "0"
+      capture_affinity_pin2: "1"
+      capture_sdk_threads_cpu: "off"
+      capture_min_path_us: "30767"
+      gemini_opencv_threads: "1"
+      depth_sort_impl: codesort
+      parallel_depth_sample: "1"
+      gemini_mjpeg_decode: sdk
+      sup_frame_log: "0"
+      traversable_seg: "on"
+      active12_padding_anchor_guard: "1"
+      semantic_publish_guard_ms: "20"
+      objects_release_delay_ms: "0"
+      objects_release_log: "0"
+      object_geometry_points: exact
+      process_opencv_threads: "2"
+    media:
+      codec: nvv4l2h265enc
+      path: /rgb
+    ros:
+      enable: true
+      tf_enable: false     # [dev] no odom<-base_link TF source on the bench (quadruped absent, reply Q15)
+      odom_frame: odom
+      base_frame: base_link
+    camera:
+      driver: orbbec_gemini338le
+      serial: "CHL5663000DS"
+      color:
+        width: 1280
+        height: 800
+        fps: 30
+        device_format: mjpg
+      depth:
+        # Vendor-designated accuracy-validation profile for Gemini 338Le development.
+        width: 640
+        height: 400
+        fps: 30
+        device_format: y16
+      # Production default remains the accepted 640x400 hardware-alignment path.
+      # The 1280x800 software-D2C candidate must opt in explicitly during A/B/A.
+      alignment_mode: sw_d2c
+      align_to_color: true
+      output:
+        # Canonical RGB-D frame contract after the selected D2C mode and normalization.
+        width: 1280
+        height: 800
+        fps: 30
+
+      # Legacy network-camera CGI controller is outside the RGB-D capture path.
+      # (Not read by any R6 code.)
+      control_enabled: false
+      # Do not copy the old camera.intrinsics block: M2 capture acceptance uses only
+      # the aligned intrinsics and depth scale reported by the Orbbec SDK in FrameData.
+    inference:
+      model_path: "/home/nvidia/perception_test_338Le/models/yolo11n-seg.onnx"
+      trt_engine_path: "/home/nvidia/perception_test_338Le/models/yolo11n-seg-dla0-fp16.engine"
+      use_dla: true
+      dla_core: 0
+      trt_workspace_mb: 1024
+      int8: false
+      # D2 (2026-06-26, V5): the stock YOLOv11n-seg COCO model, then a placeholder for a
+      # planned custom inspection model. R6 runs COCO80 plus Active12 (dual_model below);
+      # the class names come from the code and the sealed class schema, and model_version
+      # is read but nothing in R6 uses it.
+      model_version: "yolov11n-seg-coco-placeholder"
+      # Keep the stock COCO placeholder precision-first: test objects may change, so
+      # do not lower thresholds for a cup/bottle or weak proxy merely to make the
+      # current scene look complete. Person remains conservative because a chair
+      # misclassified as a person is safety-significant; suppress the known broad
+      # refrigerator alternative as well.
+      per_class_conf:
+        # Thin/hollow chairs are a native COCO class but sit well below the global
+        # threshold after large foreground occlusions change image exposure. Admit
+        # 0.10+ chair evidence, then rely on three consecutive hits and bounded
+        # 15-frame coasting; field A/B must reject this if extra chair tracks appear.
+        chair: 0.10
+        person: 0.40
+        refrigerator: 0.50
+      conf_threshold: 0.30
+      # Canary only: recover temporally persistent, depth-supported obstacle
+      # candidates without lowering the normal detector threshold or adding
+      # object-specific exceptions. Set to 0 to disable with legacy parity.
+      low_confidence_floor: 0.02
+      low_confidence_max_candidates: 8
+      iou_threshold: 0.45
+      mask_threshold: 0.50
+      input_size: 640
+      use_fp16: true
+      timeout_ms: 100
+
+    # Isolated dual-model canary. This file already carries the accepted M4 weak
+    # canary settings; only this candidate enables the supplemental active12 branch.
+    dual_model:
+      enabled: true
+      runtime_config_path: "/home/nvidia/perception_test_338Le/config/dual_model_runtime_config.json"
+      class_schema_path: "/home/nvidia/perception_test_338Le/config/class_schema_94.json"
+      active_model_path: "/home/nvidia/perception_test_338Le/runtime/coverage_epoch8_target_20260910.vlcXYw/build/inputs/diagnostic_qdq_noqdq.onnx"
+      active_engine_path: "/home/nvidia/perception_test_338Le/runtime/coverage_epoch8_target_20260910.vlcXYw/build/NON_CANDIDATE.engine"
+      use_dla: true
+      dla_core: 1
+      use_fp16: true
+      allow_gpu_fallback: true
+      workspace_mb: 1024
+    queue:
+      # Freshest-frame policy removes one queued frame (~33 ms) without changing
+      # the capture -> inference -> fusion -> publish topology.
+      frame_queue_size: 1
+      # 1 = latest-wins result handoff (19 P19-2, B8-4): a newer complete result
+      # overwrites an unconsumed one, accounted by frame_id (RESULT_HANDOFF).
+      result_queue_size: 1
+    log:
+      level: "INFO"
+    tracking:
+      track_thresh: 0.50
+      track_buffer_frames: 30
+      min_hits: 3
+      # Weak obstacle candidates require more consecutive evidence than normal
+      # detections before they can be published.
+      low_confidence_min_hits: 5
+      max_age: 5
+      # Thin/hollow chair detections occasionally dip below the global confidence
+      # threshold for roughly half a second. Preserve a confirmed chair for at most
+      # 15 inference frames (~0.55s here): long enough to prevent visible flashing,
+      # still below the 1s stale-object ceiling used by the dynamic acceptance test.
+      per_class_max_age:
+        chair: 15
+      # 0.25 (was 0.80): THIS implementation's match_thresh is a MINIMUM IoU
+      # (bytetrack.cpp greedyMatch: score >= match_thresh), unlike upstream
+      # ByteTrack where 0.8 is a cost ceiling (~IoU>=0.2). At 0.80 any object
+      # moving >~10% of its size between frames failed association -> its track
+      # froze in place (no motion model) and died after track_buffer_frames
+      # (~1.2s @25fps) -> the HMI box-lags-then-vanishes symptom (2026-07-03).
+      match_thresh: 0.25
+      # EMA gain for the published box. Association and mask/depth use the raw box,
+      # but duplicate suppression and public-ID handoff also consume bbox_2d.
+      # Therefore changing this value can change public output cardinality/identity;
+      # 0.20 remains frozen while raw-vs-EMA display lag is measured.
+      bbox_ema_alpha: 0.20
+      # The horizontal chair alternates between two valid-looking vertical extents.
+      # Smooth only its displayed rectangle more strongly; association, mask and
+      # depth sampling still use the current raw inference geometry.
+      per_class_bbox_ema_alpha:
+        chair: 0.05
+    depth:
+      # Pick the nearest sufficiently dense depth band, rejecting isolated near noise
+      # and far background visible through hollow objects such as chairs.
+      sample_mode: "nearest_cluster"  # nearest_cluster / percentile / median
+      percentile: 0.20                # fallback when no dense cluster is found
+      cluster_width_m: 0.12
+      # 0.03 admitted a short-lived 1.39m false cluster on the chair in the first
+      # 80-frame field run; 0.08 still accepts thin foreground bands while requiring
+      # materially more support than a small RealSense speckle/multipath patch.
+      # (Tuned on the V5 D435; the value is kept unchanged for the Gemini 338Le.)
+      cluster_min_fraction: 0.08
+      cluster_min_pixels: 8
+      # Report a robust near-surface quantile inside the density-qualified band.
+      # Unlike a raw minimum, p10 still has thousands of supporting pixels on the
+      # current bucket/chair scene; unlike the band median, it does not add roughly
+      # half a 12 cm window to an obstacle's closest-surface distance.
+      nearest_cluster_output_percentile: 0.10
+      # A new depth band that jumps by more than 20 cm must persist for
+      # jump_confirmation_frames consecutive valid depth updates of the track (each new sample
+      # within 12 cm of the previous candidate) before it replaces the accepted distance; the
+      # older distance is published meanwhile (five updates for 6, about 0.2 s at 25 Hz, longer
+      # with invalid or skipped updates). 6 was chosen on 2026-07-28 from a D435 occlusion
+      # replay (wrong distances published: 11/8/5/2/0 samples for 2/3/4/5/6 confirmations)
+      # and deployed; its suitability for the Gemini 338Le is not yet validated. The code
+      # default is 2, which this note first described.
+      jump_threshold_m: 0.20
+      jump_candidate_tolerance_m: 0.12
+      jump_confirmation_frames: 6
+    fusion:
+      # Nothing in R6 reads this section (the R6 service still requires it to be present).
+      # The weak-obstacle gate's 5 pixels / 6 m are fixed in code (weak_obstacle_policy.hpp).
+      min_fused_points: 5
+      max_depth_stddev: 0.80
+      polygon_simplify_epsilon: 2.0
+      min_mask_pixels: 20
+      # V5 LiDAR-fusion debug overlay switch; nothing in R6 reads it.
+      debug_save_overlay: false
+
+    # T11 evidence capture (V5 capture command, kept in R6 on the ROS topics)
+    capture:
+      # ring buffer of recent decoded frames; a capture command picks the one nearest
+      # its image_time_hint. The ring takes one frame per inference result the Objects loop
+      # accepts (about 25 Hz on 1.8), so 20 frames span about 0.76 s (the V5 note assumed
+      # 10 Hz, ~2 s). There is no maximum matching error: a hint older than the ring still
+      # selects the oldest frame and the receipt reports success.
+      frame_buffer_size: 20
+      # evidence dir (data/evidence/) byte budget in MB; oldest jpgs are LRU-pruned
+      # after each save (deleted paths returned in capture_done.pruned_paths). 0 = off.
+      evidence_quota_mb: 1800
+    velocity:
+      dt_max_s: 0.5
+      centroid_ema_alpha: 0.35
+      # The chair segmentation alternates between seat/back extents and moves its
+      # raw 3D centroid sideways. Stabilize only that static inspection class; person
+      # and other dynamic classes retain the responsive global gain.
+      per_class_centroid_ema_alpha:
+        chair: 0.05
+      # Estimate over a bounded window instead of adjacent ~37 ms frames; this
+      # preserves motion around 0.2 m/s while rejecting centimetre-scale D435 jitter
+      # (tuned on the V5 D435; kept for the Gemini 338Le).
+      window_s: 0.30
+      # Require two consecutive displacement windows with the same direction before
+      # publishing motion. Alternating foreground/background depth-cluster choices
+      # then remain zero-speed, while sustained motion is confirmed one window later.
+      motion_confirmation_windows: 2
+      # Camera-only, category-independent Z evidence gate. The static far-target
+      # sample has selected-depth stddev 0.026-0.037 m; combining current + anchor
+      # in quadrature gives about 0.037-0.052 m, covering the observed 0.021-0.039 m
+      # false window displacements at multiplier 1.0. Cap the deadband at the existing
+      # conservative 0.06 m upper limit so larger sustained Z motion remains eligible.
+      # It was first enabled only in the V5 dual_stability_canary; the R6 production set
+      # enables it (below). Missing or non-finite stddev fails open to the pre-existing
+      # camera-XZ behavior.
+      camera_z_uncertainty_gate:
+        enabled: true
+        stddev_multiplier: 1.0
+        max_threshold_m: 0.06
+      # Normal semantic tracks keep the response needed for sustained slow motion.
+      static_displacement_m: 0.02
+      # Generic weak proxies use a larger class-independent deadzone because their
+      # proxy labels are not reliable enough to select semantic class overrides.
+      generic_static_displacement_m: 0.06
+      # Hollow chair masks move their selected 3D centroid more than solid objects
+      # even when stationary. Do not blunt motion sensitivity for every class.
+      per_class_static_displacement_m:
+        chair: 0.16
+      # 保守默认值, 待底盘 + RNS 联调采样后调优.
+      gating:
+        min_stable_frames: 10
+        min_depth_confidence: 0.5
+        skip_fusion_quality: ["depth_unreliable"]
+    odom:
+      # topic: not read by R6 (odometry would come through TF, refused today: ros.tf_enable).
+      topic: "/odom"
+      stale_ms: 200.0
+
+    # (The V5 extrinsic_base_lidar section this note introduced is retired in R6; the camera
+    # extrinsic is perception.extrinsic_base_cam.)

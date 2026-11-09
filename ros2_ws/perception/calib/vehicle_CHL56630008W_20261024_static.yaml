@@ -1,0 +1,27 @@
+calib_record:
+  schema_version: 1
+  record_id: vehicle-CHL56630008W-2026-10-24-static
+  scope: vehicle
+  created_utc: 2026-10-24T12:10:54Z
+  camera:
+    driver: orbbec_gemini338le
+    serial: CHL56630008W
+    depth_stream: 640x400_y16_30
+  base_frame:
+    name: base_link
+    origin: body centre projected on the floor, z up from the floor, x along the body (user 2026-10-24, 19 s7.1); static mean of 4 stands, camera rigid on body; yaw wall edge, x y tape
+  extrinsic_base_cam:
+    translation: [0.34499999999999997, 0.060088816533226362, 0.60563690729781749]
+    rotation_xyzw: [-0.4969808151352712, 0.50642291943399154, -0.49803192326726919, 0.49850787302322447]
+  method:
+    plane: depth_plane_fit
+    yaw: straight_edge_reference
+    xy: tape_measure
+  plane_fit:
+    frames: 120
+    inliers: 2548451
+    inlier_fraction: 0.83200787401574805
+    plane_fit_inlier_rms_m: 0.0040424516077433069
+  tool:
+    name: vehicle_static_merge
+    version: 1

@@ -1,0 +1,157 @@
+{
+  "version": "2026-07-31-supplement-v1",
+  "coordinate_contract": "All decoded boxes and binary masks passed to dual_model_merge.py must be restored to original-image coordinates.",
+  "branches": {
+    "coco80": {
+      "input_shape": [1, 3, 640, 640],
+      "confidence_threshold": 0.25,
+      "nms_iou_threshold": 0.7,
+      "mask_probability_threshold": 0.5,
+      "mask_logit_threshold": 0.0,
+      "class_aware_nms": true,
+      "max_detections": 300
+    },
+    "active12": {
+      "input_shape": [1, 3, 896, 896],
+      "confidence_threshold": 0.25,
+      "nms_iou_threshold": 0.7,
+      "mask_probability_threshold": 0.5,
+      "mask_logit_threshold": 0.0,
+      "class_aware_nms": true,
+      "max_detections": 300
+    }
+  },
+  "active12_local_classes": {
+    "0": "tree_trunk",
+    "1": "rock",
+    "2": "dirt_pile",
+    "3": "bush",
+    "4": "pole",
+    "5": "pillar",
+    "6": "pallet",
+    "7": "heavy_machinery",
+    "8": "traffic_cone",
+    "9": "barrier",
+    "10": "traversable_area",
+    "11": "pit"
+  },
+  "active12_to_global_id": {
+    "0": 80,
+    "1": 81,
+    "2": 82,
+    "3": 83,
+    "4": 84,
+    "5": 85,
+    "6": 86,
+    "7": 89,
+    "8": 90,
+    "9": 91,
+    "10": 92,
+    "11": 93
+  },
+  "reserved_inactive_global_ids": [87, 88],
+  "cross_model_merge": {
+    "generic_cross_model_nms": false,
+    "vehicle_heavy_conflict": {
+      "coco_vehicle_ids": [2, 5, 7],
+      "active_global_id": 89,
+      "box_iou_threshold": 0.3,
+      "mode": "audit_only",
+      "automatic_suppression_enabled": false,
+      "note": "0.3 is the sealed full-test conflict inventory threshold. The helper function and nine-image offline regression default to 0.5; pass this config value explicitly in deployment."
+    }
+  },
+  "audit_only_record_fields": [
+    "kind",
+    "old_index",
+    "active_index",
+    "old_class_id",
+    "active_class_id",
+    "box_iou",
+    "mode",
+    "old_suppressed"
+  ],
+  "safe_traversable": {
+    "traversable_global_id": 92,
+    "pit_global_id": 93,
+    "active_obstacle_global_ids": [
+      80,
+      81,
+      82,
+      83,
+      84,
+      85,
+      86,
+      89,
+      90,
+      91,
+      93
+    ],
+    "coco_navigation_obstacle_ids": [
+      0,
+      1,
+      2,
+      3,
+      5,
+      7,
+      9,
+      10,
+      11,
+      12,
+      13,
+      15,
+      16,
+      17,
+      18,
+      19,
+      24,
+      25,
+      26,
+      28,
+      32,
+      36,
+      56,
+      58,
+      60
+    ],
+    "coco_navigation_obstacle_names": [
+      "person",
+      "bicycle",
+      "car",
+      "motorcycle",
+      "bus",
+      "truck",
+      "traffic light",
+      "fire hydrant",
+      "stop sign",
+      "parking meter",
+      "bench",
+      "cat",
+      "dog",
+      "horse",
+      "sheep",
+      "cow",
+      "backpack",
+      "umbrella",
+      "handbag",
+      "suitcase",
+      "sports ball",
+      "skateboard",
+      "chair",
+      "potted plant",
+      "dining table"
+    ],
+    "operation_order": [
+      "union all global class 92 masks",
+      "subtract every active obstacle mask, including pit class 93",
+      "subtract every configured COCO navigation-obstacle mask",
+      "erode the remaining binary mask with an 11x11 elliptical kernel"
+    ],
+    "erosion_pixels": 5,
+    "erosion_kernel": "OpenCV MORPH_ELLIPSE, size=(2*erosion_pixels+1)^2, one iteration"
+  },
+  "tracking": {
+    "excluded_global_ids": [92],
+    "rule": "Call partition_tracker_detections(); class 92 is a map-like area output and must not enter the ordinary instance tracker."
+  }
+}

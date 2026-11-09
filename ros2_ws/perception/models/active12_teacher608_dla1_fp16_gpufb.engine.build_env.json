@@ -1,0 +1,17 @@
+{
+  "record": "perception-engine-build-v1",
+  "model": "active12",
+  "onnx": {"path": "/home/nvidia/perception_claude_20261020/st1010a/qat/active12_teacher_608x896.onnx", "sha256": "e4d19e972f02253173b47a05f0811aceff5c9862493928ed786ed1270f0c4535", "bytes": 11647213},
+  "engine": {"path": "/home/nvidia/perception_claude_20261020/models_r5_608j26/active12_teacher608_dla1_fp16_gpufb.engine", "sha256": "87d914625baee2097b38812a7ef0dc6670a00cdfc7f77ca35ced69b290df4ce0", "bytes": 8010852},
+  "flags": {"fp16": true, "int8": false, "dla": true, "dla_core": 1, "gpu_fallback": true, "workspace_mb": 1024, "input_size": 896, "input_height": 608},
+  "int8_plan": null,
+  "tensorrt": {"header": "10.3.0.30", "library": 100300},
+  "cuda": {"runtime": 12060, "driver": 12060},
+  "l4t": "# R36 (release), REVISION: 4.3, GCID: 38968081, BOARD: generic, EABI: aarch64, DATE: Wed Jan  8 01:49:37 UTC 2025",
+  "model_name": "NVIDIA Jetson Orin NX Engineering Reference Developer Kit Super ",
+  "host": "miivii-tegra", "kernel": "5.15.148-tegra",
+  "boot_id": "24f2cd61-a12b-423d-938b-454d89c27916",
+  "builder_sha256": "5bdd73552067781f3feadcc81125c49286270a5f03219c50ac44d43e9c3e6e48",
+  "resolved_config": "/run/xbrain/resolved/perception.yaml", "pipeline_digest": "bbbac54c43d015c17745a945fd435c4730b9ec873215abf9efe3b29ceef36135", "runtime_digest": "c46f436ae74a370981635f32087592224ee76fa9004671f9bfc80b685331d4bf",
+  "wall_ms_all_engines": 128189
+}
