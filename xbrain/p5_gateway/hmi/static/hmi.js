@@ -182,8 +182,8 @@
   const DOT_PX = 3.5;
 
   // Chosen every view change (applyView) from the CURRENT metres-per-screen-px.
-  // The map uses preserveAspectRatio="none" but fitGeoToData matched the viewport
-  // aspect, so the scale is uniform (x==y) and mpp is a single value.
+  // applyView keeps the viewBox at the element's aspect, so the scale is uniform
+  // (x==y) and mpp is a single value.
   function updateGridAndDots() {
     const svg = $("mapSvg");
     const cw = svg.clientWidth || 1;
@@ -1165,10 +1165,21 @@
     // The element always fills the viewport, so the huge grid rect always covers
     // it -> the井字格 is infinite. zoom scales the window around its centre; pan
     // shifts the window in ENU metres.
+    //
+    // *** UNIFORM scale, always (user 2026-11-10: the target dot was an ellipse).
+    // The svg has preserveAspectRatio="none", so a viewBox whose aspect differs
+    // from the element's stretches x and y by different factors -- every circle
+    // becomes an ellipse and every route shape is squashed. Only fitGeoToData
+    // matched the aspect, and it runs only when fences exist; the default
+    // 240 x 145 m window on a wide screen was distorted. So the window HEIGHT is
+    // derived from its width and the element's own aspect on every view change
+    // (resize included); the base height is used only before layout.
     const [bx, by, bw, bh] = baseVB;
-    const w = bw / view.zoom, h = bh / view.zoom;
-    const cx = bx + bw / 2 + view.pan.x, cy = by + bh / 2 + view.pan.y;
     const svg = $("mapSvg");
+    const ew = svg.clientWidth, eh = svg.clientHeight;
+    const w = bw / view.zoom;
+    const h = (ew > 0 && eh > 0) ? w * eh / ew : bh / view.zoom;
+    const cx = bx + bw / 2 + view.pan.x, cy = by + bh / 2 + view.pan.y;
     svg.setAttribute("viewBox", `${cx - w / 2} ${cy - h / 2} ${w} ${h}`);
     // req4 (2026-08-18): map labels match the TASK-CONTENT font size, never
     // scaling with zoom. Task content uses the plan-panel font = config
@@ -1190,14 +1201,21 @@
     updateGridAndDots();                  // adaptive grid cell + non-scaling dots
   }
   function clampZoom(z) { return Math.max(zoomBounds.min, Math.min(zoomBounds.max, z)); }
+  //: One button press zooms by this factor (the wheel uses 1 + map.zoom.wheel_step).
+  const ZOOM_BUTTON_FACTOR = 1.25;
   function wireInteraction() {
-    $("zoomIn").onclick = () => { view.zoom = clampZoom(view.zoom + .2); applyView(); };
-    $("zoomOut").onclick = () => { view.zoom = clampZoom(view.zoom - .2); applyView(); };
+    // Zoom steps are MULTIPLICATIVE (user 2026-11-10: the 1 m grid was out of
+    // reach). With an additive +0.2 / +0.12 step, the range now needed to reach
+    // a 1 m grid (zoom max raised in the yaml) took ~100 wheel notches; a factor
+    // per step covers it in a few dozen and feels the same at every zoom level.
+    $("zoomIn").onclick = () => { view.zoom = clampZoom(view.zoom * ZOOM_BUTTON_FACTOR); applyView(); };
+    $("zoomOut").onclick = () => { view.zoom = clampZoom(view.zoom / ZOOM_BUTTON_FACTOR); applyView(); };
     $("zoomReset").onclick = () => { view.zoom = 1; view.pan = { x: 0, y: 0 }; applyView(); };
     const vp = $("viewport");
     vp.addEventListener("wheel", (e) => {          // U4: wheel up=in, down=out
       e.preventDefault();
-      view.zoom = clampZoom(view.zoom + (e.deltaY < 0 ? zoomBounds.wheel : -zoomBounds.wheel));
+      const f = 1 + zoomBounds.wheel;               // wheel_step is now a ratio
+      view.zoom = clampZoom(e.deltaY < 0 ? view.zoom * f : view.zoom / f);
       applyView();
     }, { passive: false });
     let drag = null;
@@ -1207,11 +1225,13 @@
     });
     window.addEventListener("mousemove", (e) => {
       if (!drag) return;
-      // pixel delta -> ENU metre delta via the current viewBox scale (non-uniform,
-      // preserveAspectRatio=none). Drag right -> the window moves left (grab-pan).
+      // pixel delta -> ENU metre delta via the current viewBox scale (uniform
+      // since applyView matches the element aspect). Drag right -> the window
+      // moves left (grab-pan).
       const r = vp.getBoundingClientRect();
-      const mppx = (baseVB[2] / view.zoom) / r.width;
-      const mppy = (baseVB[3] / view.zoom) / r.height;
+      const vbNow = ($("mapSvg").getAttribute("viewBox") || "").split(/\s+/).map(Number);
+      const mppx = (vbNow[2] || baseVB[2] / view.zoom) / r.width;
+      const mppy = (vbNow[3] || baseVB[3] / view.zoom) / r.height;
       view.pan.x = drag.px - (e.clientX - drag.x) * mppx;
       view.pan.y = drag.py - (e.clientY - drag.y) * mppy;
       if (Math.hypot(e.clientX - drag.x, e.clientY - drag.y) > DRAG_TAP_PX) drag.moved = true;
