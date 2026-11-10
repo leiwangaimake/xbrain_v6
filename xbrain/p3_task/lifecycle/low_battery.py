@@ -17,8 +17,11 @@ U146), replacing 15 S8.2 / S8.2A's 30 % CHG-10/11 trigger and its
     dock) AND that lies within common.geo.route_membership_m of some route
     (the rule that a dock must be on a route, 99 U146); none -> the waypoint
     named 返航终点站 (type home); neither -> no task, the alarm says so;
-  * the cloud alarm closes ONLY when the chassis reports charging (any
-    battery's `charging` true, or `charge == "charging"`; 99 U125);
+  * the episode (cloud alarm, 5 % dispatch pause, injected task) closes when
+    the chassis reports charging (any battery's `charging` true, or
+    `charge == "charging"`; 99 U125) OR when a battery swap is seen: a pack
+    observed absent during the episode is present again and soc_pct is back
+    at or above trigger_soc_pct (99 U154, user ruling 2026-11-10);
   * if remain_mile_km cannot cover the drive to the target -> the alarm says
     unreachable (still driving toward it);
   * at or below stop_soc_pct (5) -> stop and lie down;
@@ -35,9 +38,14 @@ waypoint ends the task; the chassis's own charging flag ends the alarm), or
 read a clock (now_s is passed in, monotonic, CLK-C1).
 
 Traps:
-  * Closing the alarm when soc rises above 20 %. The rule closes it on the
-    chassis's CHARGING report only; a soc that wobbles over the line without
-    charging would silence an alarm nothing has resolved.
+  * Closing the alarm when soc rises above 20 % on its own. A soc that
+    wobbles over the line without charging would silence an alarm nothing has
+    resolved; the swap rule therefore also needs a pack to have gone absent
+    and come back (99 U154), which a wobble never produces.
+  * Requiring the swapped pack's own level to be high. soc_pct is the minimum
+    over the PRESENT packs (13 V-68), so with two packs the episode closes
+    only once neither present pack is below the trigger -- swapping one of
+    two low packs leaves the other one low, and the episode stays.
   * Picking a dock off every route. The ruling makes on-route a condition of
     being a dock target: such a point is skipped, never driven to straight.
   * Treating a missing remain_mile_km as zero (an unreachable alarm for a
@@ -47,7 +55,7 @@ from __future__ import annotations  # postponed annotations
 
 import json  # mission_json
 from dataclasses import dataclass  # the picked target
-from typing import Any, List, Mapping, Optional, Sequence, Tuple  # plain value types
+from typing import Any, List, Mapping, Optional, Sequence, Set, Tuple  # plain value types
 
 from xbrain.common.geo.goto_plan import RouteGeom, plan_goto  # travel distance (U127)
 from xbrain.common.geo.polyline import distance_to_route_m  # on-route test
@@ -74,15 +82,19 @@ def _num(v: Any) -> Optional[float]:  # tolerant numeric read
     return float(v)  # usable
 
 
+def _packs(power: Mapping[str, Any]) -> List[Mapping[str, Any]]:  # 13 BAT-1 per-pack entries
+    """The per-pack entries of a state/power body (13 BAT-1 `list`), [] when absent."""
+    packs = power.get("list")  # 13 BAT-1 array (quadruped rt_payloads)
+    if isinstance(power.get("batteries"), Mapping):  # tolerated wrapper shape
+        packs = power["batteries"].get("list", packs)  # nested list form
+    return [b for b in (packs if isinstance(packs, list) else []) if isinstance(b, Mapping)]
+
+
 def is_charging(power: Mapping[str, Any]) -> bool:  # U125 charging criterion
     """99 U125: any battery's charging flag, or the six-state charge field."""
     if power.get("charge") == "charging":  # 11 S4.1 six-state field
         return True  # the chassis says so
-    packs = power.get("list")  # 13 BAT-1 array (quadruped rt_payloads)
-    if isinstance(power.get("batteries"), Mapping):  # tolerated wrapper shape
-        packs = power["batteries"].get("list", packs)  # nested list form
-    return any(isinstance(b, Mapping) and b.get("charging") is True  # any pack charging counts
-               for b in (packs if isinstance(packs, list) else []))
+    return any(b.get("charging") is True for b in _packs(power))  # any pack charging counts
 
 
 class LowBatteryMonitor:  # the episode state machine
@@ -93,7 +105,10 @@ class LowBatteryMonitor:  # the episode state machine
       "stop"     soc <= stop threshold during the episode -- once;
       "alarm"    a cloud alarm is due (every period while the episode lasts);
       "charging" the chassis reports charging: the episode (and the alarm)
-                 ends -- once.
+                 ends -- once;
+      "swapped"  a battery swap: a pack seen absent during the episode is
+                 present again and soc_pct >= trigger -- the episode ends,
+                 once (99 U154).
     """
 
     def __init__(self, trigger_soc_pct: Any, stop_soc_pct: Any,
@@ -114,6 +129,23 @@ class LowBatteryMonitor:  # the episode state machine
         self.low = False  # an episode is in progress
         self.stopped = False  # the 5 % stop has been done this episode
         self._last_alarm: Optional[float] = None  # when the last alarm went out
+        self._absent_seen: Set[int] = set()  # pack slots seen empty during this episode
+        self._swapped_in = False  # one of those slots has been seen filled again
+
+    def _end_episode(self) -> None:  # back to idle, ready for the next one
+        """Reset every per-episode fact."""
+        self.low, self.stopped, self._last_alarm = False, False, None  # reset for the next episode
+        self._absent_seen, self._swapped_in = set(), False  # presence history belongs to one episode
+
+    def _track_presence(self, power: Mapping[str, Any]) -> None:  # 99 U154 swap evidence
+        """Record empty slots, and a slot that was empty and is filled again.
+        A pack without a boolean `present` says nothing either way."""
+        for pos, b in enumerate(_packs(power)):
+            slot = b.get("index") if isinstance(b.get("index"), int) else pos  # 13 BAT-1 slot index
+            if b.get("present") is False:
+                self._absent_seen.add(slot)  # pulled out, or the slot was empty to begin with
+            elif b.get("present") is True and slot in self._absent_seen:
+                self._swapped_in = True  # a pack went in where there was none
 
     def update(self, power: Optional[Mapping[str, Any]], now_s: float) -> List[str]:  # one frame in, events out
         """Events for this state/power body (None: nothing received -> none)."""
@@ -121,13 +153,19 @@ class LowBatteryMonitor:  # the episode state machine
             return []  # chassis silent: no judgement
         soc = _num(power.get("soc_pct"))  # min over present packs, or None
         out: List[str] = []  # events of this frame
-        if self.low and is_charging(power):  # the only way an episode ends
-            self.low, self.stopped, self._last_alarm = False, False, None  # reset for the next episode
+        if self.low and is_charging(power):  # charging ends the episode (99 U125)
+            self._end_episode()
             return ["charging"]
+        if self.low:
+            self._track_presence(power)
+            if self._swapped_in and soc is not None and soc >= self._trigger:  # swapped and enough again (99 U154)
+                self._end_episode()
+                return ["swapped"]
         if soc is None:  # unknown soc
             return out  # no reading: keep the state, judge nothing new
         if not self.low and soc < self._trigger and not is_charging(power):
             self.low = True  # a new episode
+            self._track_presence(power)  # a slot already empty now counts when it is filled
             out.append("low")
         if self.low and not self.stopped and soc <= self._stop:  # the last 5 %
             self.stopped = True  # last 5 %: stop and lie down, once

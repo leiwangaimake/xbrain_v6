@@ -1206,20 +1206,29 @@ async def _amain(stop_flag: dict, heartbeat_period_s: float,
                     d = _lb_detail("low_battery_stop", power)
                     d["first"] = True  # its own one-time voice
                     _emit_charging("alarm", "battery critical, stopped and lying down", d)
-                elif ev == "charging":
-                    _logger.info("p3 low battery: chassis charging, alarm closed")
-                    # 99 U146: the low-battery task has done its job; left
-                    # suspended, a later "继续" would drive back to the dock.
+                elif ev in ("charging", "swapped"):
+                    # Two lawful ends of an episode: the chassis charging (99
+                    # U146) or a battery swap (99 U154, user ruling
+                    # 2026-11-10). Both close the same three things: the
+                    # alarm, the 5 % dispatch pause (the monitor's own
+                    # `stopped`), and the injected task -- left suspended, a
+                    # later "继续" would drive the robot back to the dock.
+                    cause, reason, title = (
+                        ("charging", "low_battery_charging", "charging, low battery alarm closed")
+                        if ev == "charging" else
+                        ("battery_swap", "low_battery_swapped", "battery swapped, low battery alarm closed"))
+                    _logger.info("p3 low battery closed by %s (soc %s)",
+                                 cause, power.get("soc_pct"))
                     closed = await lb.close_low_battery_task(
                         dao, conn, lb_ctx["task_id"], _now_mono_ms())
                     if closed is not None:
                         await _make_publish(
                             state_pub, _emit_task_event, _publish_task_state,
                             fetch_terminal=_fetch_terminal_facts,
-                            stop_motion=_stop_motion)(closed[0], closed[1], closed[2],
-                                                      "low_battery_charging")
-                    _emit_charging("info", "charging, low battery alarm closed",
-                                   _lb_detail("low_battery_cleared", power))
+                            stop_motion=_stop_motion)(closed[0], closed[1], closed[2], reason)
+                    d = _lb_detail("low_battery_cleared", power)
+                    d["cause"] = cause  # 11 S9.11.2: charging | battery_swap
+                    _emit_charging("info", title, d)
                     lb_ctx.update(target=None, task_id=None, first=False)
 
             # 15 S10 INIT / 11 S9.14: a `running` row at start-up is left over

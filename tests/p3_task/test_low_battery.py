@@ -8,7 +8,9 @@ Brief: 99 U146 low-battery return -- episode events, dock / home choice, the inj
 Description:
 The user's low-battery rule (2026-11-05 ruling 3, restated 2026-11-06):
 below 20 % one voice alarm and a cloud alarm every 2 s until the chassis
-reports charging; drive (normal speed) to the nearest 充电桩 / 充电站 point
+reports charging or a battery swap is seen (99 U154: a pack seen absent comes
+back present and soc_pct is again at or above 20 %); drive (normal speed) to
+the nearest 充电桩 / 充电站 point
 that lies on a route, else to 返航终点站; say unreachable when
 remain_mile_km cannot cover it; at 5 % stop and lie down; at boot report a
 missing home point; a dock off every route is refused when it is recorded.
@@ -69,12 +71,69 @@ def test_low_starts_once_and_alarms_every_period():  # trigger and cadence
 
 
 @pytest.mark.parametrize("body", [_power(19.0, charging=True), _power(19.0, charge="charging")])
-def test_only_charging_closes_the_episode(body):  # either charging signal
+def test_charging_closes_the_episode(body):  # either charging signal
     """99 U125: either the battery flag or the six-state field. MUTATION:
     read one of the two only -> red for the other; close on soc -> red above."""
     m = lb.LowBatteryMonitor(20.0, 5.0, 2.0)  # the shipped rule
     m.update(_power(19.0), 0.0)  # an episode
     assert m.update(body, 1.0) == ["charging"] and not m.low  # closed by charging
+
+
+# -- the battery swap (99 U154) ---------------------------------------------------------
+def _packs(soc, *packs):  # a power frame with explicit slots
+    """A state/power body whose `list` has one entry per (present, level) slot;
+    soc is soc_pct as quadruped computes it (min over present slots, 13 V-68)."""
+    return {"soc_pct": soc, "remain_mile_km": 5.0, "charge": "idle",  # 11 S4.2 fields
+            "list": [{"index": i, "level_pct": lvl, "charging": False, "present": pres}
+                     for i, (pres, lvl) in enumerate(packs)]}
+
+
+def test_a_swap_closes_the_episode_once_the_level_is_back():  # pulled, refilled, enough
+    """User ruling 2026-11-10: a battery swap is a lawful end. MUTATION: no
+    swap rule -> still low -> red; close while the slot is still empty -> red."""
+    m = lb.LowBatteryMonitor(20.0, 5.0, 2.0)  # the shipped rule
+    assert m.update(_packs(4.0, (True, 4.0)), 0.0) == ["low", "stop", "alarm"]  # low and lying down
+    assert m.update(_packs(None, (False, 0.0)), 1.0) == []  # pack out: no soc, nothing closes
+    assert m.update(_packs(90.0, (True, 90.0)), 3.0) == ["swapped"]  # a full pack in
+    assert not m.low and not m.stopped  # the dispatch pause is lifted with it
+
+
+def test_soc_back_without_a_swap_does_not_close():  # a wobble is not a swap
+    """MUTATION: drop the presence condition -> 60 % closes it -> red."""
+    m = lb.LowBatteryMonitor(20.0, 5.0, 2.0)  # the shipped rule
+    m.update(_packs(19.0, (True, 19.0)), 0.0)  # an episode
+    assert "swapped" not in m.update(_packs(60.0, (True, 60.0)), 1.0) and m.low  # never pulled out
+
+
+@pytest.mark.parametrize("soc,closes", [(19.0, False), (20.0, True)])
+def test_a_swap_needs_soc_back_at_the_trigger(soc, closes):  # the level half of the rule
+    """soc_pct is the minimum over present packs: swapping one of two low
+    packs leaves the other low. MUTATION: '>' instead of '>=' -> 20.0 stays
+    low -> red; ignore the level -> 19.0 closes -> red."""
+    m = lb.LowBatteryMonitor(20.0, 5.0, 2.0)  # the shipped rule
+    m.update(_packs(15.0, (True, 15.0), (True, 15.0)), 0.0)  # two low packs
+    m.update(_packs(15.0, (False, 0.0), (True, 15.0)), 1.0)  # slot 0 pulled
+    got = m.update(_packs(soc, (True, 95.0), (True, soc)), 2.0)  # slot 0 refilled, slot 1 at soc
+    assert ("swapped" in got) is closes and m.low is not closes  # closed exactly when soc >= 20
+
+
+def test_a_slot_empty_when_the_episode_starts_counts():  # single_battery, the second slot filled
+    """A pack put into a slot that was already empty is a swap too. MUTATION:
+    no presence tracking on the starting frame -> never closes -> red."""
+    m = lb.LowBatteryMonitor(20.0, 5.0, 2.0)  # the shipped rule
+    m.update(_packs(18.0, (False, 0.0), (True, 18.0)), 0.0)  # starts with slot 0 empty
+    assert m.update(_packs(20.0, (True, 95.0), (True, 20.0)), 1.0) == ["swapped"]  # slot 0 filled
+
+
+def test_swap_history_belongs_to_one_episode():  # reset on close
+    """MUTATION: keep the presence history after the close -> the next
+    episode closes on a wobble -> red."""
+    m = lb.LowBatteryMonitor(20.0, 5.0, 2.0)  # the shipped rule
+    m.update(_packs(18.0, (True, 18.0)), 0.0)  # episode 1
+    m.update(_packs(None, (False, 0.0)), 1.0)  # pulled
+    assert m.update(_packs(90.0, (True, 90.0)), 2.0) == ["swapped"]  # swapped
+    assert "low" in m.update(_packs(19.0, (True, 19.0)), 3.0)  # episode 2, no swap since
+    assert "swapped" not in m.update(_packs(25.0, (True, 25.0)), 4.0) and m.low  # a wobble only
 
 
 def test_stop_once_at_five_percent():  # the 5 % latch
@@ -224,6 +283,42 @@ async def test_the_episode_end_to_end(tmp_path, monkeypatch):  # the whole episo
                 break  # closed
             await asyncio.sleep(0.02)  # give the loop a turn
         assert (await task_state(task_db, tid))[0] == "cancelled"  # the task is closed too
+    finally:
+        await stop_p3(stop, loop)  # cleanup
+
+
+@pytest.mark.asyncio
+async def test_a_battery_swap_ends_the_episode_end_to_end(tmp_path, monkeypatch):  # the swap path
+    """99 U154: lying down at 4 %, the pack is pulled and a full one put in ->
+    low_battery_cleared with cause battery_swap, the low-battery task
+    cancelled, and submits no longer refused with E_LOW_BATTERY. MUTATION:
+    "swapped" not wired -> no clear / task left / still refused -> red."""
+    monkeypatch.setenv("XBRAIN_ROBOT_ID", "gj-test")  # the prone envelope needs a rid
+    from xbrain.p3_task.runtime.main_wiring import CMD_TASK_TOPIC  # where P4 sends
+    h, stop, loop, task_db = await start_p3(  # loop with the rule on
+        tmp_path, monkeypatch, geo_sql=[ROUTE_SQL, DOCK_ON, HOME],
+        route_membership_m=5.0, low_battery=LB)  # the rule on
+    try:
+        await _feed(h, _packs(4.0, (True, 4.0)), 2.0)  # low and the last 5 % at once
+        assert await wait_for(lambda: h.frames("cmd/chassis/ctrl"))  # prone sent
+        tid = h.frames("event/alarm/charging")[0]["detail"]["task_id"]  # the injected task
+        await _feed(h, _packs(None, (False, 0.0)), 1.0)  # the pack pulled out
+        assert not h.frames("event/info/charging")  # an empty slot closes nothing
+        await _feed(h, _packs(95.0, (True, 95.0)), 1.0)  # a full pack put in
+        cleared = [e for e in h.frames("event/info/charging")
+                   if e["detail"]["type"] == "low_battery_cleared"]  # the close report
+        assert len(cleared) == 1 and cleared[0]["detail"]["cause"] == "battery_swap"  # once, by swap
+        for _ in range(100):  # the close is written by the loop, poll it
+            if (await task_state(task_db, tid))[0] == "cancelled":
+                break  # closed
+            await asyncio.sleep(0.02)  # give the loop a turn
+        assert (await task_state(task_db, tid))[0] == "cancelled"  # the task is closed too
+        h.send(CMD_TASK_TOPIC, {"cmd_id": "c-y", "action": "submit", "source": "voice",  # a submit after the swap
+                                "task": {"type": "goto", "priority": 5,
+                                         "params": {"waypoint_id": "w-home"}}})
+        assert await wait_for(lambda: [a for a in h.frames("cmd/task/ack") if a["cmd_id"] == "c-y"])
+        ack = [a for a in h.frames("cmd/task/ack") if a["cmd_id"] == "c-y"][-1]  # its answer
+        assert ack["code"] != E_LOW_BATTERY  # the 5 % refusal is lifted
     finally:
         await stop_p3(stop, loop)  # cleanup
 
