@@ -1900,7 +1900,7 @@ dead-man 会在「按住不动」的过程中触发一次 `Stop`** —— ★ �
 | ★ U8 | 点击导航的界面参数（2026-11-10，`99` U155） | `goto.pin_diameter_px` · `goto.snap_px` | `20` · `14`（目标点直径 / 吸附半径，屏幕像素）。★ 到点半径 `hmi.goto.arrive_radius_m`（1.0）**不在 `hmi.web`**：它是下发给 P3 的安全相关值，代码无默认值 |
 | U2 | 地图/各信息栏/状态栏字体与字号可配 | `font.map/legend/plan/status/coord`（`family` ＋ `size_px`） | 见 yaml 骨架 |
 | U3 | 任务栏/状态栏大小可配 | `layout.plan_panel` · `layout.status_bar`（`width/height/max_*`） | 见 yaml 骨架 |
-| U4 | 滚轮上下滚动缩放 | `map.zoom.{min,max,wheel_step}` | `0.65 / 2.8 / 0.12`（对齐母本脚本） |
+| U4 | 滚轮上下滚动缩放 | `map.zoom.{min,max,wheel_step}` | ★ **2026-11-10（`99` U155 补）：`0.65 / 16 / 0.12`，且步进改为乘法** —— 滚轮每格 ×(1 + `wheel_step`)，按钮每次 ×1.25（前端常数）；上限 16 是为了让 1 m 网格可达（1 m 格须在屏上 ≥ 42 px）。实测从复位按 8 次放大键到 1 m。~~`0.65 / 2.8 / 0.12`（对齐母本脚本，加法步进）~~（被替代：上限 2.8 时地图最窄约 86 m，1 m 格只有约 22 px，**网格永远到不了 1 m**） |
 | U5 | 围栏/路径命名 ＋ 连线类型与颜色可配 | `fence.{active,warning,forbid,speed_limit}.line.*`（★ v1.4：四类 role，`warning` 旧名 `zone`，`11` §9A.1A）· `route.{recorded,realtime}.line.*`（`style ∈ solid/dashed/dotted`；见 §6.10.2A 样式规范） | 见 yaml；★ 命名走 F 类录制（`18` F07/F03，写路径 PB7 已建） |
 | U6 | 位置点标识符形状与颜色可配 | `waypoint.{recorded,unrecorded}.{shape,color,size_px}`（`shape ∈ circle/square/triangle/diamond`） | 见 yaml 骨架。⚠️ v1.4：前端**只画圆点**(§6.10.2C)且圆点半径由 `size_px/3` 起、再按屏幕像素定尺(非缩放)，`shape` 其余值本期不生效 |
 | U7 | 对外绑定 ＋ 端口 | 见 §6.10.3 | — |
@@ -1947,6 +1947,7 @@ dead-man 会在「按住不动」的过程中触发一次 `Stop`** —— ★ �
 |---|---|---|
 | ★★★ **M-1 北朝上** | 地图 **N 朝上**（与航向仪表盘一致）。SVG 的 y 朝下，故 `toXY` 把 ENU `[e_m, n_m]` 映射为 `[e, -n]`；`{lat,lon}` 分支经 `enu_origin` 投影后同样翻 N（`-(lat-origin)`）⇒ geometry 与 robot/events **同一朝向**。★ **v1.5（方案 A）**：路线 / 关键点几何改 WGS84 `{lat,lon}`，走投影分支（不再是 ENU 数组）；ENU 数组分支现只余围栏(`cmd/fence`)。⚠️ `{lat,lon}` 分支**缺 `origin` 返回 null**（不落 0,0），故 geometry 在 first-fix 到达前不渲染。⚠️ 曾漏翻数组分支 → 地图北朝下,与罗盘相反 | `toXY` |
 | ★★★ **M-2 自动 fit** | 模拟/真实数据可跨 ~5km，远超 240m 默认视图。**首帧带围栏时**(围栏定义真实范围)按全 geo bounds **一次性 fit**：① 中心对齐；② **匹配视口宽高比**(否则 `preserveAspectRatio="none"` 会把长条形压扁、圆点变椭圆)；③ zoom 复位、放开 zoom 上限(≈ 场区宽/200，便于放大看 5m 级细节)。**只 fit 一次**，之后操作员自由平移缩放 | `fitGeoToData` |
+| ★★★ **M-8 横纵等比（2026-11-10，`99` U155 补）** | **每次视图变化**（缩放 / 平移 / 窗口尺寸变化）都按地图元素的实际宽高比，从视窗宽度推出高度 ⇒ 横纵比例恒等，圆点必为正圆、路径形状不变形。★ 起因：M-2 的宽高比匹配**只在有围栏时才执行**，没有围栏时默认 240 × 145 m 视窗被拉伸到宽屏上，**所有圆点都是椭圆**（用户发现目标点是椭圆）。实测修复后两个方向均 73.3 px/m，目标点 19.94 × 19.94 px | `applyView` |
 | ★★★ **M-3 自适应网格** | 只画一层网格(1m 小格删)。格子米数**不写死**：按当前「米/屏幕 px」从 `map.grid.cell_options_m`(yaml)选**屏上 ≥ `GRID_TARGET_PX`(42px)** 的**最小**挡位，放大自动换小格。右下角 `网格 Nm` 随之动态显示。★ **2026-11-10（`99` U155）**：挡位只在 1～10 m；连 10 m 格在屏上也不足 `GRID_MIN_PX`(8px) 时**隐藏网格**、比例尺显示「网格 已隐藏」（不画成一片灰）；网格线**屏幕粗细固定** `map.grid.line_px`（图案只画格边，描边一半被裁，故按 `2 × line_px × 米/px` 设宽，inline style 以压过 class 规则）。~~「巨大地图不再针尖筛网」靠挡位放大到 5000 m~~（被替代：挡位上限已改为 10 m） | `updateGridAndDots`(每次 `applyView` 调) |
 | ★★★ **M-4 非缩放要素** | 线 / 标签 / 圆点均**固定屏幕大小**、不随缩放变：<br>· **线** `vector-effect:non-scaling-stroke` ⇒ `width_px` 变回真屏幕 px；<br>· **标签** 字号 `--map-label-fs` 由 `applyView` 按 `planPx·h/clientHeight` 算成恒定屏幕 px；<br>· **圆点** 半径 `DOT_PX·mpp`(user units) ⇒ 恒定屏幕 px。★ 否则 5km 全景下线/点缩成不可见针尖 | `updateGridAndDots` / CSS |
 | ★★★ **M-5 标签去重叠** | 围栏/路径/关键点名称**不得重叠**。`declutterLabels` 屏幕空间贪心去冲突：锚点不撞则留，否则依次试下/上/侧偏移到首个不撞位；全撞(该缩放太密)则**隐藏**，放大特征散开后自动重现。CJK 1em / latin 0.52em 估宽。渲染末尾调用(每帧从锚点重排)，随 2 Hz 重渲染跟缩放 | `declutterLabels` |
