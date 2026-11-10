@@ -1362,6 +1362,13 @@ Zenoh key 映射与 `geo` 的 **W4-F** 硬拒规则，一律**以 `11` §12.1.1 
 | ★★ **WD-5** | ★★ **发布者资格无需申请** —— `11` §2.2.4 已把 `cmd/teleop` 的发布者登记为 **`p5_gateway`（唯一）**。★ 本条**不需要 CR** |
 | ★ **WD-6** | ★ **P5 自身退出时也发一次**（`SIGTERM` 清理路径里）。<br>⚠️ **U38 掉电时发不出去** —— ★ 那种情形由 P1 的 **400 ms `cmd_age` 超时**兜底（`11` §12A.9.5），🚫 本文不为它另设计一条路径 |
 
+> ✅ **2026-11-10 已落地**（`hmi/deadman.py` · `hmi/web_server.py` `ws_snapshot` 的 `finally` · `runtime/main_wiring.py` `_start_hmi` 与主循环 `finally`；断言 `tests/p5_gateway/hmi/test_hmi_estop_ws_deadman.py`）：
+> · ★ **WD-1/WD-2**：每条 WS 连接结束（客户端关、发送失败、服务端停）都无条件调 `on_session_closed(client_ip)` → 向 `cmd/teleop` 发一条释放帧。WS 循环每拍检查读协程是否已结束，关闭后**一个推送周期内**触发，不等发送在死连接上报错。
+> · ★★ **报文形状 ＝ `11` §12A.9.5 TeleopInput HMI 变体，平铺在顶层**：`{device:"keyboard_hmi", source:"hmi", client_id:"hmi-<ip>", deadman:false, axes:{0,0,0}, buttons:{mark:false, release:false}}`，🚫 不包 S3.0 信封 —— P1 `_on_teleop` 直读顶层 `device` / `source`，两者皆无即丢弃。⚠️ **原 `deadman.py` 发的是 `{deadman, vx, vy, wz}`，既无 `device` 也无 `source`，P1 会静默丢弃**，且它自带的「WD-3 每会话至多一次」与本表 WD-2「无条件发」相反、全仓零调用 —— 已按本节重写，断言改为用 P1 真实的 `TeleopTracker` 验证「已在驾驶的 HMI 源被这条帧当场撤下」。不带 `client_seq`（浏览器从未发过 teleop，无序号可续，P1 也不按它排序）。
+> · ★ **WD-4**：`event/info/system`，S3.0 信封（主循环 `_stamp`），`code = "HMI_SESSION_CLOSED"`（与 comm 事件 `CLOUD_LINK_UP` 同一构造：v2.0 要求非空机器码）、`detail = {type:"hmi.session_closed", session_id, client_ip, deadman_released:true}`。★ `session_id` 按 **SS-1** 在 P5 启动时生成一次（`hmi_state["hmi_session_id"]`），⚠️ **尚未投影进 `state/link.hmi.session_id` 与 WS `link` 帧**（WS 侧 `link` 帧整体未建，属 B 类偏差），补齐时必须用同一个值。
+> · ★ **WD-6**：主循环 `finally` 在停 HMI 之前调同一个释放函数（`client_ip = "p5-shutdown"`）。
+> · ⚠️ **未做：SS-3 的 30 s 服务端判死**。现只靠 WS 关闭帧 / TCP 报错触发；客户端断电或断网而 TCP 未报错时，要等发送在死连接上失败才会触发。HMI 没有遥控入口，实际由 P1 的 400 ms 超时兜底。
+
 ### 6.3 ★ 急停链路健康心跳
 
 > NAV-64：链路断开时按钮必须置灰并明确提示"急停不可用"。
@@ -1419,6 +1426,19 @@ Zenoh key 映射与 `geo` 的 **W4-F** 硬拒规则，一律**以 `11` §12.1.1 
 
 ★ **无论如何，硬件急停必须存在**（NAV-63）—— Web 急停只是补充。
 
+> ✅ **2026-11-10 已落地 · WS 主路径 ＋ REST 回退**（`hmi/web_server.py` `_is_estop_frame` / `_answer_estop`，`hmi.js` 急停按钮；断言 `tests/p5_gateway/hmi/test_hmi_estop_ws_deadman.py`）：
+> · ★ **主路径**：浏览器在 WS 上发 `{type:"estop", action:"stop", req_id}`；P5 读协程收到即在 **G0**（`11` §12.1.4）分流 —— 先调 `estop_sender` 发布 `cmd/estop`，再回 `ack`；🚫 不经 schema 校验、限流、`restricted`（HW-4）。读协程每连接一个，不与事件流水线共享队列。
+> · ★ **哪些帧算急停**：解析成功且 `type == "estop"`；或**解析失败但原文含 `"estop"`**（截断 / 编码错误按 stop 转发，`11` §7.1.2 与 W1「宁可误停」）。`req_id` 不合 S-2 格式或缺失时 ack 的 `req_id = null`。
+> · ⚠️★ **与契约字面不同的一处，必须写明**：`11` §12.1.4 判定表写「`estop` 任何情形 → `accepted / OK`」。★ 本实现在**发布本身抛异常**时回 `error / E_INTERNAL`（前端显示「急停发送失败, 请使用硬件急停」）—— 停车指令没发出去时回「已受理」，正是本路径上最危险的那种谎话。其余一切情形照表回 `accepted / OK`。
+> · ⚠️★ **与本册 §6.5「REST 只读」不同的一处**：`POST /api/estop` **保留为回退**，前端只在 WS 未连通时使用（此时页面仍在用 REST 轮询，HTTP 通而 WS 不通）。★ 理由：W1 的失效方向是「宁可误停」（`11` §12.1.1A），多一条能停车的路径比 REST 只读的整洁更有价值；两条路径用同一个 `estop_sender`，报文完全一致。
+> · ★ **前端确认**：WS 发出后 3 s（`11` §12.1.4 客户端判 ack 丢失，> P5 的 2 s）未收到 `accepted` 即显示「急停发送失败, 请使用硬件急停」。
+> · ★ **顺带修的一处**：WS 读协程原用 `receive_json()`，**第一条不是 JSON 的帧就让读协程退出**，该标签页此后所有上行无人应答而页面看起来仍连着。现改为回 `E_SCHEMA`（`req_id = null`）并继续读（`11` §12.1.5 禁止因坏帧关连接）。
+> · ⚠️ 端到端延迟（上面那句「待实测」）仍未实测。
+
+> ✅ **2026-11-10 已落地 · 断链横幅与控件锁**（`11` §12.3 重连流程第一步；`hmi.js` `updateLinkUi` / `controlsOffline`）：
+> · ★ WS 未连通，或 2 s 无任何下行时，工具栏下方显示琥珀色横幅：从未收到过数据 →「正在连接机器人 ...」；有下行但 WS 断 →「实时链路已断开, 正在重连 -- 任务/导航/喊话控件已停用」；2 s 无下行 →「与机器人链路中断 -- 画面停在最后一帧, 操作控件已停用」。
+> · ★ 横幅期间任务按钮、点图导航（不落点）、确认前往、退出喊话**一律置灰且拒绝**；🚫 急停不归它管（由 `estopView` 决定，REST 回退可用时仍可按），缩放平移照常（只动视图）。横幅琥珀色而非红色：红色是急停的颜色。
+
 ### 6.5 REST（只读）
 
 | 端点 | 返回 |
@@ -1433,7 +1453,7 @@ Zenoh key 映射与 `geo` 的 **W4-F** 硬拒规则，一律**以 `11` §12.1.1 
 | `GET /api/metrics` | 遥测指标快照 |
 | ★ `GET /api/approval/pending` | ★ L3 待批准队列快照（§3.8 第 7 步）—— ★ HMI 列表页用；★ **与 `state/approval` 同一份内存队列**，不是私有通路（G-2） |
 
-★ **REST 只读** —— 所有写操作走 WebSocket，便于统一鉴权与审计。
+★ **REST 只读** —— 所有写操作走 WebSocket，便于统一鉴权与审计。★ **唯一例外**：`POST /api/estop`，仅作 WS 不通时的急停回退（2026-11-10，理由见 §6.4 落地注）。
 
 ### 6.6 前端要点
 
