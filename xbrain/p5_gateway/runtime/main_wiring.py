@@ -27,7 +27,7 @@ import logging
 import os
 import time
 from datetime import datetime, timezone
-from typing import Optional
+from typing import Callable, Optional
 
 #: 11 S3.0 信封的共享编解码器. 探活 ping 走它而不是手拼一个 dict --
 #: 八字段手写一次就是一次拼错的机会, 而拼错的表现是对端 read_envelope
@@ -64,6 +64,13 @@ CMD_TASK_ACK_TOPIC = "cmd/task/ack"
 #: W2/W7 before it -- opens a class without adding a key.
 CMD_MODE_TOPIC = "cmd/mode"
 CMD_MODE_ACK_TOPIC = "cmd/mode/ack"
+#: 17 S6.2.1 WD-1/WD-6: the release P5 sends when an HMI WebSocket closes and on
+#: P5's own shutdown. 11 S2.2.4 registers p5_gateway as this key's sole
+#: publisher, so the declaration needs no CR (WD-5). Not an uplink class -- the
+#: browser cannot send teleop (R-W13); this is a tightening action only.
+CMD_TELEOP_TOPIC = "cmd/teleop"
+#: 17 S6.2.1 WD-4: where the session-closed audit record goes (channel normal).
+EVENT_INFO_SYSTEM_TOPIC = "event/info/system"
 # 11 S12A.5: the recording session, READ ONLY on this side. P5 shows it and
 # never writes to cmd/teach -- teach is not one of the five upstream types of
 # S12.1.1, and W6 teleop being removed means a browser could not drive the
@@ -269,7 +276,8 @@ def hmi_estop_frame(cmd_id: str) -> dict:
 
 
 def _start_hmi(gen, hmi_cfg: dict, hmi_state: dict,
-               site_timezone: Optional[str] = None):
+               site_timezone: Optional[str] = None,
+               emit_event: Optional[Callable[[str, dict], None]] = None):
     """Wire + start the HMI web server against what P5 can serve TODAY.
 
     Returns (server, thread) or (None, None) when HMI is not configured / cannot
@@ -279,6 +287,11 @@ def _start_hmi(gen, hmi_cfg: dict, hmi_state: dict,
     plan panel, state/link -> status/ESTOP arming, and the ESTOP button ->
     cmd/estop. What is NOT (fences/events/pose/mode) is recorded in NEXT.md and
     surfaces as available:false so the frontend greys those layers, never fakes.
+
+    emit_event(key, body) publishes one P5-originated event in the S3.0
+    envelope (it closes over the loop's _stamp); used for WD-4. None -> the
+    release still goes out, only the audit record is skipped and logged.
+    Also leaves hmi_state["hmi_release_teleop"] for the shutdown path (WD-6).
     """
     from xbrain.p5_gateway.hmi.web_server import (
         HmiBindError,
@@ -293,8 +306,12 @@ def _start_hmi(gen, hmi_cfg: dict, hmi_state: dict,
         _logger.warning("p5 HMI: no hmi.bind/hmi.web config; HMI not started")
         return None, None
 
-    # ESTOP button -> W1 (17 S6.2). MVP sends the frame on cmd/estop; the
-    # dedicated <=10 ms fast path (17 S6.4 / P-1) is a follow-up (NEXT.md).
+    # ESTOP button -> W1 (17 S6.2 / S6.4). The sender is called from the WS
+    # upstream gate G0 (primary, forwarded before any parsing or rate limit) and
+    # from POST /api/estop (the frontend's fallback while its socket is down).
+    # ~~"MVP sends the frame on cmd/estop; the dedicated <=10 ms fast path (17
+    # S6.4 / P-1) is a follow-up (NEXT.md)."~~ -- superseded 2026-11-10: the WS
+    # path is now the primary one (hmi/web_server _answer_estop).
     estop_pub = gen.declare_publisher(CMD_ESTOP_TOPIC)
     # Boot token + seq for the cmd_id, same construction as _comm_boot below:
     # the id must be unique across restarts, and a bare counter restarts at 0
@@ -302,16 +319,17 @@ def _start_hmi(gen, hmi_cfg: dict, hmi_state: dict,
     _hmi_estop_boot = os.urandom(3).hex()
     _hmi_estop_seq = [0]
 
-    def _estop_sender() -> None:
+    def _estop_sender() -> str:
         # Three lines on purpose: the frame's content is hmi_estop_frame's job
         # (see there for why each audit field is required), so this stays a
         # publish and nothing a reader has to check for correctness sits on the
-        # <=10 ms W1 path.
+        # <=10 ms W1 path. Returns the cmd_id so the WS ack can carry it.
         _hmi_estop_seq[0] += 1
         cmd_id = hmi_estop_cmd_id(_hmi_estop_boot, _hmi_estop_seq[0])
         estop_pub.put(json.dumps(hmi_estop_frame(cmd_id)).encode("utf-8"))
         _logger.warning("p5 HMI ESTOP pressed -> cmd/estop published "
                         "(cmd_id=%s, src_role=hmi)", cmd_id)
+        return cmd_id
 
     # 11 S12.1.1 W4: the browser's geo edits go out on cmd/geo with
     # origin="hmi" (stamped in hmi/uplink.py, never here -- CH-2 makes that one
@@ -338,6 +356,49 @@ def _start_hmi(gen, hmi_cfg: dict, hmi_state: dict,
         _logger.info("p5 HMI uplink -> %s (%s %s)", key,
                      payload.get("action"),
                      payload.get("geo_id") or payload.get("task_id") or "")
+
+    # 17 S6.2.1: every WS close releases cmd/teleop (WD-1/WD-2) and leaves an
+    # hmi.session_closed record (WD-4); the same release runs once more on P5's
+    # own shutdown (WD-6, via hmi_state["hmi_release_teleop"]).
+    from xbrain.p5_gateway.hmi.deadman import (  # noqa: PLC0415
+        SESSION_CLOSED_CODE,
+        build_deadman_payload,
+        build_session_closed_detail,
+    )
+    teleop_pub = gen.declare_publisher(CMD_TELEOP_TOPIC)
+    # 17 S6.2 SS-1: minted ONCE per P5 start, constant for the process. Kept in
+    # hmi_state so the state/link hmi group can carry the same value when that
+    # group is built (B-class follow-up); two separately minted ids would give
+    # WS and Zenoh different answers about the same restart.
+    hmi_state["hmi_session_id"] = "s-" + os.urandom(3).hex()
+    _closed_seq = [0]
+
+    def _release_teleop(client_ip: str) -> None:
+        # WD-6 "if publish fails, LOG loudly" lives in the caller's guard; this
+        # raises so the guard sees it. Bare TeleopInput, no S3.0 envelope: P1
+        # reads device/source/deadman off the top of the frame (deadman.py).
+        teleop_pub.put(json.dumps(build_deadman_payload(client_ip)).encode("utf-8"))
+        _logger.info("p5 HMI: cmd/teleop deadman:false released (client %s)",
+                     client_ip)
+
+    def _on_session_closed(client_ip: str) -> None:
+        _release_teleop(client_ip)
+        if emit_event is None:
+            _logger.warning("p5 HMI: no event emitter; hmi.session_closed for "
+                            "%s not recorded", client_ip)
+            return
+        _closed_seq[0] += 1
+        emit_event(EVENT_INFO_SYSTEM_TOPIC, {
+            "eid": "hmi-sess-%s-%d" % (_hmi_estop_boot, _closed_seq[0]),
+            "code": SESSION_CLOSED_CODE,
+            "title": "hmi session closed",
+            "detail": build_session_closed_detail(hmi_state["hmi_session_id"],
+                                                  client_ip),
+            "src": "p5_gateway",
+            "ts": time.time(),  # WALL-CLOCK-OK(record): 11 S6.2 的事件墙钟戳, 只用于显示与审计
+        })
+
+    hmi_state["hmi_release_teleop"] = _release_teleop
 
     class _Provider:
         """Reads P5's live shared state (updated by the sync callbacks) into the
@@ -430,7 +491,8 @@ def _start_hmi(gen, hmi_cfg: dict, hmi_state: dict,
         here = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
         static_root = os.path.join(here, web.get("static_dir", "hmi/static"))
         app = build_app(web, _Provider(), _estop_sender, static_root,
-                        site_timezone=site_timezone)
+                        site_timezone=site_timezone,
+                        on_session_closed=_on_session_closed)
         server, thread = start_in_thread(app, socks)
         _logger.info("p5 HMI: serving on %s (static %s)",
                      [e for e in bind if e], static_root)
@@ -1453,11 +1515,21 @@ def run_voice_loop_wiring(stop_flag: dict,
                      "(HMI W2/W3/W4/W7 uplink) "
                      "+ state/teach (read only)")
 
+        # P5's own events from the HMI side (17 S6.2.1 WD-4), published like the
+        # comm events above: S3.0 envelope via _stamp, sequence per key, and our
+        # own event/** subscriber persists it. Called from the web-server thread;
+        # a zenoh put is thread-safe, and the seq dict is touched only here.
+        _hmi_event_env_seq: dict = {}
+
+        def _emit_hmi_event(key: str, body: dict) -> None:
+            gen.put(key, _stamp(body, _hmi_event_env_seq.setdefault(key, [0])))
+
         # Start the HMI web server (best-effort; never blocks the voice loop).
         hmi_server, _hmi_thread = (None, None)
         if hmi_cfg:
             hmi_server, _hmi_thread = _start_hmi(gen, hmi_cfg, hmi_state,
-                                                 site_timezone)
+                                                 site_timezone,
+                                                 emit_event=_emit_hmi_event)
 
         try:
             last_hb = time.monotonic()
@@ -1639,6 +1711,15 @@ def run_voice_loop_wiring(stop_flag: dict,
                     cloud_bridge.tick()
                 time.sleep(0.1)
         finally:
+            # 17 S6.2.1 WD-6: P5 itself is going away, so release cmd/teleop once
+            # more before the session closes (a power cut cannot do this; P1's
+            # 400 ms cmd_age timeout covers that case). Best-effort and logged.
+            _release = hmi_state.get("hmi_release_teleop")
+            if _release is not None:
+                try:
+                    _release("p5-shutdown")
+                except Exception:      # noqa: BLE001
+                    _logger.exception("p5 shutdown: cmd/teleop release failed")
             # Stop the HMI first so it stops reading shared state, then the event
             # subsystem (flush + close record.db), then the zenoh entities.
             if hmi_server is not None:

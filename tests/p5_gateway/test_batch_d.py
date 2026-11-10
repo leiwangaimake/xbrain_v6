@@ -3,11 +3,10 @@ Copyright (c) 2026 Hachist Robotics
 Author: wanglei@hachist.com
 上海哈船智能船舶技术有限公司
 File: test_batch_d.py
-Brief: GWY-P5-11/12/14/15/16 deadman + probe + state/link + fence cache + bandwidth
+Brief: GWY-P5-12/14/15/16 probe + state/link + fence cache + bandwidth
 
 Description:
-Batch D: WS deadman fires at most once per session (WD-3), payload
-matches HMI schema (WD-4); estop link_probe budget 10ms enforced
+Batch D: estop link_probe budget 10ms enforced
 per-packet, 3 consecutive misses raise; state/link N-1/N-2 debounce
 transitions; reason 6-value closed set; fence cache stale flag;
 bandwidth ledger REFUSES boost + borrow (UG-1/UG-2 non-negotiable).
@@ -25,11 +24,6 @@ from xbrain.p5_gateway.fence.cache import (
     DirectDbAccessForbidden,
     FenceCache,
     refuse_direct_db_read,
-)
-from xbrain.p5_gateway.hmi.deadman import (
-    DeadmanTracker,
-    build_deadman_payload,
-    within_response_window,
 )
 from xbrain.p5_gateway.link.probe import (
     MISSED_THRESHOLD,
@@ -50,35 +44,13 @@ from xbrain.p5_gateway.link.state_link import (
 pytestmark = pytest.mark.no_device
 
 
-# --- GWY-P5-11 deadman ---
-
-def test_deadman_fires_first_time():
-    t = DeadmanTracker()
-    assert t.should_fire("sess1") is True
-
-
-def test_deadman_dedupes_second_time():
-    """WD-3: at most once per session."""
-    t = DeadmanTracker()
-    t.mark_fired("sess1")
-    assert t.should_fire("sess1") is False
-
-
-def test_deadman_payload_shape():
-    """WD-4: identical to HMI's own release message."""
-    p = build_deadman_payload()
-    assert p["deadman"] is False
-    assert p["vx"] == 0.0 and p["vy"] == 0.0 and p["wz"] == 0.0
-
-
-def test_deadman_within_response_window():
-    assert within_response_window(now_ms=50, disconnect_ms=0,
-                                    response_ms=100) is True
-
-
-def test_deadman_response_window_exceeded():
-    assert within_response_window(now_ms=200, disconnect_ms=0,
-                                    response_ms=100) is False
+# --- GWY-P5-11 deadman: moved (2026-11-10) ---
+# The four cases that stood here asserted a rule set that contradicted 17 S6.2.1:
+# "at most once per session" (17 WD-2 says fire unconditionally), a response
+# window nobody called, and a payload {deadman, vx, vy, wz} that P1 drops
+# because it carries neither `device` nor `source` (p1_motion _on_teleop). The
+# module was rewritten to 17 S6.2.1 and is now asserted end to end, against
+# P1's own tracker, in tests/p5_gateway/hmi/test_hmi_estop_ws_deadman.py.
 
 
 # --- GWY-P5-12 link probe ---

@@ -954,6 +954,37 @@
       box.hidden = !notice;
     }
     setStat("linkText", v.link);
+    updateLinkUi(age);
+  }
+
+  // -- link-loss banner + control lock (11 S12.3 reconnect flow, step 1) ------
+  //
+  // 11 S12.3: when the link drops, keep the last frame but grey every control
+  // and put "link lost" across the top -- never keep rendering as if all were
+  // well, or the operator believes they are still in control. Two degrees:
+  //   * socket down, REST snapshots still arriving: the picture is live but
+  //     commands (task / goto / exit broadcast) have no path -> locked;
+  //   * nothing arriving for 2 s (LINK_DEAD_MS, same judgement as the ESTOP
+  //     view): the picture itself is frozen -> say so.
+  // The ESTOP button is NOT governed here: estopView owns it, and it stays
+  // pressable over the REST fallback while REST still answers.
+  // Driven from updateEstopUi, so it ticks every 250 ms with no data arriving.
+  function controlsOffline() {
+    const wsUp = !!(liveWS && liveWS.readyState === 1);
+    const age = lastDownlinkMs == null ? null : performance.now() - lastDownlinkMs;
+    return !wsUp || !(age != null && age <= LINK_DEAD_MS);
+  }
+  function updateLinkUi(age) {
+    const wsUp = !!(liveWS && liveWS.readyState === 1);
+    const fresh = age != null && age <= LINK_DEAD_MS;
+    const offline = !wsUp || !fresh;
+    document.body.classList.toggle("controls-offline", offline);
+    const b = $("linkBanner");
+    if (!b) return;
+    if (lastDownlinkMs == null) b.textContent = "正在连接机器人 ...";
+    else if (!fresh) b.textContent = "与机器人链路中断 -- 画面停在最后一帧, 操作控件已停用";
+    else b.textContent = "实时链路已断开, 正在重连 -- 任务/导航/喊话控件已停用";
+    b.hidden = !offline;
   }
   function setDot(el, cls) { el.className = "dot" + (cls ? " " + cls : ""); }
   function esc(s) { const d = document.createElement("div"); d.textContent = s; return d.innerHTML; }
@@ -1123,19 +1154,53 @@
     });
     window.addEventListener("mouseup", () => { drag = null; vp.classList.remove("dragging"); });
     // ESTOP: W1 (17 S6.4). Enabled only while estopView allows it (NAV-64).
-    // A failed POST is SAID, not swallowed: the probe only reports the path to
-    // the quadruped, so a press that never left the browser would otherwise
-    // look exactly like a press that worked.
+    //
+    // *** Primary path: the WebSocket ({type:"estop"}), which P5 forwards at
+    // gate G0 before any parsing or rate limit. Fallback: POST /api/estop, used
+    // only while the socket is down -- the page keeps polling REST then, and a
+    // working HTTP path to stop the robot beats none (17 S6.4 records this).
+    //
+    // A stop that was not confirmed is SAID, not swallowed: no ack within
+    // ESTOP_ACK_WAIT_MS, a refusal, or a failed POST all show "estop not sent,
+    // use the hardware stop". The probe only reports the path to the
+    // quadruped, so a press that never left the browser would otherwise look
+    // exactly like one that worked.
     $("estopBtn").onclick = async () => {
       if ($("estopBtn").disabled) return;
+      if (liveWS && liveWS.readyState === 1) {
+        reqSeq += 1;
+        const reqId = "e" + Date.now().toString(36) + "-" + reqSeq;
+        try {
+          liveWS.send(JSON.stringify({ type: "estop", action: "stop", req_id: reqId }));
+        } catch (_) { estopFailed(); return; }
+        estopPending.set(reqId, setTimeout(() => {
+          estopPending.delete(reqId);
+          estopFailed();
+        }, ESTOP_ACK_WAIT_MS));
+        return;
+      }
       try {
         const r = await fetch("/api/estop", { method: "POST" });
         if (!r.ok) throw new Error("estop " + r.status);
       } catch (_) {
-        estopSendFailedMs = performance.now();
-        updateEstopUi();
+        estopFailed();
       }
     };
+  }
+
+  // 11 S12.1.4: the client judges an ack lost after 3 s, deliberately longer
+  // than P5's own 2 s so that "nothing came back" can only mean the link died.
+  const ESTOP_ACK_WAIT_MS = 3000;
+  const estopPending = new Map();        // req_id -> timeout handle
+  function estopFailed() { estopSendFailedMs = performance.now(); updateEstopUi(); }
+  function onEstopAck(m) {
+    const t = estopPending.get(m.req_id);
+    if (t === undefined) return;         // late, or not ours
+    clearTimeout(t);
+    estopPending.delete(m.req_id);
+    // Anything but accepted means the publish did not happen (P5 answers
+    // error/E_INTERNAL when it raised) -- tell the operator now.
+    if (m.result !== "accepted") estopFailed();
   }
 
   async function getJSON(url) { const r = await fetch(url); if (!r.ok) throw new Error(url + " " + r.status); return r.json(); }
@@ -1195,11 +1260,13 @@
   }
 
   function sendUplink(frame, btn) {
-    if (!liveWS || liveWS.readyState !== 1) {
-      // No socket = no task control. Reported, never queued: a queued pause
+    if (controlsOffline()) {
+      // No live link = no control. Reported, never queued: a queued pause
       // that fired on reconnect would act on a task the operator stopped
-      // looking at minutes ago.
-      taskNotice(frame.task_id, "连接已断开, 任务控制不可用", "bad");
+      // looking at minutes ago. A task frame answers on its card; goto and
+      // exit_broadcast have no card, so they answer on the banner.
+      if (frame.type === "task") taskNotice(frame.task_id, "连接已断开, 任务控制不可用", "bad");
+      else alertBanner("连接已断开, 操作不可用");
       return;
     }
     reqSeq += 1;
@@ -1211,6 +1278,7 @@
   }
 
   function onUplinkAck(m) {
+    if (m.req_type === "estop") { onEstopAck(m); return; }
     const btn = pendingReqs.get(m.req_id);
     // W2/W3 answer on the banner, not on a task card (they have no card).
     if (m.req_type === "goto" || m.req_type === "exit_broadcast") {
@@ -1330,6 +1398,9 @@
   }
 
   function onMapClick(ev) {
+    // Link down: no pin at all. The banner already says why, and a pin the
+    // operator cannot send would only invite a confirm click that goes nowhere.
+    if (controlsOffline()) return;
     const svg = $("mapSvg");
     const vb = (svg.getAttribute("viewBox") || "").split(/\s+/).map(Number);
     if (vb.length !== 4 || !svg.clientWidth) return;

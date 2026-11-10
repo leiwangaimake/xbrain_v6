@@ -261,6 +261,20 @@ body { margin: 0; overflow: hidden; background: var(--bg); color: var(--ink);
                background: var(--panel); border: 1px solid var(--line);
                color: var(--ink); font-size: 13px; }
 .goto-banner[hidden] { display: none; }
+
+/* Link-loss banner (11 S12.3): a full-width strip under the toolbar, in the flow
+   (not an overlay) so it cannot hide the map controls. Amber, not red: red is the
+   ESTOP's colour, and this is "commands are off", not "stop". */
+.link-banner { display: block; padding: 6px 12px; background: #8a5a00;
+               color: #fff; font-weight: 700; font-size: 18px; text-align: center;
+               border-bottom: 1px solid var(--warn); }
+.link-banner[hidden] { display: none; }
+/* While offline every COMMAND control is greyed and inert (11 S12.3). Not the
+   ESTOP (estopView owns it) and not zoom/pan (they only move the view). The JS
+   also refuses in sendUplink / onMapClick, so this is the visible half. */
+body.controls-offline .task-act,
+body.controls-offline .goto-send,
+body.controls-offline .exit-bcast-btn { opacity: 0.35; pointer-events: none; }
 .goto-send { padding: 4px 10px; cursor: pointer; color: var(--bg);
              background: var(--cyan); border: none; border-radius: 3px; }
 .goto-cancel { padding: 4px 10px; cursor: pointer; color: var(--muted);

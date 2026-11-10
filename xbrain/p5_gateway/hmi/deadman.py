@@ -3,53 +3,76 @@ Copyright (c) 2026 Hachist Robotics
 Author: wanglei@hachist.com
 上海哈船智能船舶技术有限公司
 File: deadman.py
-Brief: GWY-P5-11 WS disconnect -> proxy cmd/teleop{deadman:false} (WD-1..6)
+Brief: 17 S6.2.1 WS session close -> cmd/teleop{deadman:false} + hmi.session_closed
 
 Description:
-17 S11.4 when the HMI WebSocket session closes (any reason), p5
-MUST publish `cmd/teleop{deadman:false}` on behalf of the operator.
-This releases any active teleoperation grip so a browser crash /
-laptop lid close does not leave the robot with a still-held stick.
+The problem this solves. 11 S12.1.3 R-W13 took teleop off the HMI's writable
+surface, but kept one duty for P5 in three places (S12.1.3, the S12.3 U36
+table, S12A.9.5): when a WebSocket session closes, P5 must at once send
+cmd/teleop{deadman:false}, without waiting for P1's 400 ms cmd_age timeout.
+U36 lets the current task run on after a link loss, but a stick already in the
+operator's hand must stop first. 17 S6.2.1 turns that into WD-1..WD-6; this
+module builds the two messages, and the web server / wiring fire them.
 
-WD-1..6 invariants:
+The rules this follows (17 S6.2.1, numbered as there):
+  WD-1  fire on EVERY connection close: TCP drop, server-side death, server close.
+  WD-2  fire UNCONDITIONALLY. P5 keeps no account of who is driving (teleop is
+        not an uplink class any more), and this is a tightening action: an
+        extra release costs P1 nothing, a missed one leaves the teleop source
+        alive.
+  WD-3  no ack -- cmd/teleop deliberately has no ack key.
+  WD-4  log an event/info/system hmi.session_closed with the client IP only.
+  WD-6  fire once more on P5's own shutdown (SIGTERM path).
 
-  WD-1  fires on ANY disconnect (clean or dirty)
-  WD-2  fires within deadman_response_ms (from configs, no default)
-  WD-3  emits AT MOST ONCE per session (dedupe by session_id)
-  WD-4  publish uses the SAME topic + payload the HMI would have
-        used (so p1's four_source_teleop treats it identically)
-  WD-5  emits an audit event with reason='hmi_disconnect'
-  WD-6  if publish fails, LOG loudly; do not swallow
+*** Shape: the 11 S12A.9.5 TeleopInput HMI variant, at the TOP level, not inside
+an S3.0 envelope. P1 reads `device` / `source` / `deadman` / `axes` straight off
+the top of the frame (p1_motion main_wiring _on_teleop); a frame with neither
+`device` nor `source=hmi` is ignored there. The first version of this file sent
+{deadman, vx, vy, wz} -- no device, no source, axes flattened -- which P1 drops
+without a trace, so the release it existed for could never have happened.
+`device` is keyboard_hmi: the name P1 records for an HMI sender (S12A.9.7).
 
-The deadman message shape is the closed-set schema from 11 §7 --
-we do not reimplement the schema here, we call the shared helper.
+What this does NOT do: it opens no socket, publishes nothing and reads no
+clock. Delivery is the wiring's job (runtime/main_wiring _start_hmi).
 """
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
-from typing import Set
+from typing import Any, Dict
+
+#: S12A.9.7: the device P1 files an HMI-originated teleop frame under.
+HMI_TELEOP_DEVICE = "keyboard_hmi"
+
+#: 17 S6.2.1 WD-4: the event `type` inside detail. Also used, upper-cased, as the
+#: event `code` -- the same construction p5's comm events use (CLOUD_LINK_UP),
+#: since the cloud contract requires a non-empty machine code.
+SESSION_CLOSED_TYPE = "hmi.session_closed"
+SESSION_CLOSED_CODE = "HMI_SESSION_CLOSED"
 
 
-@dataclass
-class DeadmanTracker:
-    """WD-3: dedupe emissions per session."""
-    fired_sessions: Set[str] = field(default_factory=set)
+def build_deadman_payload(client_ip: str) -> Dict[str, Any]:
+    """WD-1: the release frame for cmd/teleop.
 
-    def should_fire(self, session_id: str) -> bool:
-        return session_id not in self.fired_sessions
+    client_id follows the S12A.9.5 example form "hmi-<ip>". No client_seq: the
+    browser never sent teleop, so there is no sequence to continue, and P1 does
+    not order by it. Zero axes and buttons spelled out so a reader of the bus
+    sees a complete TeleopInput, not a partial one.
+    """
+    return {
+        "device": HMI_TELEOP_DEVICE,
+        "source": "hmi",
+        "client_id": "hmi-" + client_ip,
+        "deadman": False,
+        "axes": {"vx": 0.0, "vy": 0.0, "wz": 0.0},
+        "buttons": {"mark": False, "release": False},
+    }
 
-    def mark_fired(self, session_id: str) -> None:
-        self.fired_sessions.add(session_id)
 
-
-def build_deadman_payload() -> dict:
-    """WD-4: exactly the shape a real HMI would send when releasing
-    the deadman. Downstream must not distinguish."""
-    return {"deadman": False, "vx": 0.0, "vy": 0.0, "wz": 0.0}
-
-
-def within_response_window(now_ms: int, disconnect_ms: int,
-                             response_ms: int) -> bool:
-    """WD-2: caller checks and asserts."""
-    return (now_ms - disconnect_ms) <= response_ms
+def build_session_closed_detail(session_id: str, client_ip: str) -> Dict[str, Any]:
+    """WD-4: the event detail. IP only, never an identity (11 U23a)."""
+    return {
+        "type": SESSION_CLOSED_TYPE,
+        "session_id": session_id,
+        "client_ip": client_ip,
+        "deadman_released": True,
+    }

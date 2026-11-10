@@ -390,11 +390,13 @@ def _has_confirm(msg: Dict[str, Any], level: str) -> bool:
     return isinstance(confirm, dict) and confirm.get("level") == level
 
 
-def ack_frame(req_id: str, req_type: str, result: str, code: str = "OK",
+def ack_frame(req_id: Optional[str], req_type: str, result: str, code: str = "OK",
               detail: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
     """The downstream ack. 11 S12.1.1 names the W4 answer `geo_ack`, defined as
     an alias of `ack` with req_type="geo" -- so one shape is emitted with the
-    type spelled out, rather than two shapes that can drift."""
+    type spelled out, rather than two shapes that can drift. req_id is None
+    when the frame had none worth echoing (11 S12.1.4: unparseable frames and
+    an estop sent without one answer with req_id null)."""
     frame: Dict[str, Any] = {"kind": "ack", "req_type": req_type,
                              "req_id": req_id, "result": result, "code": code}
     if detail is not None:

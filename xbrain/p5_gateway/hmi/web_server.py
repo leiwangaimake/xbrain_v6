@@ -43,13 +43,15 @@ for degraded-ness and uses rest.endpoints.fences_endpoint to pick the code.
 from __future__ import annotations
 
 import errno
+import json
 import logging
+import re
 import socket
 from typing import Any, Callable, Dict, List, Optional, Protocol, Tuple
 
 from starlette.websockets import WebSocket, WebSocketDisconnect
 
-from xbrain.common.errors import E_SCHEMA
+from xbrain.common.errors import E_INTERNAL, E_SCHEMA
 from xbrain.p5_gateway.hmi import data_readers, uplink
 from xbrain.p5_gateway.hmi.ui_config import build_ui_config
 from xbrain.p5_gateway.hmi.ws_protocol import RateLimitBucket
@@ -213,9 +215,10 @@ UPLINK_BURST = 10
 #: is one readable line -- the whitelist is frozen (F-8) and the gap between it
 #: and this map is exactly what not_implemented reports.
 #:
-#: Absent on purpose: estop (W1) has its own <=10 ms REST path and never comes
-#: through here. That leaves W1 as the only whitelist class not served by this
-#: map, which is the whole set closed.
+#: Absent on purpose: estop (W1) is taken off the frame at gate G0 in
+#: _uplink_reader, before parsing, rate limiting or this map (11 S12.1.4). That
+#: leaves W1 as the only whitelist class not served by this map, which is the
+#: whole set closed.
 _UPLINK_BUILDERS = {
     "geo": uplink.build_geo_command,                    # W4
     "task": uplink.build_task_command,                  # W7
@@ -224,7 +227,55 @@ _UPLINK_BUILDERS = {
 }
 
 
-async def _uplink_reader(websocket, provider, bucket, pending) -> None:
+#: 11 S12.1.5 S-2: a req_id is echoed only in this form, else null.
+_REQ_ID_RE = re.compile(r"^[A-Za-z0-9_-]{1,40}$")
+
+
+def _is_estop_frame(msg: Any, raw: str) -> bool:
+    """11 S12.1.4 gate G0: is this frame an estop, before any other check.
+
+    A parsed object says so with type == "estop". A frame that did not parse is
+    still an estop when its raw text names one: 11 S12.1.1 W1 and S7.1.2 say a
+    missing/misspelt action, a truncated JSON or a bad encoding all FORWARD AS
+    STOP -- the failure direction is "rather stop by mistake". Matching the
+    quoted token keeps an ordinary frame that merely mentions the word in a
+    value from qualifying only by accident of quoting; a false positive is a
+    stop, which is the side this gate is allowed to err on.
+    """
+    if isinstance(msg, dict):
+        return msg.get("type") == "estop"
+    return '"estop"' in raw
+
+
+async def _answer_estop(websocket, msg: Any, estop_sender) -> None:
+    """W1 over the WebSocket (17 S6.4 / 11 S12.1.1): forward FIRST, then answer.
+
+    The send happens before anything else touches the frame -- no schema check,
+    no rate limit, no restricted state (HW-4) -- so the <=10 ms budget is spent
+    on one publish. The ack follows: 11 S12.1.4 makes every estop answer
+    accepted / OK, and never E_SCHEMA.
+    *** The one exception: if the publish itself raised, the stop did NOT go out
+    and saying "accepted" would be a lie on the one path where a lie is
+    dangerous. That case answers error / E_INTERNAL, and the frontend tells the
+    operator to use the hardware stop.
+    """
+    req_id = msg.get("req_id") if isinstance(msg, dict) else None
+    if not (isinstance(req_id, str) and _REQ_ID_RE.match(req_id)):
+        req_id = None
+    try:
+        cmd_id = estop_sender()
+    except Exception:      # noqa: BLE001
+        _logger.exception("p5 HMI WS estop: publish failed")
+        await websocket.send_json(uplink.ack_frame(
+            req_id, "estop", "error", E_INTERNAL,
+            {"reason": "estop_publish_failed"}))
+        return
+    await websocket.send_json(uplink.ack_frame(
+        req_id, "estop", "accepted", "OK", {"cmd_id": cmd_id}))
+
+
+async def _uplink_reader(websocket, provider, bucket, pending,
+                         estop_sender) -> None:
     """Read HMI upstream frames for one connection until it closes.
 
     Every outcome answers the browser -- forwarded, refused, or rate-limited.
@@ -236,11 +287,34 @@ async def _uplink_reader(websocket, provider, bucket, pending) -> None:
 
     while True:
         try:
-            msg = await websocket.receive_json()
+            frame = await websocket.receive()
         except Exception:      # noqa: BLE001
-            # Disconnect, or a frame that is not JSON. Either way this
-            # connection is done; the send loop's finally cancels this task.
+            # The connection is gone; the send loop's finally cancels this task.
             return
+        if frame.get("type") == "websocket.disconnect":
+            return
+        raw = frame.get("text")
+        if raw is None:
+            raw = (frame.get("bytes") or b"").decode("utf-8", "replace")
+        try:
+            msg = json.loads(raw)
+        except ValueError:
+            msg = None
+        # G0 -- before parsing is even judged: an estop is forwarded whatever
+        # shape it arrived in (see _is_estop_frame).
+        if _is_estop_frame(msg, raw):
+            await _answer_estop(websocket, msg, estop_sender)
+            continue
+        if msg is None:
+            # G1: not JSON. Answered and the connection KEPT -- 11 S12.1.5 forbids
+            # closing a socket over a bad frame, because closing it takes the
+            # operator's e-stop button away with it. (The old receive_json()
+            # ended this reader on the first bad frame, so every later click on
+            # that tab went unanswered while the page still looked connected.)
+            await websocket.send_json(uplink.ack_frame(
+                None, "<invalid>", "rejected", E_SCHEMA,
+                {"reason": "frame is not JSON"}))
+            continue
         try:
             env = uplink.parse_envelope(msg)
         except ValueError as exc:
@@ -251,20 +325,20 @@ async def _uplink_reader(websocket, provider, bucket, pending) -> None:
                 "rejected", E_SCHEMA, {"reason": str(exc)}))
             continue
         req_id, req_type = env["req_id"], env["type"]
-        # W1 estop bypasses the bucket (S12.1.1: it bypasses G1-G6, the rate
-        # limit and the restricted downgrade). It is not served here at all --
-        # the dedicated <=10 ms path is POST /api/estop -- so it is refused
-        # explicitly rather than silently rate-limited into a queue.
-        if req_type != "estop" and not bucket.try_take(
-                int(_time.monotonic() * 1000)):
+        # Rate limit (11 S12.1.5). W1 estop never gets this far -- G0 above has
+        # already forwarded and answered it, so the bucket cannot delay a stop.
+        if not bucket.try_take(int(_time.monotonic() * 1000)):
             ref = uplink.rate_limited(req_type)
             await websocket.send_json(uplink.ack_frame(
                 req_id, req_type, "rejected", ref.code, ref.detail))
             continue
         # The four classes this build serves, per _UPLINK_BUILDERS above:
         # geo (W4), task (W7), goto (W2), exit_broadcast (W3). estop (W1) is
-        # handled above and never reaches here -- it has its own <=10 ms REST
-        # path -- which closes the whole S12.1.1 whitelist.
+        # handled at G0 above (_answer_estop) and never reaches here, which
+        # closes the whole S12.1.1 whitelist.
+        # ~~"it has its own <=10 ms REST path"~~ -- superseded 2026-11-10: W1 is
+        # now served on this socket first (17 S6.4); POST /api/estop remains only
+        # as the frontend's fallback while the socket is down.
         #
         # ! This comment used to read "the three classes ... exit_broadcast is
         # still unwired". W3 was wired in batch 20 (uplink.
@@ -305,20 +379,31 @@ async def _uplink_reader(websocket, provider, bucket, pending) -> None:
 def build_app(
     hmi_web: Dict[str, Any],
     provider: RuntimeStateProvider,
-    estop_sender: Callable[[], None],
+    estop_sender: Callable[[], Optional[str]],
     static_root: str,
     *,
     site_timezone: Optional[str] = None,
+    on_session_closed: Optional[Callable[[str], None]] = None,
 ):
     """Build (do not run) the FastAPI app.
 
     Split from serve() so the routes can be tested with FastAPI's TestClient and
-    a fake provider -- no socket, no uvicorn. `estop_sender` is invoked by
-    POST /api/estop and MUST perform the 17 S6.4 dedicated-path W1 send; this
-    module never routes estop itself. `hmi_web` is the resolved hmi.web subtree;
-    ui_config is built once at construction so a malformed config refuses here.
-    site_timezone (common.timezone) rides in ui_config for the footer clock.
+    a fake provider -- no socket, no uvicorn. `estop_sender` performs the 17 S6.4
+    W1 publish and returns the cmd_id it stamped; it is called by the WS gate G0
+    (the primary path) and by POST /api/estop (the frontend's fallback while the
+    socket is down). This module never builds the estop frame itself.
+    `hmi_web` is the resolved hmi.web subtree; ui_config is built once at
+    construction so a malformed config refuses here. site_timezone
+    (common.timezone) rides in ui_config for the footer clock.
+
+    `on_session_closed(client_ip)` runs when ANY WebSocket connection ends (17
+    S6.2.1 WD-1): the wiring sends cmd/teleop{deadman:false} and logs
+    hmi.session_closed there. Optional only so route tests need not fake a
+    publisher; production wiring always passes it, and its absence is logged.
     """
+    if on_session_closed is None:
+        _logger.warning("p5 HMI: no on_session_closed hook -- a WS close will "
+                        "NOT release cmd/teleop (17 S6.2.1 WD-1)")
     # Imported lazily (like services/payload) so importing this module has no
     # FastAPI side effect and the W-1 startup window can still report why P5 did
     # not come up. FastAPI is a p5_gateway dependency (17 S6.10.0).
@@ -479,13 +564,19 @@ def build_app(
         return rest_list_endpoint(_rest().get("approval_pending"), "pending")
 
     @app.post("/api/estop")
-    def post_estop() -> Dict[str, str]:
-        """17 S6.2 W1 / S6.4: the ESTOP button. Delegates to estop_sender, which
-        runs the dedicated <=10 ms path; this handler adds no logic on that path
-        so nothing here can slow it. The frontend still greys the button on link
-        loss (NAV-64) so this is reached only when estop_path was ok."""
-        estop_sender()
-        return {"status": "sent"}
+    def post_estop() -> Dict[str, Any]:
+        """FALLBACK for the ESTOP button while the WebSocket is down.
+
+        The primary W1 path is the socket (gate G0, 17 S6.4 / 11 S12.1.1). This
+        route stays because the frontend keeps polling REST when the socket
+        drops, and a working HTTP path to stop the robot is worth more than the
+        "REST is read-only" tidiness 17 S6.5 asks for -- the failure direction
+        of W1 is "rather stop by mistake" (11 S12.1.1A). The deviation is
+        recorded in 17 S6.4. Same sender, so the frame is identical either way.
+        A publish failure raises -> 500, which the frontend reports as "estop
+        not sent, use the hardware stop"."""
+        cmd_id = estop_sender()
+        return {"status": "sent", "cmd_id": cmd_id}
 
     # W6: WS push. Replaces the frontend's 1 Hz REST poll with a server push
     # (17 S6.2). On connect the client gets a full state_snapshot (keyframe), then
@@ -520,9 +611,22 @@ def build_app(
         # between pushes, and awaiting a frame inside it would stall the
         # snapshot stream for as long as the operator is not clicking.
         recv_task = asyncio.ensure_future(
-            _uplink_reader(websocket, provider, uplink_bucket, pending))
+            _uplink_reader(websocket, provider, uplink_bucket, pending,
+                           estop_sender))
         try:
             while True:
+                # The reader returns when the client closes. Stop pushing then,
+                # rather than waiting for a send to fail on a dead socket, so the
+                # finally below (WD-1 release) runs within one push interval.
+                # Close explicitly: returning without a close frame leaves a
+                # peer that is still there (the reader ended for another reason)
+                # waiting forever instead of seeing the socket end.
+                if recv_task.done():
+                    try:
+                        await websocket.close()
+                    except Exception:      # noqa: BLE001
+                        pass               # already closed by the client
+                    break
                 # site_timezone is the footer-clock fallback; the live zone is
                 # derived from the pose fix in build_snapshot (17 S6.10.2 v1.3).
                 snap = data_readers.build_snapshot(**provider.snapshot_inputs(),
@@ -559,11 +663,24 @@ def build_app(
                 ticks += 1
                 await asyncio.sleep(push_interval_s)
         except WebSocketDisconnect:
-            # Normal client close; nothing to clean up (the server owns no
-            # per-connection state beyond this coroutine).
+            # Normal client close. The release below still runs (finally).
             return
         finally:
             recv_task.cancel()
+            # 17 S6.2.1 WD-1/WD-2: EVERY close releases cmd/teleop, whatever
+            # ended the connection (client close, a send that failed on a dead
+            # TCP, server shutdown cancelling this coroutine) and whether or not
+            # this tab ever drove anything -- P5 keeps no record of who drives.
+            # Guarded: a failing hook must not turn a closed tab into a crashed
+            # server thread.
+            if on_session_closed is not None:
+                client = getattr(websocket, "client", None)
+                client_ip = getattr(client, "host", None) or "unknown"
+                try:
+                    on_session_closed(client_ip)
+                except Exception:      # noqa: BLE001
+                    _logger.exception("p5 HMI: session-closed hook failed "
+                                      "(client %s)", client_ip)
 
     # Static frontend LAST so /api/* is matched first. html=True serves
     # index.html at "/". A missing static_root is a deploy error, surfaced by
