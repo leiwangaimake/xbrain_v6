@@ -79,16 +79,26 @@ rtk_loss:
   lost_sustain_s: 1.0
   recover_sustain_s: 2.0
 
-# -- 低电回充 (99 U146, 用户裁决 2026-11-05 / 2026-11-06) ----------------------
+# -- 低电回充 (99 U146 / U154 / U157, 用户裁决 2026-11-05 / 11-06 / 11-10) ------
 #   soc_pct 低于 trigger_soc_pct: 单次语音报警 + 每 cloud_alarm_period_s 秒向
-#   云端上报一次 (持续, 直到充电或换电才关闭; 换电 = 某电池槽拔出后重新在位且
-#   soc_pct 不低于 trigger_soc_pct, 99 U154, 不另设配置项); 速度不降 (U117 的
-#   x0.3 已去掉);
+#   云端上报一次 (持续, 结束条件见下方 U157; 换电 = 某电池槽拔出后重新在位,
+#   99 U154); 速度不降 (U117 的 x0.3 已去掉);
+#   (旧注释 "直到充电或换电才关闭, 换电门槛 = trigger_soc_pct, 不另设配置项"
+#    已被 U157 取代, 2026-11-06 ~ 2026-11-10);
 #   导航到最近的 [在某条路径 route.membership_m 内的] 充电桩/充电站航点, 没有则
 #   去返航终点站; 续航 remain_mile_km 不够走到也照走, 上报 unreachable;
 #   soc_pct 降到 stop_soc_pct 及以下: 停止并趴下.
-#   缺失 / null / <= 0, 或 stop >= trigger 时 p3 拒绝启动 (EX_CONFIG 78).
+#   99 U157 (用户裁决 2026-11-10): 底盘报告充电不再结束低电, 而是转为"充电中"告警
+#   (同样每 cloud_alarm_period_s 秒上报), 直到 soc_pct 达到 charge_full_soc_pct
+#   才结束; 换电后 soc_pct 不低于 swap_resume_soc_pct 立即结束. 低电期间被打断
+#   的任务, 以及低电开始时已在排队 / 定时的任务, 只有结束后才自动恢复 / 派发
+#   (人工"继续"不受限). 换电后 soc_pct 在 trigger 与 swap_resume 之间: 告警结束,
+#   被打断的任务等人工"继续". 底盘最高只报到 99 % 时把 charge_full_soc_pct 调低.
+#   缺失 / null / <= 0, 或不满足 stop < trigger < swap_resume <= charge_full <= 100
+#   时 p3 拒绝启动 (EX_CONFIG 78).
 low_battery:
   trigger_soc_pct: 20.0
   stop_soc_pct: 5.0
   cloud_alarm_period_s: 2.0
+  charge_full_soc_pct: 100.0
+  swap_resume_soc_pct: 80.0
