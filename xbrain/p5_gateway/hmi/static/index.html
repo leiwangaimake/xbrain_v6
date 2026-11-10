@@ -4,15 +4,19 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>XBRAIN_V6 GPS 网格地图 HMI</title>
-<link rel="stylesheet" href="hmi.css?v=w2w3-1">
+<link rel="stylesheet" href="hmi.css?v=estop-1">
 </head>
 <body>
 <main class="hmi">
   <section class="map-shell" aria-label="GPS 网格地图">
     <header class="map-toolbar">
       <div class="map-title">GPS 网格地图</div>
-      <!-- ESTOP: 17 S6.10.1 / W1. Greyed when link.estop_path != ok (NAV-64). -->
+      <!-- ESTOP: 17 S6.10.1 / W1, states per 17 S6.3 (hmi.js estopView):
+           ok -> armed; degraded -> still pressable + yellow notice; down or
+           2 s without any downlink -> greyed + "use the hardware stop" notice
+           (NAV-64). Starts disabled: nothing has proved the path yet. -->
       <button id="estopBtn" class="estop-btn" title="紧急停止" disabled>急停 ESTOP</button>
+      <span id="estopNotice" class="estop-notice bad" role="status">急停不可用, 请使用硬件急停</span>
       <!-- W3 exit_broadcast (11 S12.1.1). Deliberately NOT styled like the
            estop and not adjacent to it in meaning: W1 stops MOTION, W3 leaves
            B mode. S12.1.1 forbids presenting task/mode controls as if they
@@ -133,6 +137,6 @@
     </footer>
   </section>
 </main>
-<script src="hmi.js?v=w2w3-1"></script>
+<script src="hmi.js?v=estop-1"></script>
 </body>
 </html>

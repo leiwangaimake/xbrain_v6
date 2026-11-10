@@ -49,7 +49,9 @@ body { margin: 0; overflow: hidden; background: var(--bg); color: var(--ink);
   background: var(--bg); color: var(--ink); cursor: pointer; font-size: 30px; }
 .zoom-btn:hover { background: var(--blue); border-color: var(--cyan); }
 
-/* ESTOP (ADDED, contract 17 S6.4 / NAV-64): prominent red; greyed when estop_path != ok. */
+/* ESTOP (ADDED, contract 17 S6.4 / NAV-64): prominent red. States per 17 S6.3,
+   decided in hmi.js estopView: ok = armed pulse; degraded = still pressable with a
+   yellow border + notice; down / 2 s without downlink = greyed + notice. */
 .estop-btn { padding: 8px 20px; border: 2px solid var(--danger); border-radius: 5px;
   background: #b0161a; color: #fff; font-weight: 700; font-size: 22px; letter-spacing: 1px;
   cursor: pointer; }
@@ -58,6 +60,15 @@ body { margin: 0; overflow: hidden; background: var(--bg); color: var(--ink);
   cursor: not-allowed; }
 .estop-btn.armed { animation: estop-pulse 1.4s ease-in-out infinite; }
 @keyframes estop-pulse { 50% { box-shadow: 0 0 0 4px rgba(230,57,50,.28); } }
+/* degraded: the stop still gets through, so the button keeps its red body and
+   only the border turns warning-yellow -- it must not look disabled. */
+.estop-btn.degraded:not(:disabled) { border-color: var(--warn); box-shadow: 0 0 0 3px rgba(241,143,23,.45); }
+/* The sentence beside the button. Visible text, not a tooltip: NAV-64 / 11 S12.3
+   require the "use the hardware stop" line to be SHOWN. Same size as the button
+   label so it is read, not discovered. */
+.estop-notice { font-weight: 700; font-size: 22px; }
+.estop-notice.bad  { color: var(--danger); }
+.estop-notice.warn { color: var(--warn); }
 
 /* -- map ------------------------------------------------------------------ */
 /* Grid background: deep black (user 2026-08-14). Only the map area is black;
@@ -307,6 +318,7 @@ body { margin: 0; overflow: hidden; background: var(--bg); color: var(--ink);
 .mode-text { font-weight: 400; }
 /* footer convergence states: bright green = ok, red = LOSS/断. No dots. */
 .stat.ok  { color: var(--ok-bright); }
+.stat.warn { color: var(--warn); }       /* estop link degraded (17 S6.3) */
 .stat.bad { color: var(--danger); }
 .dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%;
   background: var(--muted); margin-right: 5px; }

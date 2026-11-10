@@ -862,14 +862,98 @@
                                 : { text: "授时未同步", cls: "bad" });
     renderClock();
     $("precText").textContent = pose.cov_h_m != null ? `${pose.cov_h_m.toFixed(2)}m` : "--";
-    // link + ESTOP arming (NAV-64): estop_path ok -> button enabled + pulse.
-    const ok = status.estop_path === "ok";
-    setStat("linkText", ok ? { text: "链路正常", cls: "ok" }
-                           : { text: "急停链路断", cls: "bad" });
+    // ESTOP button + footer link state: the server's estop_path is only half of
+    // the decision -- the other half is whether anything is arriving at all,
+    // which the server cannot report (see estopView). Both go through
+    // updateEstopUi so the snapshot path and the watchdog tick draw the same.
+    lastEstopPath = status.estop_path;
+    updateEstopUi();
+  }
+
+  // -- ESTOP availability (17 S6.3 / 11 S12.3 / NAV-64) ---------------------
+  //
+  // *** Why the frontend decides "dead" itself: P5 that has died cannot send
+  // "I died". Before this, the button followed the last estop_path it had
+  // seen; when P5 went away the WS closed, the REST fallback poll failed
+  // silently, and the button kept the last "ok" -- armed and pulsing with
+  // nothing behind it. 17 S6.3 calls this the most important row of its table.
+  //
+  // *** Any downlink frame counts as the heartbeat, not only a `link` message:
+  // this build sends no `link` frame (state_snapshot / state_delta / ack only),
+  // and the WS loop sends an empty state_delta every tick precisely so a quiet
+  // but live link is never mistaken for a dead one. A REST snapshot that
+  // arrives (the fallback when the socket is down) counts too: it proves P5
+  // is answering and carries a fresh estop_path.
+  //
+  // estopView is a pure function so its four outcomes are asserted by
+  // tests/p5_gateway/hmi/test_estop_view_js.py, which cuts the block between
+  // the markers below out of this file and runs it under node.
+  // <estop-view>
+  // 11 S12.3 "client 判链路死: 2 s 无下行" -- a contract constant, not a tuning
+  // knob, and the frontend has no config path for it.
+  const LINK_DEAD_MS = 2000;
+  function estopView(path, downlinkAgeMs) {
+    // No downlink yet, or none for 2 s: greyed, whatever estop_path last said.
+    if (downlinkAgeMs == null || !(downlinkAgeMs <= LINK_DEAD_MS)) {
+      return { enabled: false, armed: false, btnCls: "",
+               notice: "与机器人链路中断 -- 急停不可用, 请使用硬件急停", noticeCls: "bad",
+               link: { text: "链路中断", cls: "bad" } };
+    }
+    if (path === "ok") {
+      return { enabled: true, armed: true, btnCls: "",
+               notice: "", noticeCls: "",
+               link: { text: "急停链路正常", cls: "ok" } };
+    }
+    // degraded = pongs still come back, only slowly: the stop still gets
+    // through, so the button STAYS PRESSABLE with a warning (17 S6.3 table).
+    // Greying it here would take the button away exactly while it works.
+    if (path === "degraded") {
+      return { enabled: true, armed: false, btnCls: "degraded",
+               notice: "链路延迟高", noticeCls: "warn",
+               link: { text: "急停链路延迟高", cls: "warn" } };
+    }
+    // down, or anything outside the closed set (null before the first probe
+    // result): greyed and pointing at the hardware stop (NAV-64 / 11 S12.3
+    // "HMI 必须把这句话显示出来, 而不是只置灰").
+    return { enabled: false, armed: false, btnCls: "",
+             notice: "急停不可用, 请使用硬件急停", noticeCls: "bad",
+             link: { text: "急停链路断", cls: "bad" } };
+  }
+  // </estop-view>
+
+  // Mono time (performance.now) of the last downlink that was handled. Not
+  // Date: a wall-clock step would fake or hide a 2 s gap (11 CLK-C1).
+  let lastDownlinkMs = null;
+  let lastEstopPath = null;
+  // A press whose POST failed. Shown for ESTOP_FAIL_SHOW_MS over whatever the
+  // link state says, because "the stop did not go out" is the one thing the
+  // operator must hear first.
+  let estopSendFailedMs = null;
+  const ESTOP_FAIL_SHOW_MS = 5000;
+
+  function markDownlink() { lastDownlinkMs = performance.now(); }
+
+  function updateEstopUi() {
+    const now = performance.now();
+    const age = lastDownlinkMs == null ? null : now - lastDownlinkMs;
+    const v = estopView(lastEstopPath, age);
     const btn = $("estopBtn");
-    btn.disabled = !ok;
-    btn.classList.toggle("armed", ok);
-    btn.title = ok ? "紧急停止" : "急停不可用(链路断)";
+    btn.disabled = !v.enabled;
+    btn.classList.toggle("armed", v.armed);
+    btn.classList.toggle("degraded", v.btnCls === "degraded");
+    btn.title = v.enabled ? "紧急停止" : v.notice;
+    let notice = v.notice, noticeCls = v.noticeCls;
+    if (estopSendFailedMs != null && now - estopSendFailedMs < ESTOP_FAIL_SHOW_MS) {
+      notice = "急停发送失败, 请使用硬件急停";
+      noticeCls = "bad";
+    }
+    const box = $("estopNotice");
+    if (box) {
+      box.textContent = notice;
+      box.className = "estop-notice" + (noticeCls ? " " + noticeCls : "");
+      box.hidden = !notice;
+    }
+    setStat("linkText", v.link);
   }
   function setDot(el, cls) { el.className = "dot" + (cls ? " " + cls : ""); }
   function esc(s) { const d = document.createElement("div"); d.textContent = s; return d.innerHTML; }
@@ -1038,10 +1122,19 @@
       applyView();
     });
     window.addEventListener("mouseup", () => { drag = null; vp.classList.remove("dragging"); });
-    // ESTOP: W1 (17 S6.4). Button is only enabled when estop_path ok (NAV-64).
+    // ESTOP: W1 (17 S6.4). Enabled only while estopView allows it (NAV-64).
+    // A failed POST is SAID, not swallowed: the probe only reports the path to
+    // the quadruped, so a press that never left the browser would otherwise
+    // look exactly like a press that worked.
     $("estopBtn").onclick = async () => {
       if ($("estopBtn").disabled) return;
-      try { await fetch("/api/estop", { method: "POST" }); } catch (_) { /* link probe shows the failure */ }
+      try {
+        const r = await fetch("/api/estop", { method: "POST" });
+        if (!r.ok) throw new Error("estop " + r.status);
+      } catch (_) {
+        estopSendFailedMs = performance.now();
+        updateEstopUi();
+      }
     };
   }
 
@@ -1060,7 +1153,10 @@
     renderSnapshot(currentSnap);
   }
   async function tick() {
-    try { applyFull(await getJSON("/api/hmi/snapshot")); }
+    // markDownlink BEFORE applyFull so the snapshot's estop_path is drawn
+    // against a fresh age; a failed fetch marks nothing, which is how the
+    // watchdog learns P5 is gone.
+    try { const snap = await getJSON("/api/hmi/snapshot"); markDownlink(); applyFull(snap); }
     catch (e) { /* transient; next tick retries */ }
   }
   // -- W7 task control uplink (11 S12.1.1) ---------------------------------
@@ -1306,6 +1402,9 @@
     ws.onmessage = (e) => {
       try {
         const m = JSON.parse(e.data);
+        // Heartbeat: only a frame that parsed counts -- a stream of garbage is
+        // not evidence that P5 is healthy.
+        markDownlink();
         if (m.kind === "state_snapshot") applyFull(m.data);      // keyframe
         else if (m.kind === "state_delta") applyDelta(m.data);   // W6 delta merge
         else if (m.kind === "ack") onUplinkAck(m);               // W7 uplink answer
@@ -1322,6 +1421,12 @@
     ws.onerror = () => { try { ws.close(); } catch (_) {} };
   }
   async function init() {
+    // The ESTOP watchdog runs from the first instant and independently of any
+    // data: it is what greys the button when NOTHING arrives, so it cannot be
+    // driven by an arrival. 250 ms keeps the grey-out within ~2.25 s of the
+    // last frame. Started before the ui_config fetch, which can itself fail.
+    updateEstopUi();
+    setInterval(updateEstopUi, 250);
     wireInteraction(); applyView(); buildDialFace(); wireHistoryFolding();
     wireExitBroadcast();
     $("mapSvg").addEventListener("click", onMapClick);
