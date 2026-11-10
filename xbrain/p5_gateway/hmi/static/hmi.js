@@ -605,8 +605,10 @@
     return `${g.year}-${g.month}-${g.day} ${g.hour}:${g.minute}:${g.second}`;
   }
 
-  // W7 controls, current card only: a history card's task has already ended,
-  // so every action on it would come back E_TASK_STATE.
+  // W7 controls: every current card, and in history only a SUSPENDED card (99
+  // U156 files suspended tasks under history; it can still be resumed or
+  // cancelled). Any other history card's task has ended, so an action on it
+  // would come back E_TASK_STATE.
   function taskActionsHTML(card) {
     const acts = taskActions(card.state);
     if (!acts.length || !card.task_id) return "";
@@ -679,7 +681,10 @@
       `<div class="task-time"><span>下发</span><time>${esc(fmtDispatchTime(card.created_at))}</time></div>` +
       taskFlowHTML(card.state) +
       (targets ? `<div class="task-targets-title">巡逻点</div><ol class="task-targets">${targets}</ol>` : "") +
-      (isCurrent ? taskActionsHTML(card) : "") +
+      // Actions: every current card, plus a SUSPENDED card in history -- since
+      // 99 U156 a suspended task is listed under history, and it is the one
+      // history card a person still has to act on (继续 or 取消任务).
+      ((isCurrent || card.state === "suspended") ? taskActionsHTML(card) : "") +
       `<div class="task-progress"><span>已巡逻 <strong>${pctText}</strong></span>` +
       `<div class="progress-bar"><div class="progress-fill" style="width:${pctW}%"></div></div></div>`
     );
@@ -704,10 +709,13 @@
       if (gotoTrack && card.task_id === gotoTrack.taskId) art.classList.add("goto-tracked");
       // History cards default collapsed (only id/content/time); a card the
       // operator opened stays expanded. Current cards are always full.
-      if (isHistory)
+      // A suspended task waits for a person, so in history it is never folded
+      // away ("awaiting"): its buttons stay in sight. The rest fold as before.
+      if (isHistory && card.state === "suspended") art.classList.add("awaiting");
+      else if (isHistory)
         art.classList.add(expandedHistory.has(card.task_id) ? "expanded" : "collapsed");
       art.innerHTML = taskCardHTML(card, !isHistory);
-      if (!isHistory) wireTaskActions(art);
+      wireTaskActions(art);                // no-op on a card without buttons
       box.appendChild(art);
     }
   }
@@ -746,7 +754,11 @@
   function wireHistoryFolding() {
     // Delegation on the persistent container, so it survives each re-render.
     $("historyTaskList").addEventListener("click", (e) => {
+      // A button press (继续 / 取消任务 on a suspended card) is not a fold toggle,
+      // and an awaiting card does not fold at all.
+      if (e.target.closest("button")) return;
       const card = e.target.closest(".task-card"); if (!card) return;
+      if (card.classList.contains("awaiting")) return;
       const id = card.dataset.taskId;
       if (card.classList.contains("expanded")) {          // re-click -> collapse
         card.classList.remove("expanded"); card.classList.add("collapsed");

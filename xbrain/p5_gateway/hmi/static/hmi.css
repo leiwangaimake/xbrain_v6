@@ -215,6 +215,9 @@ body { margin: 0; overflow: hidden; background: var(--bg); color: var(--ink);
 .task-card:last-child { margin-bottom: 0; }
 .current-group .task-card { border-left-color: var(--ok-bright); }
 .history-group .task-card { border-left-color: var(--gold); cursor: pointer; }
+/* A suspended task in history (99 U156): never folded, its 继续 / 取消任务 buttons
+   in sight, marked orange like its state badge -- it is waiting for a person. */
+.history-group .task-card.awaiting { border-left-color: var(--warn); cursor: default; }
 .task-card-head { display: flex; justify-content: space-between; align-items: center; }
 .task-id { color: var(--cyan); font-weight: 700; }
 .task-state { font-size: .82em; padding: 2px 7px; border-radius: 9px; }
