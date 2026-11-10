@@ -751,8 +751,42 @@ async def _amain(stop_flag: dict, heartbeat_period_s: float,
             # same DAO the scheduler uses -- P3 has one db thread (15 S2.1), so
             # an HMI cancel serialises with the tick rather than racing it.
             # 99 U133: submits are refused while a recording runs (CMD-16)
+            from xbrain.p3_task.ingest.goto_precheck import hmi_goto_refusal  # noqa: PLC0415
+
+            async def _keypoint_latlon(wid: str):
+                cur = await geo_conn.execute(
+                    "SELECT rtk_lat, rtk_lon FROM waypoints WHERE geo_id=? "
+                    "AND tombstone=0 AND state<>'deleted'", (wid,))
+                row = await cur.fetchone()
+                return None if row is None else (float(row[0]), float(row[1]))
+
+            async def _active_fence_set():
+                # Built from fence.db on demand, the same way the cmd/fence
+                # broadcast builds it, so the check sees the fence P1 is being
+                # given. An invalid set is not broadcast (the old one stays in
+                # force, P1 side) -- its geometry is unknown here, so no fence
+                # refusal is made from it; positioning is still checked.
+                rows = await fences_dao.list_active()
+                if not rows:
+                    return None
+                try:
+                    return build_fence_set(rows, fence_set_id=FENCE_SET_ID, rev=0,
+                                           enu_origin=enu_origin,
+                                           on_unusable=lambda _pid, _r: None)
+                except InvalidFenceSet:
+                    return None
+
+            async def _goto_precheck(task):
+                # 11 S12.1.2 W2, P3's half (ingest/goto_precheck): positioning
+                # failed / keypoint missing / target outside the fence.
+                return await hmi_goto_refusal(
+                    task, pose=state_cache.get("pose"),
+                    fence_set=await _active_fence_set(),
+                    keypoint=_keypoint_latlon)
+
             task_ctx = TaskContext(task_conn=conn, dao=dao,
-                                   teach_busy=lambda: teach.active)
+                                   teach_busy=lambda: teach.active,
+                                   goto_precheck=_goto_precheck)
 
             #: task_id of the push the ack window is currently waiting on, so
             #: a retry knows what to re-push and a failure knows what to fail.

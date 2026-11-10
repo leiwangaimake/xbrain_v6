@@ -81,13 +81,18 @@ _PAUSE_REASON = "operator_pause"
 class TaskContext:
     """The live handles an applier may touch."""
 
-    def __init__(self, task_conn, dao=None, teach_busy=None) -> None:
+    def __init__(self, task_conn, dao=None, teach_busy=None,
+                 goto_precheck=None) -> None:
         self.task_conn = task_conn
         self.dao = dao
         # 99 U133 / 11 S12A.3 CMD-16: a callable answering "is a recording
         # session in recording mode?". None = no recording in this process
         # (tests of the task path alone); production wires TeachRuntime.active.
         self.teach_busy = teach_busy
+        # 11 S12.1.2 W2 (2026-11-10): async (task body) -> (code, msg, detail)
+        # or None -- P3's half of an HMI goto (ingest/goto_precheck). None =
+        # not wired (tests of the task path alone); production wires it.
+        self.goto_precheck = goto_precheck
 
 
 async def handle_task_payload(payload: Dict[str, Any], ctx: TaskContext, *,
@@ -268,6 +273,17 @@ async def _submit(cmd: TaskCommand, ctx: TaskContext, now_mono_ms: int,
         # while a recording runs -- the robot is the operator's keyboard's.
         raise TaskCommandError(E_BUSY, "a recording session is active",
                                {"reason": "teach_session_active"})
+    if (ctx.goto_precheck is not None and cmd.source == "hmi"
+            and isinstance(cmd.task, dict) and cmd.task.get("type") == "goto"):
+        # 11 S12.1.2 W2: positioning failed / keypoint missing / target outside
+        # the fence are refused HERE, in the submit ack, not discovered when the
+        # task is dispatched -- before 2026-11-10 an HMI goto was acknowledged
+        # "accepted" whatever the world looked like. HMI-originated only: the W2
+        # table is the HMI's, and the other channels keep their behaviour.
+        refusal = await ctx.goto_precheck(cmd.task)
+        if refusal is not None:
+            code, message, detail = refusal
+            raise TaskCommandError(code, message, detail)
     clash = await _schedule_clash(ctx.task_conn, cmd.task)
     if clash is not None:
         # 99 U144 (user ruling 2026-11-06): one timed task per minute. Refused
