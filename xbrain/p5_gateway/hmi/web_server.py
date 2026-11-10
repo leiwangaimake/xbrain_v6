@@ -275,7 +275,7 @@ async def _answer_estop(websocket, msg: Any, estop_sender) -> None:
 
 
 async def _uplink_reader(websocket, provider, bucket, pending,
-                         estop_sender) -> None:
+                         estop_sender, builders) -> None:
     """Read HMI upstream frames for one connection until it closes.
 
     Every outcome answers the browser -- forwarded, refused, or rate-limited.
@@ -351,7 +351,7 @@ async def _uplink_reader(websocket, provider, bucket, pending,
         #
         # Anything NOT in the map still gets not_implemented, so "not built
         # yet" never reads as "your frame was wrong".
-        builder = _UPLINK_BUILDERS.get(req_type)
+        builder = builders.get(req_type)
         if builder is None:
             ref = uplink.not_implemented(req_type)
             await websocket.send_json(uplink.ack_frame(
@@ -384,6 +384,7 @@ def build_app(
     *,
     site_timezone: Optional[str] = None,
     on_session_closed: Optional[Callable[[str], None]] = None,
+    goto_arrive_radius_m: Optional[float] = None,
 ):
     """Build (do not run) the FastAPI app.
 
@@ -400,10 +401,26 @@ def build_app(
     S6.2.1 WD-1): the wiring sends cmd/teleop{deadman:false} and logs
     hmi.session_closed there. Optional only so route tests need not fake a
     publisher; production wiring always passes it, and its absence is logged.
+
+    `goto_arrive_radius_m` is hmi.goto.arrive_radius_m (W2 route-point taps,
+    user 2026-11-10). None -> a route-point goto is refused E_CONFIG_INVALID by
+    uplink.build_goto_command; keypoint gotos still work (their radius is the
+    keypoint's own). The goto builder also asks the provider's optional
+    goto_targets() for the geo layer it checks a tap against.
     """
     if on_session_closed is None:
         _logger.warning("p5 HMI: no on_session_closed hook -- a WS close will "
                         "NOT release cmd/teleop (17 S6.2.1 WD-1)")
+
+    def _goto_targets():
+        fn = getattr(provider, "goto_targets", None)
+        return fn() if callable(fn) else None
+
+    # Per-app builder map: the module map, with goto bound to this provider's
+    # geo layer and the configured radius (the others need nothing extra).
+    builders = dict(_UPLINK_BUILDERS)
+    builders["goto"] = lambda m: uplink.build_goto_command(
+        m, _goto_targets(), goto_arrive_radius_m)
     # Imported lazily (like services/payload) so importing this module has no
     # FastAPI side effect and the W-1 startup window can still report why P5 did
     # not come up. FastAPI is a p5_gateway dependency (17 S6.10.0).
@@ -612,7 +629,7 @@ def build_app(
         # snapshot stream for as long as the operator is not clicking.
         recv_task = asyncio.ensure_future(
             _uplink_reader(websocket, provider, uplink_bucket, pending,
-                           estop_sender))
+                           estop_sender, builders))
         try:
             while True:
                 # The reader returns when the client closes. Stop pushing then,

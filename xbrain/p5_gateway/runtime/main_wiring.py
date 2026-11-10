@@ -445,6 +445,19 @@ def _start_hmi(gen, hmi_cfg: dict, hmi_state: dict,
         def send_uplink(self, key, payload):
             _send_uplink(key, payload)
 
+        def goto_targets(self):
+            # W2 (user 2026-11-10): what a map tap may target -- the keypoints
+            # and route points the operator SEES, i.e. the very layer the
+            # snapshot draws (state/geo/objects cache, P5 never reads geo.db).
+            # None while that cache is empty or stale: then a goto cannot be
+            # checked and is refused, never forwarded on faith.
+            from xbrain.p5_gateway.geo.cache import geo_layers  # noqa: PLC0415
+            routes, waypoints = geo_layers(
+                hmi_state["geo_cache"].snapshot(_now_mono_ms()))
+            if routes is None and waypoints is None:
+                return None
+            return {"routes": routes or [], "waypoints": waypoints or []}
+
         def take_uplink_ack(self, req_id):
             # Keyed by the cmd_id P5 stamped (S12.1.1: "h-" + req_id). pop, so
             # the WS poll delivers each ack exactly once.
@@ -490,9 +503,14 @@ def _start_hmi(gen, hmi_cfg: dict, hmi_state: dict,
         # _start_hmi, which is why one now does.
         here = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
         static_root = os.path.join(here, web.get("static_dir", "hmi/static"))
+        # hmi.goto.arrive_radius_m: safety-relevant, so no default here -- an
+        # absent key is passed as None and route-point gotos are then refused
+        # (uplink.build_goto_command), keypoint gotos unaffected.
+        _goto_cfg = hmi_cfg.get("goto") if isinstance(hmi_cfg.get("goto"), dict) else {}
         app = build_app(web, _Provider(), _estop_sender, static_root,
                         site_timezone=site_timezone,
-                        on_session_closed=_on_session_closed)
+                        on_session_closed=_on_session_closed,
+                        goto_arrive_radius_m=_goto_cfg.get("arrive_radius_m"))
         server, thread = start_in_thread(app, socks)
         _logger.info("p5 HMI: serving on %s (static %s)",
                      [e for e in bind if e], static_root)

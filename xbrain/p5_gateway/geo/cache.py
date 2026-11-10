@@ -65,18 +65,25 @@ def geo_layers(payload: Optional[Dict[str, Any]]
     geom:{lat,lon} (so toXY projects them through enu_origin); routes keep their
     [{lat,lon},...] points and are tagged kind:"recorded" (the yellow realtime
     layer is the live pose trail, not a stored route).
+
+    geo_id is kept on both (W2, 2026-11-10): a tap on a keypoint is sent as
+    goto{waypoint_id} -- the keypoint's own arrival radius then applies -- and
+    the backend checks a tap against these same lists, so it needs the ids too.
+    Until then the ids were dropped here and the HMI could only send coordinates.
     """
     if not payload:
         return None, None
     waypoints = [
-        {"name": w.get("name"),
+        {"geo_id": w.get("geo_id"),
+         "name": w.get("name"),
          "geom": {"lat": w["lat"], "lon": w["lon"]},
          "recorded": True}                          # a stored keypoint = recorded
         for w in payload.get("waypoints", [])
         if w.get("lat") is not None and w.get("lon") is not None
     ]
     routes = [
-        {"name": r.get("name"),
+        {"geo_id": r.get("geo_id"),
+         "name": r.get("name"),
          "points": r.get("points") or [],
          "kind": "recorded"}
         for r in payload.get("routes", [])

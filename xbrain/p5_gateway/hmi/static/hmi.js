@@ -168,13 +168,17 @@
     p.querySelector("path").setAttribute("d", d);
   }
 
-  // req(2026-08-18): fallback cell sizes if yaml has none. The real list is
-  // map.grid.cell_options_m (yaml-configurable). GRID_TARGET_PX = aim each cell
-  // this many screen px so a huge map never shows a pinprick sieve; DOT_PX =
-  // constant screen radius for the geo dots (so they never shrink to nothing on
-  // a ~5km view).
-  const GRID_CELLS_DEFAULT = [1, 2, 5, 10, 20, 50, 100, 200, 500, 1000, 2000, 5000];
+  // Grid (U1). The cell list is map.grid.cell_options_m (yaml); user
+  // 2026-11-10 limits it to 1..10 m. GRID_TARGET_PX = aim each cell at least
+  // this many screen px. Below GRID_MIN_PX even the LARGEST allowed cell would
+  // turn the map into a grey sieve, so the grid is hidden and the scale says so
+  // rather than being drawn as a smear. DOT_PX = constant screen radius of the
+  // geo dots so they never shrink to nothing on a wide view.
+  // ~~GRID_CELLS_DEFAULT = [1, 2, 5, 10, 20, ..., 5000]~~ superseded 2026-11-10.
+  const GRID_CELLS_DEFAULT = [1, 2, 5, 10];
   const GRID_TARGET_PX = 42;
+  const GRID_MIN_PX = 8;
+  const GRID_LINE_PX_FALLBACK = 2;
   const DOT_PX = 3.5;
 
   // Chosen every view change (applyView) from the CURRENT metres-per-screen-px.
@@ -186,18 +190,27 @@
     const vb = svg.getAttribute("viewBox");
     const vbW = vb ? parseFloat(vb.split(/\s+/)[2]) : baseVB[2];
     const mpp = vbW / cw;                  // metres per screen px
-    const cells = (cfg && cfg.map && cfg.map.grid && cfg.map.grid.cell_options_m)
-                  || GRID_CELLS_DEFAULT;
+    const grid = (cfg && cfg.map && cfg.map.grid) || {};
+    const cells = grid.cell_options_m || GRID_CELLS_DEFAULT;
     // smallest configured cell whose on-screen size >= target; else the largest.
     let cell = cells[cells.length - 1];
     for (const cm of cells) { if (cm / mpp >= GRID_TARGET_PX) { cell = cm; break; } }
+    const hidden = cell / mpp < GRID_MIN_PX;
     setPattern("majorGrid", cell, `M ${cell} 0 L 0 0 0 ${cell}`);
     $("majorGridRect").setAttribute("width", cell);
     $("majorGridRect").setAttribute("height", cell);
-    $("scaleText").textContent = `网格 ${cell}m`;
+    // Fixed SCREEN line width (user 2026-11-10: never thicker or thinner with
+    // zoom). The pattern draws each line on its tile's edge, so half the stroke
+    // is clipped -- hence 2x. Inline style, because the .map-grid-major class
+    // rule would beat a presentation attribute.
+    const linePx = grid.line_px || GRID_LINE_PX_FALLBACK;
+    $("majorGridPath").style.strokeWidth = (2 * linePx * mpp).toFixed(4);
+    $("gridBg").style.display = hidden ? "none" : "";
+    $("scaleText").textContent = hidden ? "网格 已隐藏" : `网格 ${cell}m`;
     // non-scaling geo dots: constant screen radius regardless of zoom.
     const rr = (DOT_PX * mpp).toFixed(3);
     svg.querySelectorAll("circle.geo-dot").forEach((c) => c.setAttribute("r", rr));
+    sizeGotoPins();                        // W2 target dots: constant screen size
   }
 
   // req1 (2026-08-18): keep geo NAMES from overlapping. Greedy de-confliction in
@@ -257,7 +270,8 @@
     // omits the field cannot clobber the ui_config default with undefined.
     if (snap.timezone) siteTz = snap.timezone;
     const origin = (snap.geo && snap.geo.enu_origin) || null;
-    lastOrigin = origin;                  // W2 needs it to invert a map tap
+    lastOrigin = origin;                  // W2 needs it to place a target
+    lastGeo = snap.geo || {};             // W2 snaps a tap to these points
     // patrolling = a plan is running -> the yellow realtime trajectory shows;
     // once no plan runs (patrol complete) it hides unless show_after_complete.
     const plans = (snap.plan && snap.plan.plans) || [];
@@ -271,7 +285,14 @@
     renderStatus(snap.status || {}, snap.pose || {}, origin, snap.clock || {});
     renderHeading(snap.pose || {});
     renderTeach(snap.teach || {}, origin);
+    renderGotoPins();                     // W2 target dot(s), fixed screen size
+    followGoto(plans);                    // done / failed -> dot off, banner
+    // Task state changed -> pull the panel now rather than on the 4 s poll, so
+    // the state flow on the cards moves with the robot (user 2026-11-10).
+    const sig = plans.map((p) => p.task_id + ":" + p.state).join("|");
+    if (sig !== lastPlanSig) { lastPlanSig = sig; refreshTasks(); }
   }
+  let lastPlanSig = null;
 
   // -- 录制指示 (11 S12A.5) ------------------------------------------------
   //
@@ -595,6 +616,39 @@
       `${ACTION_LABEL[a]}</button>`).join("") + `</div>`;
   }
 
+  // The state FLOW of a task as three steps (user 2026-11-10: the panel must
+  // show the transitions of an HMI-tapped task as they happen): 已下发 ->
+  // 执行中 -> how it ended. The step the task is on is lit; finished steps are
+  // ticked. Mapped from the 12-value closed set (11 S4.4) -- every value lands
+  // somewhere, an unknown one shows raw on the first step rather than vanishing.
+  // Asserted by tests/p5_gateway/hmi/test_task_flow_js.py (block cut out by the
+  // markers and run under node), so it must stay self-contained.
+  // <task-flow>
+  const FLOW_BAD_END = { failed: "失败", interrupted: "已中断",
+                         needs_review: "待处理", wait_for_power_off: "待关机" };
+  function taskFlow(state) {
+    const queued = ["pending", "ready", "scheduled", "blocked"];
+    if (queued.indexOf(state) >= 0) return { at: 0, end: "完成", endCls: "" };
+    if (state === "running") return { at: 1, end: "完成", endCls: "" };
+    if (state === "suspended") return { at: 1, mid: "已暂停", end: "完成", endCls: "" };
+    if (state === "done") return { at: 2, end: "已完成", endCls: "ok" };
+    if (state === "cancelled") return { at: 2, end: "已取消", endCls: "muted" };
+    if (FLOW_BAD_END[state]) return { at: 2, end: FLOW_BAD_END[state], endCls: "bad" };
+    return { at: 0, first: state || "--", end: "完成", endCls: "" };
+  }
+  // </task-flow>
+  function taskFlowHTML(state) {
+    const f = taskFlow(state);
+    const labels = [f.first || "已下发", f.mid || "执行中", f.end];
+    const parts = labels.map((txt, i) => {
+      let cls = "flow-step";
+      if (i < f.at) cls += " passed";
+      if (i === f.at) cls += " current" + (i === 2 && f.endCls ? " " + f.endCls : "");
+      return `<span class="${cls}">${esc(txt)}</span>`;
+    });
+    return `<div class="task-flow">` + parts.join(`<i class="flow-arrow"></i>`) + `</div>`;
+  }
+
   function taskCardHTML(card, isCurrent) {
     const b = taskBadge(card.state);
     // 字段3 内容 = command_text (语音/文本原文); 系统自发任务(返航/充电)无原文 ->
@@ -611,11 +665,19 @@
         : (t.status === "current" ? "current" : "pending");
       return `<li class="${cls}"><i></i><span>${esc(t.name || t.waypoint_id || "")}</span></li>`;
     }).join("");
+    // An HMI map-tap goto is tagged, so the operator finds the task they just
+    // sent among the voice / cloud ones (P5 writes "HMI 点击前往 ..." as its
+    // command_text; P3 maps the hmi channel to source "local", so the text is
+    // the only marker the card has).
+    const hmiTag = (card.command_text || "").indexOf("HMI ") === 0
+      ? `<span class="task-tag-hmi">HMI</span>` : "";
     return (
       `<div class="task-card-head"><strong class="task-id">${esc(card.task_id || "")}</strong>` +
+      hmiTag +
       `<span class="task-state ${b.cls}">${esc(b.label)}</span></div>` +
       `<div class="task-content">${esc(content)}</div>` +
       `<div class="task-time"><span>下发</span><time>${esc(fmtDispatchTime(card.created_at))}</time></div>` +
+      taskFlowHTML(card.state) +
       (targets ? `<div class="task-targets-title">巡逻点</div><ol class="task-targets">${targets}</ol>` : "") +
       (isCurrent ? taskActionsHTML(card) : "") +
       `<div class="task-progress"><span>已巡逻 <strong>${pctText}</strong></span>` +
@@ -638,6 +700,8 @@
       const art = document.createElement("article");
       art.className = "task-card";
       art.dataset.taskId = card.task_id || "";
+      // The goto whose pink dot is on the map gets the same accent on its card.
+      if (gotoTrack && card.task_id === gotoTrack.taskId) art.classList.add("goto-tracked");
       // History cards default collapsed (only id/content/time); a card the
       // operator opened stays expanded. Current cards are always full.
       if (isHistory)
@@ -1150,9 +1214,15 @@
       const mppy = (baseVB[3] / view.zoom) / r.height;
       view.pan.x = drag.px - (e.clientX - drag.x) * mppx;
       view.pan.y = drag.py - (e.clientY - drag.y) * mppy;
+      if (Math.hypot(e.clientX - drag.x, e.clientY - drag.y) > DRAG_TAP_PX) drag.moved = true;
       applyView();
     });
-    window.addEventListener("mouseup", () => { drag = null; vp.classList.remove("dragging"); });
+    window.addEventListener("mouseup", () => {
+      // A pan ends in a click event too; remember it so onMapClick does not
+      // treat the end of a drag as a goto pick.
+      lastPanMoved = !!(drag && drag.moved);
+      drag = null; vp.classList.remove("dragging");
+    });
     // ESTOP: W1 (17 S6.4). Enabled only while estopView allows it (NAV-64).
     //
     // *** Primary path: the WebSocket ({type:"estop"}), which P5 forwards at
@@ -1267,7 +1337,7 @@
       // exit_broadcast have no card, so they answer on the banner.
       if (frame.type === "task") taskNotice(frame.task_id, "连接已断开, 任务控制不可用", "bad");
       else alertBanner("连接已断开, 操作不可用");
-      return;
+      return null;
     }
     reqSeq += 1;
     // req_id is per connection, and P5 prefixes it with "h-" to make the cmd_id.
@@ -1275,16 +1345,24 @@
     frame.req_id = reqId;
     if (btn) { btn.disabled = true; pendingReqs.set(reqId, btn); }
     liveWS.send(JSON.stringify(frame));
+    return reqId;                        // the goto flow matches its ack by it
   }
 
   function onUplinkAck(m) {
     if (m.req_type === "estop") { onEstopAck(m); return; }
     const btn = pendingReqs.get(m.req_id);
-    // W2/W3 answer on the banner, not on a task card (they have no card).
-    if (m.req_type === "goto" || m.req_type === "exit_broadcast") {
+    // W2 has its own flow (the target dot, the echo, the tracking).
+    if (m.req_type === "goto") {
       pendingReqs.delete(m.req_id);
       if (btn) btn.disabled = false;
-      const okTxt = m.req_type === "goto" ? "已下发前往目标点" : "已退出喊话";
+      onGotoAck(m);
+      return;
+    }
+    // W3 answers on the banner, not on a task card (it has no card).
+    if (m.req_type === "exit_broadcast") {
+      pendingReqs.delete(m.req_id);
+      if (btn) btn.disabled = false;
+      const okTxt = "已退出喊话";
       if (m.result === "accepted") { alertBanner(okTxt); refreshTasks(); }
       else {
         const why = (m.detail && (m.detail.reason_text || m.detail.reason)) || "";
@@ -1378,71 +1456,261 @@
     });
   }
 
-  // -- W2 goto by tapping the map (11 S12.1.1) ------------------------------
-  // The operator taps a point; P5 turns it into a cmd/task submit of a goto
+  // -- W2 goto by tapping the map (11 S12.1.1; user rulings 2026-11-10) --------
+  // The operator taps a target; P5 turns it into a cmd/task submit of a goto
   // task (NOT a BehaviorCommand -- that would bypass P3's fence pre-check and
   // the U07a breakpoint ledger).
   //
-  // Two clicks, like cancel: the first drops a pin and shows the coordinates,
-  // the second sends. A single click would make an accidental brush against a
-  // touchscreen dispatch the robot somewhere.
-  let gotoPin = null;                     // {lat, lon} awaiting confirmation
+  // *** Only two kinds of target are legal (user 2026-11-10): a point ON A ROUTE
+  // (one of its recorded points, the dots drawn on the line) or a KEYPOINT. A
+  // tap SNAPS to the nearest such point within goto.snap_px screen pixels,
+  // keypoints first; anything else is refused on the spot with a message. A
+  // keypoint is sent as waypoint_id (its own arrival radius applies), a route
+  // point as its exact lat/lon (P5 adds the configured radius). P5 re-checks
+  // the same rule, so the browser is not the only guard.
+  //
+  // Two clicks, like cancel: the first picks and shows the target, the second
+  // sends. The target stays on the map -- a pink/white breathing dot of a FIXED
+  // screen size (goto.pin_diameter_px) -- until the task is done or has failed.
+  // A failure is announced in the top banner with the target's coordinates and
+  // a close button.
   let lastOrigin = null;                  // set each render; needed to invert
+  let lastGeo = {};                       // set each render; snap candidates
+  let gotoCandidate = null;               // picked, not yet sent
+  let gotoPendingReq = null;              // {reqId, target} while the ack is out
+  let gotoTrack = null;                   // sent and accepted: {..target, taskId}
+  let gotoHistoryAt = 0;                  // last history lookup (throttle)
+  const GOTO_TRACK_KEY = "xbrain_hmi_goto_track";
+  // Presentation fallbacks if ui_config carries no goto group (17 S6.10.2: UI
+  // values, not safety values; the yaml is where they are tuned).
+  const GOTO_PIN_PX_FALLBACK = 20;
+  const GOTO_SNAP_PX_FALLBACK = 14;
+  const GOTO_HISTORY_EVERY_MS = 2000;
+  const BANNER_INFO_MS = 6000;
 
-  function clearGotoPin() {
-    gotoPin = null;
-    const old = $("mapSvg").querySelector("#gotoPin");
-    if (old) old.remove();
-    const b = $("gotoBanner");
-    if (b) b.hidden = true;
+  function gotoCfg() {
+    const g = (cfg && cfg.goto) || {};
+    return { pinPx: g.pin_diameter_px || GOTO_PIN_PX_FALLBACK,
+             snapPx: g.snap_px || GOTO_SNAP_PX_FALLBACK };
+  }
+  const fmtLL = (t) => t.lat.toFixed(6) + "°N " + t.lon.toFixed(6) + "°E";
+  function targetLabel(t) {
+    return t.kind === "keypoint" ? "关键点「" + (t.name || t.waypoint_id) + "」"
+                                 : "路径「" + (t.name || "?") + "」上的点";
   }
 
-  function onMapClick(ev) {
-    // Link down: no pin at all. The banner already says why, and a pin the
-    // operator cannot send would only invite a confirm click that goes nowhere.
-    if (controlsOffline()) return;
+  // Restore an in-flight goto after a page reload, so the dot and the failure
+  // banner survive a refresh. Storage blocked -> simply not remembered.
+  try {
+    const saved = JSON.parse(localStorage.getItem(GOTO_TRACK_KEY) || "null");
+    if (saved && saved.taskId && saved.lat != null) gotoTrack = saved;
+  } catch (e) { /* no storage */ }
+  function saveTrack() {
+    try {
+      if (gotoTrack) localStorage.setItem(GOTO_TRACK_KEY, JSON.stringify(gotoTrack));
+      else localStorage.removeItem(GOTO_TRACK_KEY);
+    } catch (e) { /* no storage */ }
+  }
+
+  // Nearest legal target to a tap, in SCREEN pixels (the snap radius is about
+  // where the finger/mouse landed on screen, whatever the zoom). Keypoints win
+  // over route points within the radius: they are the named, deliberate ones.
+  function pickGotoTarget(clientX, clientY) {
     const svg = $("mapSvg");
     const vb = (svg.getAttribute("viewBox") || "").split(/\s+/).map(Number);
-    if (vb.length !== 4 || !svg.clientWidth) return;
+    if (vb.length !== 4) return null;
     const r = svg.getBoundingClientRect();
-    // preserveAspectRatio="none" on this svg, so x and y scale independently.
-    const x = vb[0] + (ev.clientX - r.left) / r.width * vb[2];
-    const y = vb[1] + (ev.clientY - r.top) / r.height * vb[3];
-    const ll = fromXY(x, y, lastOrigin);
-    if (!ll) {
-      // No enu_origin -> the map has no georeference, so a tap cannot be
-      // turned into a coordinate. Said out loud rather than silently ignored.
-      alertBanner("地图还没有定位基准, 无法点选目标点");
-      return;
+    const cx = clientX - r.left, cy = clientY - r.top;
+    const toScreen = (xy) => [(xy[0] - vb[0]) / vb[2] * r.width,
+                              (xy[1] - vb[1]) / vb[3] * r.height];
+    const lim = gotoCfg().snapPx;
+    let best = null;
+    const consider = (pt, mk) => {
+      const xy = toXY(pt, lastOrigin); if (!xy) return;
+      const s = toScreen(xy), d = Math.hypot(s[0] - cx, s[1] - cy);
+      if (d <= lim && (!best || d < best.d)) best = { d, t: mk() };
+    };
+    const wps = lastGeo.waypoints || {};
+    if (wps.available) for (const w of wps.items) {
+      const g = w.geom || w;
+      if (!w.geo_id || g.lat == null) continue;
+      consider(g, () => ({ kind: "keypoint", waypoint_id: w.geo_id, name: w.name,
+                           lat: g.lat, lon: g.lon }));
     }
-    gotoPin = ll;
-    let pin = svg.querySelector("#gotoPin");
-    if (!pin) {
-      pin = document.createElementNS(SVGNS, "circle");
-      pin.setAttribute("id", "gotoPin");
-      pin.setAttribute("class", "goto-pin");
-      svg.appendChild(pin);
+    if (best) return best.t;                         // keypoint first
+    const routes = lastGeo.routes || {};
+    if (routes.available) for (const rt of routes.items) {
+      if (rt.kind === "realtime") continue;          // the live trail is not a route
+      for (const p of (rt.points || [])) {
+        if (p.lat == null) continue;
+        consider(p, () => ({ kind: "route", name: rt.name, lat: p.lat, lon: p.lon }));
+      }
     }
-    pin.setAttribute("cx", x); pin.setAttribute("cy", y);
-    pin.setAttribute("r", 6);
-    alertBanner("目标点 " + ll.lat.toFixed(6) + ", " + ll.lon.toFixed(6)
-                + " -- 再点一次下方按钮确认发送", true);
+    return best ? best.t : null;
   }
 
-  function alertBanner(text, withConfirm) {
-    const b = $("gotoBanner");
-    if (!b) return;
-    b.hidden = false;
-    b.querySelector(".goto-text").textContent = text;
-    b.querySelector(".goto-send").hidden = !withConfirm;
+  //: Movement beyond this between mousedown and mouseup makes it a pan, not a tap.
+  const DRAG_TAP_PX = 4;
+  let lastPanMoved = false;
+
+  function onMapClick(ev) {
+    if (lastPanMoved) { lastPanMoved = false; return; }   // end of a pan
+    // Link down: no pick at all. The link banner already says why.
+    if (controlsOffline()) return;
+    if (!lastOrigin) {
+      // No enu_origin -> the map has no georeference, nothing can be placed.
+      showBanner("warn", "地图还没有定位基准, 暂时无法选择导航目标");
+      return;
+    }
+    const t = pickGotoTarget(ev.clientX, ev.clientY);
+    if (!t) {
+      gotoCandidate = null;
+      renderGotoPins();
+      showBanner("warn", "导航位置不正确: 只能选择路径上的点 (路径线上的圆点) "
+                 + "或地图上带名称的关键点, 请点在它们上面。");
+      return;
+    }
+    gotoCandidate = t;
+    renderGotoPins();
+    showBanner("confirm", "前往 " + targetLabel(t) + "  " + fmtLL(t)
+               + "  -- 点击确认前往, 机器人将出发");
   }
 
   function sendGoto() {
-    if (!gotoPin) return;
-    sendUplink({ type: "goto", lat: gotoPin.lat, lon: gotoPin.lon },
-               $("gotoSend"));
-    clearGotoPin();
+    if (!gotoCandidate) return;
+    const t = gotoCandidate;
+    const frame = t.kind === "keypoint"
+      ? { type: "goto", waypoint_id: t.waypoint_id }
+      : { type: "goto", lat: t.lat, lon: t.lon };
+    const reqId = sendUplink(frame, $("gotoSend"));
+    if (!reqId) return;                    // offline: sendUplink said so
+    gotoPendingReq = { reqId, target: t };
+    showBanner("info", "正在下发: 前往 " + targetLabel(t) + " ...");
   }
+
+  function cancelGoto() {
+    gotoCandidate = null;
+    renderGotoPins();
+    hideBanner();
+  }
+
+  // P5/P3 reason codes -> what the operator reads. Unknown codes are shown raw.
+  const GOTO_REASON_CN = {
+    positioning_failed: "定位失效 (单点解或无解), 暂时不能导航",
+    target_outside_allow_fence: "目标点在活动区域围栏之外",
+    target_inside_forbid_zone: "目标点在禁止区域之内",
+    keypoint_not_found: "该关键点已不存在",
+    goto_keypoint_unknown: "该关键点已不存在",
+    goto_target_not_on_route: "目标不在路径上, 也不是关键点",
+    goto_targets_unavailable: "地图数据还未就绪, 请稍后再试",
+    goto_arrive_radius_missing: "到点半径未配置, 无法前往路径上的点",
+    teach_session_active: "正在录制, 录制期间不接受新任务",
+    rate_limited: "操作过于频繁, 请稍后再试",
+  };
+  function reasonText(m) {
+    const d = m.detail || {};
+    return GOTO_REASON_CN[d.reason] || d.reason_text || d.reason || m.code || "";
+  }
+
+  function onGotoAck(m) {
+    if (!gotoPendingReq || m.req_id !== gotoPendingReq.reqId) return;
+    const t = gotoPendingReq.target;
+    gotoPendingReq = null;
+    gotoCandidate = null;
+    if (m.result === "accepted" || m.result === "duplicate") {
+      const d = m.detail || {};
+      const taskId = d.task_id || (d.applied && d.applied.task_id) || "";
+      gotoTrack = Object.assign({}, t, { taskId });
+      saveTrack();
+      renderGotoPins();
+      // CMD-30: echo what the robot accepted, not just "sent".
+      showBanner("info", "已下发: 任务 " + (taskId || "--") + "  前往 " + targetLabel(t)
+                 + "  " + fmtLL(t));
+      refreshTasks();
+      return;
+    }
+    renderGotoPins();
+    showBanner("fail", "导航未下发: " + reasonText(m) + "  (目标 " + fmtLL(t) + ")");
+  }
+
+  // Follow the tracked goto: on the plan list (state/task) it is alive; once it
+  // leaves the list, the history says how it ended. done -> the dot goes;
+  // failed / interrupted / needs_review -> the dot goes and the failure banner
+  // stays until closed; cancelled -> the dot goes with a closable notice.
+  function followGoto(plans) {
+    if (!gotoTrack || !gotoTrack.taskId) return;
+    if (plans.some((p) => p.task_id === gotoTrack.taskId)) return;
+    const now = performance.now();
+    if (now - gotoHistoryAt < GOTO_HISTORY_EVERY_MS) return;
+    gotoHistoryAt = now;
+    const tracked = gotoTrack;
+    getJSON("/api/tasks?scope=history&limit=50").then((d) => {
+      if (gotoTrack !== tracked) return;     // replaced meanwhile
+      const card = (d.tasks || []).find((c) => c.task_id === tracked.taskId);
+      if (!card) return;                     // not terminal yet; next tick retries
+      gotoTrack = null;
+      saveTrack();
+      renderGotoPins();
+      refreshTasks();
+      if (card.state === "done") {
+        showBanner("info", "已到达目标点: " + targetLabel(tracked) + "  " + fmtLL(tracked));
+      } else if (card.state === "cancelled") {
+        showBanner("fail", "导航任务已取消  目标点 " + fmtLL(tracked));
+      } else {
+        showBanner("fail", "导航任务失败  目标点 " + fmtLL(tracked)
+                   + "  (任务 " + tracked.taskId + ")");
+      }
+    }).catch(() => { /* transient; next tick retries */ });
+  }
+
+  // The candidate and the tracked target, as fixed-screen-size dots on their
+  // own layer (renderGeo never clears it). Radius in user units = screen px x
+  // metres-per-px, re-applied by updateGridAndDots on every zoom/pan.
+  function renderGotoPins() {
+    const layer = $("gotoLayer"); if (!layer) return;
+    clear("gotoLayer");
+    for (const t of [gotoTrack, gotoCandidate]) {
+      if (!t) continue;
+      const xy = toXY({ lat: t.lat, lon: t.lon }, lastOrigin); if (!xy) continue;
+      const c = document.createElementNS(SVGNS, "circle");
+      c.setAttribute("cx", xy[0]); c.setAttribute("cy", xy[1]);
+      c.setAttribute("class", "goto-pin");
+      layer.appendChild(c);
+    }
+    sizeGotoPins();
+  }
+  function sizeGotoPins() {
+    const svg = $("mapSvg");
+    const vb = (svg.getAttribute("viewBox") || "").split(/\s+/).map(Number);
+    const mpp = (vb[2] || baseVB[2]) / (svg.clientWidth || 1);
+    const rr = (gotoCfg().pinPx / 2 * mpp).toFixed(3);
+    svg.querySelectorAll("circle.goto-pin").forEach((c) => c.setAttribute("r", rr));
+  }
+
+  // -- the top banner: confirm / info / warn / fail -------------------------
+  // Not a modal and never alert(): a native dialog blocks the page thread and
+  // freezes the map while the robot moves (see taskNotice). confirm keeps its
+  // two buttons; warn has one acknowledgement button; fail has a close cross
+  // and stays until closed; info hides itself after BANNER_INFO_MS.
+  let bannerTimer = null;
+  function showBanner(kind, text) {
+    const b = $("gotoBanner"); if (!b) return;
+    clearTimeout(bannerTimer);
+    b.className = "goto-banner kind-" + kind;
+    b.hidden = false;
+    b.querySelector(".goto-text").textContent = text;
+    $("gotoSend").hidden = kind !== "confirm";
+    $("gotoCancel").hidden = kind !== "confirm";
+    $("gotoAck").hidden = kind !== "warn";
+    $("gotoClose").hidden = kind !== "fail";
+    if (kind === "info") bannerTimer = setTimeout(hideBanner, BANNER_INFO_MS);
+  }
+  function hideBanner() {
+    clearTimeout(bannerTimer);
+    const b = $("gotoBanner"); if (b) b.hidden = true;
+  }
+  // Older callers (exit broadcast, offline refusals) keep this name.
+  function alertBanner(text, withConfirm) { showBanner(withConfirm ? "confirm" : "info", text); }
 
   // -- W3 exit_broadcast ----------------------------------------------------
   // 11 S12.1.1 W3: while B mode runs the local mic is closed by the half-duplex
@@ -1504,7 +1772,12 @@
     const gs = $("gotoSend");
     if (gs) gs.addEventListener("click", sendGoto);
     const gc = $("gotoCancel");
-    if (gc) gc.addEventListener("click", clearGotoPin);
+    if (gc) gc.addEventListener("click", cancelGoto);
+    // warn (知道了) and fail (×) only dismiss the banner; a failed target's dot
+    // is already gone by then (followGoto / onGotoAck).
+    for (const id of ["gotoAck", "gotoClose"]) {
+      const el = $(id); if (el) el.addEventListener("click", hideBanner);
+    }
     window.addEventListener("resize", applyView);   // req3: rescale map labels on resize
     wirePanelScroll(); wirePanelResize();
     try { applyUiConfig(await getJSON("/api/hmi/ui_config")); }

@@ -57,14 +57,18 @@ nothing, and reads no clock (the rate limiter takes now_ms).
 """
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional
 
 from xbrain.common.enums import GEO_TYPE
 from xbrain.common.errors import (
     E_BUSY,
     E_CHANNEL_DENIED,
+    E_CONFIG_INVALID,
     E_CONFIRM_REQUIRED,
+    E_DEGRADED,
+    E_NOT_FOUND,
     E_NOT_IMPLEMENTED,
     E_SCHEMA,
 )
@@ -303,7 +307,41 @@ def build_exit_broadcast_command(msg: Dict[str, Any]) -> Any:
                          req_type="exit_broadcast")
 
 
-def build_goto_command(msg: Dict[str, Any]) -> Any:
+#: W2 (user 2026-11-10): a coordinate tap must BE a route point. The frontend
+#: snaps to the vertex and sends its exact coordinates, so anything farther than
+#: this from every vertex was not produced by a snap. 0.2 m sits far below the
+#: route sampling interval and far above float round-trip noise.
+ROUTE_POINT_MATCH_M = 0.2
+
+#: Equirectangular metres per degree of latitude -- the same constant hmi.js
+#: projects with, so "this tap is on that vertex" means the same on both sides.
+_M_PER_DEG = 111320.0
+
+
+def _dist_m(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
+    """Ground distance on the local tangent plane; exact enough at 0.2 m."""
+    c = math.cos(math.radians((lat1 + lat2) / 2.0))
+    return math.hypot((lat1 - lat2) * _M_PER_DEG, (lon1 - lon2) * _M_PER_DEG * c)
+
+
+def _snap_route_point(lat: float, lon: float, routes: List[Dict[str, Any]]):
+    """(route, vertex) within ROUTE_POINT_MATCH_M of (lat, lon), or None."""
+    best = None
+    for route in routes:
+        for pt in route.get("points") or []:
+            if not isinstance(pt, dict):
+                continue
+            plat, plon = pt.get("lat"), pt.get("lon")
+            if not isinstance(plat, (int, float)) or not isinstance(plon, (int, float)):
+                continue
+            d = _dist_m(lat, lon, float(plat), float(plon))
+            if d <= ROUTE_POINT_MATCH_M and (best is None or d < best[0]):
+                best = (d, route, pt)
+    return None if best is None else (best[1], best[2])
+
+
+def build_goto_command(msg: Dict[str, Any], targets: Optional[Dict[str, Any]] = None,
+                       arrive_radius_m: Optional[float] = None) -> Any:
     """W2: an HMI goto frame -> a cmd/task submit of a goto task, or a refusal.
 
     *** Why this becomes a TASK and not a BehaviorCommand (S12.1.1 W2, verbatim
@@ -313,28 +351,71 @@ def build_goto_command(msg: Dict[str, Any]) -> Any:
     ledger -- the operator would get motion with no fence validation and no
     record of where it interrupted. "The HMI's goto MUST land as a task."
 
-    *** The validation split matters here. P5 (gate G4) rejects what it can see
-    from the frame alone -- both target forms missing, a non-numeric or
-    out-of-range coordinate, a retired speed_profile. P3 rejects what needs the
-    world: waypoint not found, target outside the fence, positioning degraded.
-    Doing P3's half here would need P5 to read geo.db, which it must not
-    (S7.8.4.3).
+    *** Only two kinds of target exist (user ruling 2026-11-10): a KEYPOINT, sent
+    as waypoint_id (P3 then uses that keypoint's own arrival radius), or a point
+    ON A ROUTE, sent as lat/lon. `targets` is the geo layer P5 already holds
+    from state/geo/objects ({"waypoints": [...], "routes": [...]}, geo_layers
+    shape); a frame naming anything else is refused here, so the rule does not
+    rest on the browser alone. No layer to check against -> refused E_DEGRADED,
+    never waved through.
+
+    *** A route point carries no radius, and P3 refuses a coordinate goto
+    without one rather than invent it (route_push_runtime.load_goto_target).
+    That is why every HMI goto failed at dispatch until 2026-11-10: the frame
+    was accepted, the operator read "sent", and the task died when P3 tried to
+    push it. `arrive_radius_m` is hmi.goto.arrive_radius_m from the yaml; with
+    none configured a route-point goto is refused here instead of failing later.
+
+    params.text is the task's command_text (15 S9.5A.4), so the task panel says
+    what the operator tapped. Built from data P5 holds (the target's name and
+    coordinates), never copied from the frame (11 S12.1.5 S-3 spirit). ASCII
+    punctuation only: CLAUDE.md 2.2 bans CJK punctuation in code literals.
+
+    The validation split: P5 rejects what it can see from the frame and its own
+    geo layer; P3 rejects what needs the live world (positioning failed, target
+    outside the active fence -- 11 S12.1.2 W2 table).
     """
     req_id = msg.get("req_id")
     waypoint_id = msg.get("waypoint_id")
     lat, lon = msg.get("lat"), msg.get("lon")
     params: Dict[str, Any] = {}
+    if not isinstance(targets, dict):
+        return UplinkRefusal(
+            E_DEGRADED, "the map geometry is not available; a goto target cannot "
+            "be checked against the route points and keypoints",
+            {"reason": "goto_targets_unavailable"})
     if isinstance(waypoint_id, str) and waypoint_id:
-        # S12.1.1 W2: when both forms are present waypoint_id WINS. Written as
-        # a precedence rule the table states, not as "reject the ambiguity" --
-        # a frontend that sends the tapped point alongside the snapped waypoint
-        # is being helpful, not confused.
+        # S12.1.1 W2: when both forms are present waypoint_id WINS.
+        wp = next((w for w in targets.get("waypoints") or []
+                   if isinstance(w, dict) and w.get("geo_id") == waypoint_id), None)
+        if wp is None:
+            return UplinkRefusal(
+                E_NOT_FOUND, "keypoint %r is not on the map" % (waypoint_id,),
+                {"reason": "goto_keypoint_unknown", "waypoint_id": waypoint_id})
         params["waypoint_id"] = waypoint_id
+        params["text"] = "HMI 点击前往 关键点 %s" % (wp.get("name") or waypoint_id)
     else:
         ok, refusal = _valid_coords(lat, lon)
         if not ok:
             return refusal
-        params["lat"], params["lon"] = float(lat), float(lon)
+        hit = _snap_route_point(float(lat), float(lon), targets.get("routes") or [])
+        if hit is None:
+            return UplinkRefusal(
+                E_SCHEMA, "goto target is neither a keypoint nor a point on a route",
+                {"reason": "goto_target_not_on_route"})
+        if not isinstance(arrive_radius_m, (int, float)) or isinstance(arrive_radius_m, bool) \
+                or arrive_radius_m <= 0:
+            return UplinkRefusal(
+                E_CONFIG_INVALID, "hmi.goto.arrive_radius_m is not configured; a "
+                "route-point goto has no arrival radius to send",
+                {"reason": "goto_arrive_radius_missing"})
+        route, pt = hit
+        # The VERTEX's coordinates go out, not the frame's: the target is the
+        # recorded point itself, to the last digit.
+        params["lat"], params["lon"] = float(pt["lat"]), float(pt["lon"])
+        params["arrive_radius_m"] = float(arrive_radius_m)
+        params["text"] = "HMI 点击前往 路径 %s 上的点 (%.6f, %.6f)" % (
+            route.get("name") or route.get("geo_id") or "?", params["lat"], params["lon"])
     profile = msg.get("speed_profile")
     if profile is not None:
         if profile not in SPEED_PROFILES:

@@ -42,7 +42,7 @@ body { margin: 0; overflow: hidden; background: var(--bg); color: var(--ink);
 /* Text sizes below are 2x the customer sample (user 2026-08-14: "all web text
    doubled proportionally"). Config-driven panel fonts are doubled in the yaml;
    these hardcoded chrome/control glyphs are doubled here to match. */
-.map-title { font-weight: 700; font-size: 30px; color: var(--cyan);
+.map-title { font-weight: 700; font-size: 30px; color: #ffffff;   /* user 2026-11-10: pure white */
   font-family: var(--font-map-family); }
 .zoom-group { margin-left: auto; display: flex; gap: 5px; }
 .zoom-btn { width: 46px; height: 44px; border: 1px solid var(--line); border-radius: 4px;
@@ -223,6 +223,25 @@ body { margin: 0; overflow: hidden; background: var(--bg); color: var(--ink);
 /* 待执行(含定时/循环任务): 绿色标签 -- 与当前任务同属"活跃/即将执行"(用户 2026-08-17). */
 .task-state.pending  { color: var(--ok-bright);  background: rgba(46,232,107,.10);  border: 1px solid rgba(46,232,107,.42); }
 .task-state.suspended{ color: var(--warn);       background: rgba(241,143,23,.12);  border: 1px solid rgba(241,143,23,.45); }
+/* Task state flow (user 2026-11-10): 已下发 -> 执行中 -> outcome, the current
+   step lit, passed steps ticked; the outcome coloured by how it ended. */
+.task-flow { display: flex; align-items: center; gap: 4px; margin: 4px 0; flex-wrap: wrap;
+             font-size: calc(var(--font-plan-size) * .8); }
+.flow-step { padding: 1px 8px; border-radius: 10px; color: var(--muted);
+             border: 1px solid rgba(176,176,176,.35); }
+.flow-step.passed { color: var(--ok-bright); border-color: rgba(46,232,107,.45); }
+.flow-step.passed::before { content: "\2713 "; }
+.flow-step.current { color: var(--bg); background: var(--gold); border-color: var(--gold);
+                     font-weight: 700; }
+.flow-step.current.ok { background: var(--ok-bright); border-color: var(--ok-bright); }
+.flow-step.current.bad { color: #fff; background: var(--danger); border-color: var(--danger); }
+.flow-step.current.muted { color: #fff; background: #6b6b6b; border-color: #6b6b6b; }
+.flow-arrow { width: 10px; height: 2px; background: rgba(176,176,176,.5); }
+.task-tag-hmi { margin-left: 6px; padding: 0 6px; border-radius: 3px; font-size: .75em;
+                color: #fff; background: #c2337a; }
+/* The card of the goto whose pink dot is on the map. */
+.task-card.goto-tracked { border-left-color: #ff4fa3 !important;
+                          box-shadow: inset 0 0 0 1px rgba(255,79,163,.6); }
 .task-state.failed,
 .task-state.cancelled{ color: var(--danger);     background: rgba(230,57,50,.12);   border: 1px solid rgba(230,57,50,.45); }
 /* 字段3 任务内容(语音原文). */
@@ -252,15 +271,33 @@ body { margin: 0; overflow: hidden; background: var(--bg); color: var(--ink);
                   border: 1px solid var(--warn); border-radius: 4px; }
 .exit-bcast-btn:disabled { opacity: 0.4; cursor: progress; }
 
-/* W2 goto: the dropped pin and its confirm banner. */
-.goto-pin { fill: var(--cyan); fill-opacity: 0.85; stroke: var(--ink);
-            stroke-width: 1.5; pointer-events: none; }
+/* W2 goto target dot (user 2026-11-10): a SOLID dot, no outline, breathing pink
+   <-> white so it is found at a glance. Its size is set in hmi.js (fixed screen
+   pixels, hmi.web.goto.pin_diameter_px), never by this sheet. It stays until the
+   goto is done or has failed. */
+.goto-pin { stroke: none; pointer-events: none;
+            animation: goto-pin-breathe 1.6s ease-in-out infinite; }
+@keyframes goto-pin-breathe { 0%, 100% { fill: #ff4fa3; } 50% { fill: #ffffff; } }
+/* The top banner, four kinds (hmi.js showBanner): confirm / info / warn (an
+   invalid target, one "got it" button) / fail (a failed or refused goto, close
+   cross, stays until closed). */
 .goto-banner { position: absolute; z-index: 5; left: 50%; top: 64px;
-               transform: translateX(-50%); display: flex; gap: 8px;
-               align-items: center; padding: 8px 12px; border-radius: 4px;
+               transform: translateX(-50%); display: flex; gap: 10px;
+               align-items: center; padding: 10px 14px; border-radius: 6px;
                background: var(--panel); border: 1px solid var(--line);
-               color: var(--ink); font-size: 13px; }
+               color: var(--ink); font-size: 18px; max-width: 80%;
+               box-shadow: 0 4px 14px rgba(0,0,0,.45); }
 .goto-banner[hidden] { display: none; }
+.goto-banner [hidden] { display: none; }
+.goto-banner.kind-warn { border-color: var(--warn); background: #4a3410; }
+.goto-banner.kind-fail { border-color: var(--danger); background: #4a1a1a; }
+.goto-banner .goto-text { flex: 1; }
+.goto-ack { padding: 4px 14px; cursor: pointer; color: var(--bg); font-size: 16px;
+            background: var(--warn); border: none; border-radius: 3px; }
+.goto-close { width: 32px; height: 32px; flex: none; cursor: pointer; font-size: 22px;
+              line-height: 1; color: var(--ink); background: transparent;
+              border: 1px solid var(--line); border-radius: 50%; }
+.goto-close:hover { background: var(--danger); border-color: var(--danger); }
 
 /* Link-loss banner (11 S12.3): a full-width strip under the toolbar, in the flow
    (not an overlay) so it cannot hide the map controls. Amber, not red: red is the
@@ -315,6 +352,7 @@ body.controls-offline .exit-bcast-btn { opacity: 0.35; pointer-events: none; }
 /* 折叠态(历史默认): 只显 ID / 内容 / 时间(用户 2026-08-17), 藏徽标/目标/进度. */
 .task-card.collapsed { padding: 5px 8px; opacity: .92; }
 .task-card.collapsed .task-state,
+.task-card.collapsed .task-flow,
 .task-card.collapsed .task-targets,
 .task-card.collapsed .task-targets-title,
 .task-card.collapsed .task-progress { display: none; }

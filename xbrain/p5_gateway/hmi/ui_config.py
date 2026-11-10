@@ -88,6 +88,11 @@ def build_ui_config(hmi_web: Mapping[str, Any], *,
         "fence": dict(hmi_web["fence"]),      # U5: fence line by type (active/forbid/alarm)
         "route": dict(hmi_web["route"]),      # U5: recorded/realtime route lines
         "waypoint": dict(hmi_web["waypoint"]),  # U6: marker shape/colour/size
+        # W2 tap-to-go presentation (pin diameter, snap radius; user 2026-11-10).
+        # Optional on purpose: these are UI values the frontend can size without
+        # (it keeps its own presentation fallbacks, 17 S6.10.2), and a missing
+        # group must not refuse the whole page the way a missing map group does.
+        "goto": dict(hmi_web.get("goto") or {}),
         # Site display timezone for the footer clock (common.timezone). null ->
         # frontend uses the browser zone.
         "timezone": site_timezone,

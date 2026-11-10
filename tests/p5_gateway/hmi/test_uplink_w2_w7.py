@@ -37,10 +37,27 @@ from xbrain.p5_gateway.hmi import uplink
 pytestmark = pytest.mark.no_device
 
 
+#: The geo layer P5 holds (geo_layers shape). Since 2026-11-10 (99 U155) a goto
+#: may only target a keypoint on this layer or a point on one of its routes,
+#: so every case below runs against it; the coordinate used by the "by
+#: coordinates" case is a vertex of the route.
+_TARGETS = {
+    "waypoints": [{"geo_id": "w-east", "name": "东门", "geom": {"lat": 35.0, "lon": 135.0}}],
+    "routes": [{"geo_id": "r-1", "name": "东线",
+                "points": [{"lat": 35.012345, "lon": 135.098765},
+                           {"lat": 35.012400, "lon": 135.098800}]}],
+}
+_RADIUS = 1.0
+
+
+def _goto_build(frame):
+    return uplink.build_goto_command(frame, _TARGETS, _RADIUS)
+
+
 def _goto(**kw):
     frame = {"type": "goto", "req_id": "r1"}
     frame.update(kw)
-    return uplink.build_goto_command(frame)
+    return _goto_build(frame)
 
 
 def _task(**kw):
@@ -83,6 +100,9 @@ def test_goto_by_coordinates_builds_a_goto_task():
     cmd = _built(_goto(lat=35.012345, lon=135.098765))
     assert cmd["task"]["params"]["lat"] == pytest.approx(35.012345)
     assert cmd["task"]["params"]["lon"] == pytest.approx(135.098765)
+    # 99 U155: a route point carries no radius of its own, and P3 refuses a
+    # coordinate goto without one -- the configured radius rides along.
+    assert cmd["task"]["params"]["arrive_radius_m"] == 1.0
 
 
 def test_waypoint_id_wins_when_both_forms_are_sent():
@@ -269,7 +289,7 @@ def test_exit_broadcast_is_accepted_by_p2s_real_mode_face():
 
 @pytest.mark.parametrize("build,extra", [
     (uplink.build_task_command, {"action": "pause", "task_id": "t-1"}),
-    (uplink.build_goto_command, {"waypoint_id": "w-east"}),
+    (_goto_build, {"waypoint_id": "w-east"}),
 ])
 def test_source_is_stamped_hmi_even_when_the_frame_claims_cloud(build, extra):
     """*** CH-2. The browser is UNAUTHENTICATED (U23), so it can put anything
@@ -292,7 +312,7 @@ def test_source_is_stamped_hmi_even_when_the_frame_claims_cloud(build, extra):
 
 @pytest.mark.parametrize("build,extra", [
     (uplink.build_task_command, {"action": "pause", "task_id": "t-1"}),
-    (uplink.build_goto_command, {"waypoint_id": "w-east"}),
+    (_goto_build, {"waypoint_id": "w-east"}),
 ])
 def test_cmd_id_is_the_prefixed_req_id(build, extra):
     """S12.1.1: cmd_id is "h-" + req_id. That prefix is how P5 recognises the

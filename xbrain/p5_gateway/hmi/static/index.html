@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>XBRAIN_V6 GPS 网格地图 HMI</title>
-<link rel="stylesheet" href="hmi.css?v=estop-3">
+<link rel="stylesheet" href="hmi.css?v=goto-1">
 </head>
 <body>
 <main class="hmi">
@@ -35,13 +35,16 @@
          Visible from the start -- until the first frame nothing is known. -->
     <div id="linkBanner" class="link-banner" role="alert">正在连接机器人 ...</div>
 
-    <!-- W2 goto banner: two-step confirm for a map tap. Hidden until a pin is
-         dropped. Not a modal -- a modal would block the map redraw while the
-         robot is moving (see hmi.js on why alert/confirm are not used). -->
-    <div id="gotoBanner" class="goto-banner" hidden>
+    <!-- W2 goto banner (hmi.js showBanner). Four kinds: confirm (确认前往 /
+         取消), info (hides itself), warn = an invalid target (知道了), fail =
+         a failed or refused goto (close cross, stays until closed). Not a
+         modal -- a modal would block the map redraw while the robot moves. -->
+    <div id="gotoBanner" class="goto-banner" role="status" hidden>
       <span class="goto-text"></span>
       <button type="button" id="gotoSend" class="goto-send">确认前往</button>
       <button type="button" id="gotoCancel" class="goto-cancel">取消</button>
+      <button type="button" id="gotoAck" class="goto-ack" hidden>知道了</button>
+      <button type="button" id="gotoClose" class="goto-close" title="关闭" aria-label="关闭" hidden>×</button>
     </div>
 
     <div id="viewport" class="map-viewport" title="拖动平移, 滚轮缩放">
@@ -67,6 +70,8 @@
         <g id="keypointLayer"></g>
         <g id="robotLayer"></g>
         <g id="eventLayer"></g>
+        <!-- W2 target dots (picked / on its way), drawn last so nothing covers them. -->
+        <g id="gotoLayer"></g>
       </svg>
 
       <div class="map-overlay legend">
@@ -142,6 +147,6 @@
     </footer>
   </section>
 </main>
-<script src="hmi.js?v=estop-3"></script>
+<script src="hmi.js?v=goto-1"></script>
 </body>
 </html>
