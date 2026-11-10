@@ -176,7 +176,11 @@ hmi:
         # 可见线宽 (约 2 px, 原 0.7 m 线宽在图案边上被裁掉一半).
         line_px: 2
       viewbox: "-100 -65 240 145"     # ENU meters; from customer sample
-      zoom: { min: 0.65, max: 2.8, wheel_step: 0.12 }  # U4: wheel zoom bounds/step
+      # U4. 用户 2026-11-10: 网格要能放大到 1 m. 1 m 格须在屏上 >= 42 px, 即地图宽
+      # <= 屏宽/42 (1000 px 宽约 24 m), 从 240 m 的基础视窗要放大约 10 倍, 取 16 留余量.
+      # wheel_step 改为每格滚轮的放大比例 (x1.12); 按钮每次 x1.25 (前端常数).
+      # ~~zoom: { min: 0.65, max: 2.8, wheel_step: 0.12 }~~ (被替代 2026-11-10, 原为加法步进)
+      zoom: { min: 0.65, max: 16, wheel_step: 0.12 }
     font:                             # U2: family + size_px per panel; size_px = 2x sample (user 2026-08-14)
       map:    { family: '"Microsoft YaHei","PingFang SC",sans-serif', size_px: 24 }
       legend: { family: '"Microsoft YaHei","PingFang SC",sans-serif', size_px: 22 }
