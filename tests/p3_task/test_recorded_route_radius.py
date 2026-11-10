@@ -140,7 +140,9 @@ def test_main_refuses_to_start_without_the_radius(monkeypatch, route, rc):
            "route": route,  # a resolved p3 config
            "rtk_loss": {"lost_sustain_s": 1.0, "recover_sustain_s": 2.0},  # 99 U142 pair
            "low_battery": {"trigger_soc_pct": 20.0, "stop_soc_pct": 5.0,
-                           "cloud_alarm_period_s": 2.0}}  # 99 U146 rule
+                           "cloud_alarm_period_s": 2.0,  # 99 U146 rule
+                           "charge_full_soc_pct": 100.0,  # 99 U157
+                           "swap_resume_soc_pct": 80.0}}
     monkeypatch.setattr(resolved, "load_resolved", lambda *_a, **_k: cfg)  # no file
     seen = {}  # what the wiring received
     monkeypatch.setattr(mw, "run_voice_loop_wiring",  # replace the loop

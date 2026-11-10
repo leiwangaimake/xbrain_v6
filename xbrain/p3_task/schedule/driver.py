@@ -43,7 +43,7 @@ from __future__ import annotations
 
 import json
 import logging
-from typing import Awaitable, Callable, List, Optional, Tuple
+from typing import AbstractSet, Awaitable, Callable, List, Optional, Tuple
 
 from xbrain.p3_task.state.machine import apply_transition, validate_suspend_fields
 from xbrain.p3_task.state.preconditions import (
@@ -115,14 +115,25 @@ async def scheduler_tick(conn, dao, *, now_mono_ms: int,
                          started_at: str = "",
                          boot_id: str = "",
                          list_route_ids=None,
-                         now_wall_s: Optional[float] = None
+                         now_wall_s: Optional[float] = None,
+                         held: AbstractSet[str] = frozenset()
                          ) -> List[Tuple[str, str, str]]:
     """One scheduler pass. Returns the transitions made as
     (task_id, from_state, to_state). See module docstring.
 
     now_wall_s is the system wall clock (epoch s) a timed task is compared
     with -- the clock P4 scheduled it on (99 U110). None: no timed task is
-    ever due, and a new one waits in 'scheduled' -- never run early."""
+    ever due, and a new one waits in 'scheduled' -- never run early.
+
+    held is the set of task ids a low-battery episode holds (99 U157): every
+    task that was live when the episode began. While held, a preempted one is
+    not resumed by the yielding scan and a ready one is not dispatched (nor
+    allowed to preempt); validation and timed due-ness still run, so the task
+    is ready the moment the hold lifts. Tasks submitted during the episode, the
+    injected return task, and a held task a person resumed (the wiring drops
+    it from the set) are not in it. The default (empty) is what every test of
+    the plain scheduler means; the one production caller, runtime/main_wiring,
+    always passes the episode's set."""
     made: List[Tuple[str, str, str]] = []
 
     # -- phase 1: validate every pending task --
@@ -200,6 +211,13 @@ async def scheduler_tick(conn, dao, *, now_mono_ms: int,
             for task_id, _p, _sq, reason in yielding:
                 if reason != "preempted":
                     continue
+                if task_id in held:
+                    # 99 U157: interrupted by a low-battery episode -- it waits
+                    # for the episode to end (full charge / swap), not for the
+                    # return task to arrive. Until 2026-11-10 it resumed here
+                    # the moment the return task reached the dock and drove
+                    # the robot off it at 19 %.
+                    continue
                 result = apply_transition("suspended", "resume")
                 await dao.resume_task(task_id, now_mono_ms)
                 made.append((task_id, "suspended", result.to_state))
@@ -210,7 +228,11 @@ async def scheduler_tick(conn, dao, *, now_mono_ms: int,
     # Re-read so the tasks just validated to 'ready' are visible (read-your-
     # writes on this connection, still inside the tick's transaction).
     rows2 = await dao.list_by_priority()
-    ready = [(tid, p, s) for tid, p, s, state in rows2 if state == "ready"]
+    # held (99 U157) never dispatches nor preempts; it still counts as ready
+    # for nothing else -- the running list below is untouched, so a held task
+    # that is running keeps running until something preempts it.
+    ready = [(tid, p, s) for tid, p, s, state in rows2
+             if state == "ready" and tid not in held]
     running = [(tid, p, s) for tid, p, s, state in rows2 if state == "running"]
     # priority DESC, then 99 U144 (用户 2026-11-06): 同优先级里到点的定时任务
     # 先于其他就绪任务 ("当前作业完成后必须优先执行定时任务, 然后再调度后面的

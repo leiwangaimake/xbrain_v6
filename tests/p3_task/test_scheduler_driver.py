@@ -188,3 +188,47 @@ async def test_motion_result_for_non_running_is_noop(dao_conn):
                                      fail_reason=None)
     assert made is False
     assert (await dao.fetch_by_id("t1")).state == "pending"
+
+
+# -- 99 U157: the low-battery held set -------------------------------------------------
+
+async def _noop_t(*_a):
+    return None
+
+
+@pytest.mark.asyncio
+async def test_a_held_preempted_task_is_not_resumed(dao_conn):
+    """The yielding scan resumes a preempted task once nothing runs -- unless a
+    low-battery episode holds it (field log 2026-11-10 20:18:33: it resumed
+    the moment the return task reached the dock). MUTATION: drop the held
+    check in the yielding scan -> t-p goes ready -> red."""
+    dao, conn = dao_conn
+    await dao.insert(_pending("t-p", seq=1))
+    await conn.execute("UPDATE tasks SET state='suspended', suspend_kind='yielding', "
+                       "suspend_reason='preempted' WHERE task_id='t-p'")
+    await conn.commit()
+    await scheduler_tick(conn, dao, now_mono_ms=1, on_transition=_noop_t,
+                         held=frozenset({"t-p"}))
+    assert (await dao.fetch_by_id("t-p")).state == "suspended"
+    await scheduler_tick(conn, dao, now_mono_ms=2, on_transition=_noop_t)  # hold lifted
+    assert (await dao.fetch_by_id("t-p")).state == "running"  # resumed and dispatched
+
+
+@pytest.mark.asyncio
+async def test_a_held_ready_task_neither_dispatches_nor_preempts(dao_conn):
+    """A held task still validates to ready (so it runs the moment the hold
+    lifts) but is never dispatched and never preempts; an unheld one is.
+    MUTATION: drop the held filter on the ready list -> t-h dispatches /
+    preempts -> red."""
+    dao, conn = dao_conn
+    await dao.insert(_pending("t-h", priority=90, seq=1))
+    await dao.insert(_pending("t-n", priority=10, seq=2))
+    await conn.commit()
+    held = frozenset({"t-h"})
+    await scheduler_tick(conn, dao, now_mono_ms=1, on_transition=_noop_t, held=held)
+    assert (await dao.fetch_by_id("t-h")).state == "ready"  # validated, not run
+    await scheduler_tick(conn, dao, now_mono_ms=2, on_transition=_noop_t, held=held)
+    assert (await dao.fetch_by_id("t-n")).state == "running"  # the unheld one runs
+    await scheduler_tick(conn, dao, now_mono_ms=3, on_transition=_noop_t, held=held)
+    assert (await dao.fetch_by_id("t-n")).state == "running"  # t-h (90 > 10) did not preempt
+    assert (await dao.fetch_by_id("t-h")).state == "ready"

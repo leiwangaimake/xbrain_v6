@@ -179,21 +179,30 @@ def main(argv: Optional[list] = None) -> int:
                     "p3_task config: rtk_loss.%s=%r must be a positive number "
                     "(99 U142 positioning loss, 11 S3.3.3)", _rk, _rv)
                 return 78
-        # 99 U146 low-battery return: the three values of the user's rule.
-        # Refused by key path (EX_CONFIG 78): without them a low battery
-        # would raise no alarm and drive nowhere.
+        # 99 U146 / U157 low-battery return: the five values of the user's
+        # rule. Refused by key path (EX_CONFIG 78): without them a low battery
+        # would raise no alarm and drive nowhere, or the charging alarm would
+        # have no end and the interrupted tasks would never resume.
         _lb = (_cfg.get("low_battery") or {}) if hasattr(_cfg, "get") else {}
-        for _lk in ("trigger_soc_pct", "stop_soc_pct", "cloud_alarm_period_s"):
+        _lb_keys = ("trigger_soc_pct", "stop_soc_pct", "cloud_alarm_period_s",
+                    "charge_full_soc_pct", "swap_resume_soc_pct")
+        for _lk in _lb_keys:
             _lv = _lb.get(_lk)
             if (isinstance(_lv, bool) or not isinstance(_lv, (int, float))
                     or _lv <= 0.0):
                 _logger.error(
                     "p3_task config: low_battery.%s=%r must be a positive number "
-                    "(99 U146 low-battery return)", _lk, _lv)
+                    "(99 U146 / U157 low-battery return)", _lk, _lv)
                 return 78
-        if float(_lb["stop_soc_pct"]) >= float(_lb["trigger_soc_pct"]):
-            _logger.error("p3_task config: low_battery.stop_soc_pct must be below "
-                          "trigger_soc_pct (99 U146)")
+        from xbrain.p3_task.lifecycle.low_battery import (
+            LowBatteryConfigError,
+            check_thresholds,
+        )
+        try:
+            check_thresholds(_lb["trigger_soc_pct"], _lb["stop_soc_pct"],
+                             _lb["charge_full_soc_pct"], _lb["swap_resume_soc_pct"])
+        except LowBatteryConfigError as exc:
+            _logger.error("p3_task config: %s (99 U157)", exc)
             return 78
         return run_voice_loop_wiring(
             stop_flag=stop_flag,
@@ -206,8 +215,7 @@ def main(argv: Optional[list] = None) -> int:
             teach_min_dist_m=float(_teach["min_dist_m"]),
             rtk_lost_sustain_s=float(_rtk["lost_sustain_s"]),
             rtk_recover_sustain_s=float(_rtk["recover_sustain_s"]),
-            low_battery={k: float(_lb[k]) for k in
-                         ("trigger_soc_pct", "stop_soc_pct", "cloud_alarm_period_s")})
+            low_battery={k: float(_lb[k]) for k in _lb_keys})
 
     return main_loop(tick_seconds=args.heartbeat_seconds, stop_flag=stop_flag)
 

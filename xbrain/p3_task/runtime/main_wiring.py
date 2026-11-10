@@ -177,8 +177,9 @@ def run_voice_loop_wiring(stop_flag: dict,
     production __main__ refuses to start without them.
 
     low_battery is p3_task.yaml low_battery.{trigger_soc_pct, stop_soc_pct,
-    cloud_alarm_period_s} (99 U146). None (tests) leaves the low-battery
-    return off; the production __main__ refuses to start without it.
+    cloud_alarm_period_s, charge_full_soc_pct, swap_resume_soc_pct} (99 U146,
+    U157). None (tests) leaves the low-battery return off; the production
+    __main__ refuses to start without it.
     """
     return asyncio.run(
         _amain(stop_flag, heartbeat_period_s, task_db_path, geo_db_path,
@@ -1146,11 +1147,29 @@ async def _amain(stop_flag: dict, heartbeat_period_s: float,
             # CHG-10/11 and S8.2A). None in tests that pass no thresholds.
             lb_monitor = (lb.LowBatteryMonitor(low_battery["trigger_soc_pct"],
                                                low_battery["stop_soc_pct"],
-                                               low_battery["cloud_alarm_period_s"])
+                                               low_battery["cloud_alarm_period_s"],
+                                               low_battery["charge_full_soc_pct"],
+                                               low_battery["swap_resume_soc_pct"])
                           if low_battery is not None else None)
             # The episode's facts: the target picked at "low", the task
-            # injected, whether the next alarm is the first (P4 speaks once).
-            lb_ctx: dict = {"target": None, "task_id": None, "first": False, "n": 0}
+            # injected, whether the next alarm is the first (P4 speaks once),
+            # and the held set (99 U157): every task that was live when the
+            # episode began -- the scheduler neither resumes nor dispatches
+            # them until the episode ends.
+            lb_ctx: dict = {"target": None, "task_id": None, "first": False, "n": 0,
+                            "held": set()}
+            from xbrain.p3_task.dao.simple_daos import MemoryDAO
+            lb_memory = MemoryDAO(conn)
+
+            async def _lb_persist() -> None:
+                """Write the episode to task.db memory (99 U157) so a restart
+                mid-charge keeps holding the interrupted tasks. Idle writes an
+                idle record (decode_episode reads it as no episode)."""
+                phase = lb_monitor.phase if lb_monitor is not None else lb.PHASE_IDLE
+                await lb_memory.put(lb.EPISODE_MEMORY_KEY,
+                                    lb.encode_episode(phase, lb_ctx["held"], lb_ctx["task_id"]),
+                                    _now_mono_ms())
+                await conn.commit()
             chassis_ctrl_pub = gen.declare_publisher("cmd/chassis/ctrl")
             _ctrl_seq = [0]  # S3.0 seq per key for this process
 
@@ -1216,9 +1235,28 @@ async def _amain(stop_flag: dict, heartbeat_period_s: float,
                             created_at=_now_utc_iso()))
                         await conn.commit()
                         lb_ctx["task_id"] = tid
-                    _logger.warning("p3 low battery (soc %s): target %s -> task %s",
-                                    power.get("soc_pct"),
-                                    tgt.name if tgt else None, lb_ctx["task_id"])
+                    # 99 U157: hold every task live right now except the one
+                    # just injected -- the running one is preempted by it next
+                    # tick and must not resume when it arrives. A union: back
+                    # from charging, the earlier holds stay.
+                    lb_ctx["held"] |= (await lb.live_task_ids(dao)) - {lb_ctx["task_id"]}
+                    await _lb_persist()
+                    _logger.warning("p3 low battery (soc %s): target %s -> task %s, "
+                                    "holding %s", power.get("soc_pct"),
+                                    tgt.name if tgt else None, lb_ctx["task_id"],
+                                    sorted(lb_ctx["held"]))
+                elif ev == "alarm" and lb_monitor.phase == lb.PHASE_CHARGING:
+                    # 99 U157: on the charger the alarm goes on, worded
+                    # "charging", until charge_full_soc_pct. Never voiced.
+                    d = _lb_detail("battery_charging", power)
+                    d["first"] = False
+                    _emit_charging("alarm", "charging after low battery", d)
+                elif ev == "alarm" and lb_monitor.phase == lb.PHASE_INTERRUPTED:
+                    # 99 U157 ruling 2: unplugged before full, still above the
+                    # trigger -- the interrupted tasks keep waiting.
+                    d = _lb_detail("charge_interrupted", power)
+                    d["first"] = False
+                    _emit_charging("alarm", "charging interrupted before full", d)
                 elif ev == "alarm":
                     unr = lb.unreachable(power, pose, lb_ctx["target"], routes, member)
                     kind = ("low_battery_no_target" if lb_ctx["target"] is None
@@ -1240,30 +1278,86 @@ async def _amain(stop_flag: dict, heartbeat_period_s: float,
                     d = _lb_detail("low_battery_stop", power)
                     d["first"] = True  # its own one-time voice
                     _emit_charging("alarm", "battery critical, stopped and lying down", d)
-                elif ev in ("charging", "swapped"):
-                    # Two lawful ends of an episode: the chassis charging (99
-                    # U146) or a battery swap (99 U154, user ruling
-                    # 2026-11-10). Both close the same three things: the
-                    # alarm, the 5 % dispatch pause (the monitor's own
-                    # `stopped`), and the injected task -- left suspended, a
-                    # later "继续" would drive the robot back to the dock.
-                    cause, reason, title = (
-                        ("charging", "low_battery_charging", "charging, low battery alarm closed")
-                        if ev == "charging" else
-                        ("battery_swap", "low_battery_swapped", "battery swapped, low battery alarm closed"))
-                    _logger.info("p3 low battery closed by %s (soc %s)",
-                                 cause, power.get("soc_pct"))
+                elif ev == "charging":
+                    # 99 U157: charging does NOT end the episode any more -- it
+                    # turns the alarm into "charging" (above) and keeps the
+                    # held tasks held. The injected task has done its job:
+                    # cancelled, as under U146 (left suspended, a later
+                    # "继续" would drive the charging robot back to the dock).
+                    # The 5 % dispatch pause lifts (the monitor's `stopped`).
+                    _logger.info("p3 low battery: charging (soc %s), holding %s "
+                                 "until %s %%", power.get("soc_pct"),
+                                 sorted(lb_ctx["held"]), low_battery["charge_full_soc_pct"])
                     closed = await lb.close_low_battery_task(
                         dao, conn, lb_ctx["task_id"], _now_mono_ms())
                     if closed is not None:
                         await _make_publish(
                             state_pub, _emit_task_event, _publish_task_state,
                             fetch_terminal=_fetch_terminal_facts,
-                            stop_motion=_stop_motion)(closed[0], closed[1], closed[2], reason)
+                            stop_motion=_stop_motion)(closed[0], closed[1], closed[2],
+                                                      "low_battery_charging")
+                    lb_ctx.update(task_id=None)
+                    await _lb_persist()
+                elif ev == "interrupted":
+                    _logger.warning("p3 low battery: charging stopped at soc %s before "
+                                    "full, still holding %s", power.get("soc_pct"),
+                                    sorted(lb_ctx["held"]))
+                    await _lb_persist()
+                elif ev in ("charge_full", "swapped", "swapped_partial"):
+                    # The ends of an episode (99 U157): full charge, or a swap
+                    # at / above swap_resume_soc_pct -> the held tasks resume by
+                    # themselves on the next tick; a swap below it ends the
+                    # alarm but parks the interrupted tasks for a person.
+                    auto = ev != "swapped_partial"
+                    cause = "charge_full" if ev == "charge_full" else "battery_swap"
+                    _logger.info("p3 low battery closed by %s (soc %s), auto resume %s",
+                                 cause, power.get("soc_pct"), auto)
+                    closed = await lb.close_low_battery_task(
+                        dao, conn, lb_ctx["task_id"], _now_mono_ms())
+                    if closed is not None:
+                        await _make_publish(
+                            state_pub, _emit_task_event, _publish_task_state,
+                            fetch_terminal=_fetch_terminal_facts,
+                            stop_motion=_stop_motion)(
+                                closed[0], closed[1], closed[2],
+                                "low_battery_charging" if cause == "charge_full"
+                                else "low_battery_swapped")
+                    parked: list = []
+                    if not auto:
+                        parked = await lb.park_held_for_manual(
+                            dao, conn, lb_ctx["held"], _now_mono_ms())
+                        if parked:
+                            await _publish_task_state()
                     d = _lb_detail("low_battery_cleared", power)
-                    d["cause"] = cause  # 11 S9.11.2: charging | battery_swap
-                    _emit_charging("info", title, d)
-                    lb_ctx.update(target=None, task_id=None, first=False)
+                    d["cause"] = cause  # 11 S9.11.2: charge_full | battery_swap
+                    d["auto_resume"] = auto
+                    d["held"] = sorted(lb_ctx["held"])
+                    d["parked"] = parked
+                    _emit_charging("info", "low battery alarm closed by %s" % cause, d)
+                    lb_ctx.update(target=None, task_id=None, first=False, held=set())
+                    await _lb_persist()
+
+            # 99 U157: a P3 restart mid-episode -- restore the phase, the held
+            # tasks and the injected task from task.db memory, so the restart
+            # neither resumes the interrupted tasks on the charger nor injects
+            # a second return task. Read before the loop's first tick.
+            if lb_monitor is not None:
+                try:
+                    _rec = lb.decode_episode(await lb_memory.get(lb.EPISODE_MEMORY_KEY))
+                    if _rec is not None:
+                        lb_monitor.restore(_rec[0])
+                        lb_ctx.update(held=set(_rec[1]), task_id=_rec[2])
+                        if _rec[0] == lb.PHASE_LOW:
+                            # the alarm names the target; no pose yet at boot,
+                            # so the same deterministic pick as a pose-less low
+                            lb_ctx["target"] = await lb.pick_target(
+                                geo_conn, None, await load_route_geoms(geo_conn),
+                                route_membership_m if route_membership_m is not None else 0.0)
+                        _logger.warning("p3 boot: low-battery episode restored (phase %s, "
+                                        "holding %s, task %s)", _rec[0],
+                                        sorted(_rec[1]), _rec[2])
+                except Exception as exc:      # noqa: BLE001
+                    _logger.error("p3 boot: low-battery episode restore failed: %s", exc)
 
             # 15 S10 INIT / 11 S9.14: a `running` row at start-up is left over
             # from an unclean shutdown -- suspend it (passive, unclean_shutdown)
@@ -1385,6 +1479,16 @@ async def _amain(stop_flag: dict, heartbeat_period_s: float,
                                 ack, ensure_ascii=False).encode("utf-8"))
                             if ack.get("result") == "accepted":
                                 recorded += 1
+                                # 99 U157: a person resumed (or cancelled) a held
+                                # task -- their call; it leaves the held set so the
+                                # scheduler dispatches it like any ready task.
+                                _acked = (ack.get("detail") or {}).get("task_id")
+                                if (payload.get("action") in ("resume", "cancel")
+                                        and _acked in lb_ctx["held"]):
+                                    lb_ctx["held"].discard(_acked)
+                                    await _lb_persist()
+                                    _logger.info("p3 low battery: %s released from the "
+                                                 "hold by %s", _acked, payload.get("action"))
                                 # ES-3 (15 S11.1 F5): a human submit/resume is
                                 # itself the unfreeze signal, and is executed
                                 # (already recorded above). NO an auto/charge
@@ -1635,7 +1739,9 @@ async def _amain(stop_flag: dict, heartbeat_period_s: float,
                                 list_route_ids=_list_route_ids,
                                 # 99 U110: timed tasks (not_before_ts) come
                                 # due on the system clock P4 scheduled them on.
-                                now_wall_s=_now_wall_ms() / 1000.0)
+                                now_wall_s=_now_wall_ms() / 1000.0,
+                                # 99 U157: tasks a low-battery episode holds.
+                                held=frozenset(lb_ctx["held"]))
                             # EX-2 RP-1 (15 S2.4.1): every ready -> running
                             # this tick made gets its geometry pushed. Driven
                             # off the tick's RETURN VALUE rather than from
