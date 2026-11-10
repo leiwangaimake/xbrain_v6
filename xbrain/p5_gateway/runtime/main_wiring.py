@@ -59,11 +59,9 @@ CMD_GEO_ACK_TOPIC = "cmd/geo/ack"
 #: it uses one that was reserved for the HMI and never declared.
 CMD_TASK_TOPIC = "cmd/task"
 CMD_TASK_ACK_TOPIC = "cmd/task/ack"
-#: 11 S12.1.1 W3 exit_broadcast lands on cmd/mode as a S7.3 ModeCommand.
-#: S2.2.3 already lists the HMI among that key's publishers, so W3 -- like
-#: W2/W7 before it -- opens a class without adding a key.
-CMD_MODE_TOPIC = "cmd/mode"
-CMD_MODE_ACK_TOPIC = "cmd/mode/ack"
+# ~~W3 exit_broadcast -> cmd/mode (CMD_MODE_TOPIC / CMD_MODE_ACK_TOPIC)~~ --
+# removed 2026-11-10 (99 U158): the HMI no longer has an exit-broadcast button,
+# so P5 neither publishes cmd/mode for the HMI nor listens to cmd/mode/ack.
 #: 17 S6.2.1 WD-1/WD-6: the release P5 sends when an HMI WebSocket closes and on
 #: P5's own shutdown. 11 S2.2.4 registers p5_gateway as this key's sole
 #: publisher, so the declaration needs no CR (WD-5). Not an uplink class -- the
@@ -340,9 +338,7 @@ def _start_hmi(gen, hmi_cfg: dict, hmi_state: dict,
                    # W2 goto + W7 task: both build a TaskCommand (S7.2) and
                    # both go out on this one key, which is why the map is keyed
                    # by KEY and not by uplink class.
-                   "cmd/task": gen.declare_publisher(CMD_TASK_TOPIC),
-                   # W3 exit_broadcast.
-                   "cmd/mode": gen.declare_publisher(CMD_MODE_TOPIC)}
+                   "cmd/task": gen.declare_publisher(CMD_TASK_TOPIC)}
 
     def _send_uplink(key: str, payload: dict) -> None:
         pub = uplink_pubs.get(key)
@@ -1460,7 +1456,6 @@ def run_voice_loop_wiring(stop_flag: dict,
         # voice- and cloud-originated commands are ignored here exactly as
         # cmd/geo/ack's already are.
         task_ack_sub = gen.declare_subscriber(CMD_TASK_ACK_TOPIC, _on_uplink_ack)
-        mode_ack_sub = gen.declare_subscriber(CMD_MODE_ACK_TOPIC, _on_uplink_ack)
         ack_sub = gen.declare_subscriber(
             CMD_AUDIO_SPEAK_ACK_TOPIC, _on_speak_ack)
         task_sub = gen.declare_subscriber(
@@ -1529,8 +1524,8 @@ def run_voice_loop_wiring(stop_flag: dict,
                          cloud_bridge.alive())
         _logger.info("p5 wiring: subscribed speak/ack + state/task + "
                      "cmd/fence + state/mode + event/** + estop/pong + health "
-                     "+ cmd/geo/ack + cmd/task/ack + cmd/mode/ack "
-                     "(HMI W2/W3/W4/W7 uplink) "
+                     "+ cmd/geo/ack + cmd/task/ack "
+                     "(HMI W2/W4/W7 uplink) "
                      "+ state/teach (read only)")
 
         # P5's own events from the HMI side (17 S6.2.1 WD-4), published like the
@@ -1755,7 +1750,7 @@ def run_voice_loop_wiring(stop_flag: dict,
             # tests/p_processes/test_wiring_teardown_covers_subs.py:
             # 那条判据用 AST 数[本函数里 X = ....declare_subscriber(...) 的
             # X] 与[本元组里的名字], 要求前者被后者全覆盖.
-            for entity in (teach_sub, geo_ack_sub, task_ack_sub, mode_ack_sub,
+            for entity in (teach_sub, geo_ack_sub, task_ack_sub,
                            ack_sub, task_sub, fence_sub, geo_sub, mode_sub,
                            audio_sub, pose_sub, clock_sub, robot_sub, power_sub,
                            event_sub, event_ack_sub, recon_rsp_sub, estop_pong_sub,

@@ -188,9 +188,10 @@ def test_late_exit_for_the_session_that_already_ended_is_accepted(rig):
 
 
 def test_exit_without_stream_id_is_a_forced_exit(rig):
-    """HMI W3 / cloud text C04 carry no stream_id: they stop whatever is on."""
+    """Voice / cloud text C04 carry no stream_id: they stop whatever is on.
+    (The HMI W3 button that also sent one was removed, 99 U158.)"""
     rig.start()  # enter B (audio-gj001-0001)
-    ack = rig.send(cmd_id="c-hmi", action="exit_broadcast", source="hmi")  # W3 button
+    ack = rig.send(cmd_id="c-voice", action="exit_broadcast", source="voice_local")  # C04 voice
     assert ack["result"] == "accepted"  # accepted
     assert rig.face.state == ModeState.IDLE  # not in B
 

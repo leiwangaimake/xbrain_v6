@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>XBRAIN_V6 GPS 网格地图 HMI</title>
-<link rel="stylesheet" href="hmi.css?v=goto-3">
+<link rel="stylesheet" href="hmi.css?v=nobcast-1">
 </head>
 <body>
 <main class="hmi">
@@ -17,12 +17,8 @@
            (NAV-64). Starts disabled: nothing has proved the path yet. -->
       <button id="estopBtn" class="estop-btn" title="紧急停止" disabled>急停 ESTOP</button>
       <span id="estopNotice" class="estop-notice bad" role="status">急停不可用, 请使用硬件急停</span>
-      <!-- W3 exit_broadcast (11 S12.1.1). Deliberately NOT styled like the
-           estop and not adjacent to it in meaning: W1 stops MOTION, W3 leaves
-           B mode. S12.1.1 forbids presenting task/mode controls as if they
-           were emergency controls. -->
-      <button type="button" id="exitBroadcastBtn" class="exit-bcast-btn"
-              title="退出喊话模式">退出喊话</button>
+      <!-- No exit-broadcast button: W3 was removed from the HMI (99 U158, user
+           2026-11-10). B mode is left through the cloud or by its idle timeout. -->
       <div class="zoom-group">
         <button id="zoomIn" class="zoom-btn" title="放大">＋</button>
         <button id="zoomOut" class="zoom-btn" title="缩小">－</button>
@@ -147,6 +143,6 @@
     </footer>
   </section>
 </main>
-<script src="hmi.js?v=goto-3"></script>
+<script src="hmi.js?v=nobcast-1"></script>
 </body>
 </html>

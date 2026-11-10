@@ -3,7 +3,7 @@ Copyright (c) 2026 Hachist Robotics
 Author: wanglei@hachist.com
 上海哈船智能船舶技术有限公司
 File: uplink.py
-Brief: HMI -> P5 upstream frames -- the 11 S12.1.1 whitelist (W2/W3/W4/W7)
+Brief: HMI -> P5 upstream frames -- the 11 S12.1.1 whitelist (W2/W4/W7)
 
 Description:
 The browser's writable surface. 11 S12.1.1 calls its table "the only
@@ -11,16 +11,17 @@ authoritative list of HMI upstream write operations in the whole document set",
 makes it frozen item F-8, and says in as many words that an implementer may not
 wire one more type in code. So the closed set here IS that table:
 
-    W1 estop | W2 goto | W3 exit_broadcast | W4 geo | W7 task
+    W1 estop | W2 goto | W4 geo | W7 task
 
-W5 and W6 are tombstones (never reused, so an old reference points at "removed"
-rather than silently at another class), and W8 is reserved-unopened.
+W3, W5 and W6 are tombstones (never reused, so an old reference points at
+"removed" rather than silently at another class), and W8 is reserved-unopened.
+W3 exit_broadcast was the last to go (99 U158, user 2026-11-10: "the HMI does
+not need this function"); a frame of that type now fails the whitelist check in
+parse_envelope like any other unlisted type.
 
-This module implements W2 (goto), W3 (exit_broadcast), W4 (geo) and W7 (task),
-and refuses the rest with E_NOT_IMPLEMENTED -- a refusal that names the class,
-rather than an unknown-type error that reads as a frontend bug. That leaves W1
-estop as the only whitelist class not served here, and it is served by its own
-<=10 ms REST path instead (S6.4).
+This module implements W2 (goto), W4 (geo) and W7 (task). W1 estop is the only
+whitelist class not built here: the WS reader forwards it at gate G0, before
+this module is consulted (17 S6.4).
 
 *** W2 and W7 both land on cmd/task, and neither writes anything itself.
 S12.1.1 requires goto to become a TASK rather than a BehaviorCommand (the fence
@@ -28,7 +29,7 @@ pre-check and the U07a ledger live on the task path), and the W7 row notes that
 cmd/task already listed the HMI as a publisher -- so opening these two classes
 adds no key to S2.2.3.
 
-*** Of the five classes, only W1 / W2 / W7 can make the robot MOVE, and
+*** Of the four classes, only W1 / W2 / W7 can make the robot MOVE, and
 S12.1.1's own self-check is that all three are "stop, or go with a check": W1
 stops, W2 is L1 with a fence pre-check, W7 pauses/cancels. None of them drives
 continuously -- that is why W6 teleop was removed rather than narrowed.
@@ -73,10 +74,10 @@ from xbrain.common.errors import (
     E_SCHEMA,
 )
 
-#: 11 S12.1.1 upstream `type` closed set. Five values; W5/W6 are tombstones and
-#: W8 is reserved. Adding a member here without amending S12.1.1 first is the
-#: thing F-8 exists to prevent.
-UPSTREAM_TYPES = frozenset({"estop", "goto", "exit_broadcast", "geo", "task"})
+#: 11 S12.1.1 upstream `type` closed set. Four values; W3/W5/W6 are tombstones
+#: and W8 is reserved. Adding a member here without amending S12.1.1 first is
+#: the thing F-8 exists to prevent.
+UPSTREAM_TYPES = frozenset({"estop", "goto", "geo", "task"})
 
 #: The W4 ops the HMI may ask for, and the confirmation level each carries
 #: (S12.1.1 W4 row). refs is read-only. Any geo action outside this map -- force,
@@ -274,37 +275,6 @@ def build_task_command(msg: Dict[str, Any]) -> Any:
         payload["task_id"] = task_id
     return UplinkCommand(key="cmd/task", payload=payload, req_id=str(req_id),
                          req_type="task")
-
-
-def build_exit_broadcast_command(msg: Dict[str, Any]) -> Any:
-    """W3: the HMI's "force exit broadcast" button -> a cmd/mode ModeCommand.
-
-    *** Why this class exists at all, from S12.1.1's W3 row: while B mode is
-    running the local mic is closed by the half-duplex gate (S8.9), and a
-    cloud operator saying "stop broadcasting" into a microphone triggers the
-    self-trigger loop S8.7.4 / S8.9.1 already argued through. So in B mode this
-    button is the ONLY exit that does not go through voice.
-
-    *** It carries no preconditions and no confirm.
-    S12.1.1 is explicit: W3 is subject to no task state, no mode state and no
-    L2 confirm -- it does exactly one thing, leave B mode. Adding a confirm
-    here would be actively harmful: the situation it exists for is one where
-    the operator cannot use their voice and the robot is broadcasting.
-
-    * It does NOT bypass `restricted` though -- W1 estop is the only class that
-    does. `restricted` only appears after 20 consecutive violations on one
-    connection, by which point that client is not trustworthy.
-    """
-    req_id = msg.get("req_id")
-    payload: Dict[str, Any] = {
-        "cmd_id": CMD_ID_PREFIX + str(req_id),
-        # 11 S7.3's action for leaving B mode. P2's ModeFace maps it to IDLE.
-        "action": "exit_broadcast",
-        # CH-2 again: stamped, never read from the frame.
-        "source": "hmi",
-    }
-    return UplinkCommand(key="cmd/mode", payload=payload, req_id=str(req_id),
-                         req_type="exit_broadcast")
 
 
 #: W2 (user 2026-11-10): a coordinate tap must BE a route point. The frontend

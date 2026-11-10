@@ -114,7 +114,7 @@ class RuntimeStateProvider(Protocol):
 
     def send_uplink(self, key: str, payload: Dict[str, Any]) -> None:
         """Publish one HMI-originated command on the general plane (11 S12.1.1
-        W2/W3/W4/W7). OPTIONAL: read via getattr, so a provider without it makes
+        W2/W4/W7). OPTIONAL: read via getattr, so a provider without it makes
         the upstream classes answer E_NOT_IMPLEMENTED instead of failing the
         handshake -- the browser then shows a refusal rather than a dead link."""
         ...
@@ -223,7 +223,8 @@ _UPLINK_BUILDERS = {
     "geo": uplink.build_geo_command,                    # W4
     "task": uplink.build_task_command,                  # W7
     "goto": uplink.build_goto_command,                  # W2
-    "exit_broadcast": uplink.build_exit_broadcast_command,   # W3
+    # W3 exit_broadcast removed (99 U158): its type is no longer whitelisted,
+    # so uplink.parse_envelope refuses it before this map is reached.
 }
 
 
@@ -332,22 +333,16 @@ async def _uplink_reader(websocket, provider, bucket, pending,
             await websocket.send_json(uplink.ack_frame(
                 req_id, req_type, "rejected", ref.code, ref.detail))
             continue
-        # The four classes this build serves, per _UPLINK_BUILDERS above:
-        # geo (W4), task (W7), goto (W2), exit_broadcast (W3). estop (W1) is
-        # handled at G0 above (_answer_estop) and never reaches here, which
-        # closes the whole S12.1.1 whitelist.
+        # The three classes this build serves, per _UPLINK_BUILDERS above:
+        # geo (W4), task (W7), goto (W2). estop (W1) is handled at G0 above
+        # (_answer_estop) and never reaches here, which closes the whole
+        # S12.1.1 whitelist.
         # ~~"it has its own <=10 ms REST path"~~ -- superseded 2026-11-10: W1 is
         # now served on this socket first (17 S6.4); POST /api/estop remains only
         # as the frontend's fallback while the socket is down.
-        #
-        # ! This comment used to read "the three classes ... exit_broadcast is
-        # still unwired". W3 was wired in batch 20 (uplink.
-        # build_exit_broadcast_command, and the P2 cmd/mode receiver in batch
-        # 17) and the map four lines up has carried it since; the comment was
-        # simply not updated. Corrected 2026-09-27 (CLAUDE.md iron rule 1).
-        # A stale "not built yet" right next to the dispatch table is worse
-        # than no comment: the next reader trusts the sentence over the dict
-        # and goes looking for a gap that closed a month ago.
+        # ~~"The four classes ... exit_broadcast (W3)"~~ -- superseded
+        # 2026-11-10: W3 was removed from the HMI (99 U158), so its type now
+        # fails parse_envelope's whitelist check above and never gets here.
         #
         # Anything NOT in the map still gets not_implemented, so "not built
         # yet" never reads as "your frame was wrong".

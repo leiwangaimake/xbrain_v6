@@ -58,12 +58,12 @@ def _geo_frame(op="rename", gtype="route", **over):
 
 # ------------------------------------------------------- the whitelist -----
 
-def test_upstream_types_are_exactly_the_five_of_the_table():
+def test_upstream_types_are_exactly_the_four_of_the_table():
     """S12.1.1 is frozen item F-8 and says an implementer may not wire one more
-    type in code. MUTATION: add a sixth -- this reddens, which is the point of
-    pinning the set rather than a sample of it."""
-    assert uplink.UPSTREAM_TYPES == {"estop", "goto", "exit_broadcast", "geo",
-                                     "task"}
+    type in code. MUTATION: add a fifth (e.g. put back exit_broadcast, removed
+    by 99 U158) -- this reddens, which is the point of pinning the set rather
+    than a sample of it."""
+    assert uplink.UPSTREAM_TYPES == {"estop", "goto", "geo", "task"}
 
 
 def test_unknown_type_is_refused():

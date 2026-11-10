@@ -1365,8 +1365,8 @@
     if (controlsOffline()) {
       // No live link = no control. Reported, never queued: a queued pause
       // that fired on reconnect would act on a task the operator stopped
-      // looking at minutes ago. A task frame answers on its card; goto and
-      // exit_broadcast have no card, so they answer on the banner.
+      // looking at minutes ago. A task frame answers on its card; goto has
+      // no card, so it answers on the banner.
       if (frame.type === "task") taskNotice(frame.task_id, "连接已断开, 任务控制不可用", "bad");
       else alertBanner("连接已断开, 操作不可用");
       return null;
@@ -1388,18 +1388,6 @@
       pendingReqs.delete(m.req_id);
       if (btn) btn.disabled = false;
       onGotoAck(m);
-      return;
-    }
-    // W3 answers on the banner, not on a task card (it has no card).
-    if (m.req_type === "exit_broadcast") {
-      pendingReqs.delete(m.req_id);
-      if (btn) btn.disabled = false;
-      const okTxt = "已退出喊话";
-      if (m.result === "accepted") { alertBanner(okTxt); refreshTasks(); }
-      else {
-        const why = (m.detail && (m.detail.reason_text || m.detail.reason)) || "";
-        alertBanner("被拒绝 " + (m.code || "") + (why ? ": " + why : ""));
-      }
       return;
     }
     pendingReqs.delete(m.req_id);
@@ -1741,21 +1729,8 @@
     clearTimeout(bannerTimer);
     const b = $("gotoBanner"); if (b) b.hidden = true;
   }
-  // Older callers (exit broadcast, offline refusals) keep this name.
+  // Offline refusals keep this name.
   function alertBanner(text, withConfirm) { showBanner(withConfirm ? "confirm" : "info", text); }
-
-  // -- W3 exit_broadcast ----------------------------------------------------
-  // 11 S12.1.1 W3: while B mode runs the local mic is closed by the half-duplex
-  // gate, and a cloud operator saying "stop broadcasting" into a mic triggers
-  // the self-trigger loop. So this button is the ONLY non-voice way out of B
-  // mode -- it takes no confirm and no preconditions, deliberately.
-  function wireExitBroadcast() {
-    const btn = $("exitBroadcastBtn");
-    if (!btn) return;
-    btn.addEventListener("click", () => {
-      sendUplink({ type: "exit_broadcast" }, btn);
-    });
-  }
 
   // W6: WS server push is primary; REST poll is the fallback when WS is down.
   let pollTimer = null;
@@ -1799,7 +1774,6 @@
     updateEstopUi();
     setInterval(updateEstopUi, 250);
     wireInteraction(); applyView(); buildDialFace(); wireHistoryFolding();
-    wireExitBroadcast();
     $("mapSvg").addEventListener("click", onMapClick);
     const gs = $("gotoSend");
     if (gs) gs.addEventListener("click", sendGoto);

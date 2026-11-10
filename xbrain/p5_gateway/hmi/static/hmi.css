@@ -266,13 +266,6 @@ body { margin: 0; overflow: hidden; background: var(--bg); color: var(--ink);
    MOTION and W7 stops the TASK, and an operator who confuses them either
    slams the robot to zero for a merely-wrong task or thinks a cancel is an
    emergency stop. */
-/* W3 exit_broadcast. Amber outline, NOT the estop red: W1 stops motion, W3
-   leaves B mode, and S12.1.1 forbids presenting the two as the same kind of
-   control. */
-.exit-bcast-btn { margin-left: 8px; padding: 6px 12px; cursor: pointer;
-                  background: transparent; color: var(--warn);
-                  border: 1px solid var(--warn); border-radius: 4px; }
-.exit-bcast-btn:disabled { opacity: 0.4; cursor: progress; }
 
 /* W2 goto target dot (user 2026-11-10): a SOLID dot, no outline, breathing pink
    <-> white so it is found at a glance. Its size is set in hmi.js (fixed screen
@@ -313,8 +306,7 @@ body { margin: 0; overflow: hidden; background: var(--bg); color: var(--ink);
    ESTOP (estopView owns it) and not zoom/pan (they only move the view). The JS
    also refuses in sendUplink / onMapClick, so this is the visible half. */
 body.controls-offline .task-act,
-body.controls-offline .goto-send,
-body.controls-offline .exit-bcast-btn { opacity: 0.35; pointer-events: none; }
+body.controls-offline .goto-send { opacity: 0.35; pointer-events: none; }
 .goto-send { padding: 4px 10px; cursor: pointer; color: var(--bg);
              background: var(--cyan); border: none; border-radius: 3px; }
 .goto-cancel { padding: 4px 10px; cursor: pointer; color: var(--muted);
