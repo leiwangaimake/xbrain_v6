@@ -143,6 +143,14 @@ hmi:
   link_rtt_degrade_ms: 200
   link_down_misses: 3
   estop_fast_path: true               # 独立任务, <=10 ms
+  # -- W2 点击导航 (11 S12.1.1 W2; 用户 2026-11-10). 只能点路径上的点或关键点.
+  #    点关键点按 waypoint_id 下发, 到点半径取该关键点自己的 arrival_radius;
+  #    点路径上的点按 lat/lon 下发, 路径点没有半径, 用下面这个值随帧带给 P3
+  #    (P3 对坐标型 goto 不收无半径的帧, 不替它编一个, route_push_runtime).
+  #    取 1.0 = 现有 4 个关键点的 arrival_radius, 两种点到点判据一致.
+  #    安全相关, 代码里没有默认值: 缺了 HMI 的路径点导航整类拒收.
+  goto:
+    arrive_radius_m: 1.0
 
   # -- HMI web server UI params (17 §6.10; user 2026-08-12). These are UI
   #    presentation values, NOT safety params -- defaults allowed (3.1 only
@@ -160,7 +168,13 @@ hmi:
         # The frontend picks the smallest of these whose on-screen size stays big
         # enough (never a pinprick sieve) at the current zoom. Add/remove values
         # here to tune -- no cell size is hard-coded in the frontend.
-        cell_options_m: [5, 10, 20, 50, 100, 200, 500, 1000, 2000, 5000]
+        # 用户 2026-11-10: 比例尺只在 1~10 m 之间. 缩到连 10 m 格也挤成一团时
+        # 网格隐藏 (比例尺显示"网格 已隐藏"), 不画成一片灰.
+        # ~~cell_options_m: [5, 10, 20, 50, 100, 200, 500, 1000, 2000, 5000]~~ (被替代 2026-11-10)
+        cell_options_m: [1, 2, 5, 10]
+        # 用户 2026-11-10: 网格线屏幕粗细固定, 不随缩放变. 取原 10 m 网格时的
+        # 可见线宽 (约 2 px, 原 0.7 m 线宽在图案边上被裁掉一半).
+        line_px: 2
       viewbox: "-100 -65 240 145"     # ENU meters; from customer sample
       zoom: { min: 0.65, max: 2.8, wheel_step: 0.12 }  # U4: wheel zoom bounds/step
     font:                             # U2: family + size_px per panel; size_px = 2x sample (user 2026-08-14)
@@ -184,6 +198,9 @@ hmi:
     waypoint:                         # U6: marker shape/color/size (recorded vs unrecorded)
       recorded:   { shape: "circle", color: "#3aa0ff", size_px: 3 }
       unrecorded: { shape: "circle", color: "#8a8f99", size_px: 3 }
+    goto:                             # W2 点击导航的界面参数 (用户 2026-11-10)
+      pin_diameter_px: 20             # 目标点圆点直径, 屏幕像素, 不随缩放变
+      snap_px: 14                     # 点击处离路径点/关键点多近 (屏幕像素) 算点中
 
 cloud:                                # 17 §7.1A state/link 阈值来源 (thresholds 回显)
   heartbeat_timeout_s: 5              # -> thresholds.degraded_s = 5.0 (L0->L1)
