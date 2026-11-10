@@ -12,10 +12,11 @@ five fields for both the CURRENT task and every HISTORY task -- task_id (field 1
 已巡逻/percent (field 5). This module turns tasks rows into those cards and splits
 them into current vs history.
 
-current = non-terminal states (the tasks in play); history = terminal states,
-newest first. The split is single-sourced from state.machine.TERMINAL_STATES so
-it can never disagree with the state graph (a local literal is exactly how such
-a split silently drifts when a state is added).
+current = running + waiting to run (pending / ready / scheduled / blocked);
+history = every other state -- done, failed, cancelled, the other terminal ones,
+AND suspended -- newest first (user ruling 2026-11-10, 99 U156; see
+CURRENT_STATES). ~~current = non-terminal states; history = terminal states~~
+(superseded the same day: it filed suspended tasks under current).
 
 Ordering + paging: submit_seq DESC. submit_seq is monotonic and never NULL, so
 'newest first' is stable and keyset-pageable (before = the last seen submit_seq);
@@ -33,7 +34,7 @@ live aiosqlite conn on P3's single db thread (15 S2.1).
 Looks-right-but-wrong traps this guards:
   * percent from current_step/total_steps must be None when total_steps == 0
     (route not expanded, 17 S6.10.4 EX-1) -- never a fabricated 0 or 100.
-  * the state IN-clause is built from the trusted TERMINAL_STATES constants, not
+  * the state IN-clause is built from the trusted CURRENT_STATES constants, not
     from any query input; scope is validated and limit/before are coerced to int,
     so the SQL carries no untrusted string.
 """
@@ -52,14 +53,26 @@ _CARD_COLUMNS = (
     "task_type", "current_step", "total_steps", "submit_seq",
 )
 
-# History = terminal states; current = the complement. sorted() gives a stable
-# IN-clause. Values come from TERMINAL_STATES (trusted), so interpolating them is
-# not an injection surface -- query inputs never reach the SQL as strings.
-_TERMINAL_IN = "(" + ",".join("'%s'" % s for s in sorted(TERMINAL_STATES)) + ")"
+# CURRENT = what is running now plus what is waiting to run (queued or timed);
+# HISTORY = everything else -- every task that has been executed, however it
+# ended, INCLUDING a suspended one (user ruling 2026-11-10, 99 U156). A
+# suspended task that is resumed goes back to `running` and so reappears under
+# current by itself; nothing has to move it.
+#   ~~History = terminal states; current = the complement.~~ -- superseded
+#   2026-11-10: that put `suspended` under current, so tasks stopped hours ago by
+#   an e-stop or an RTK loss sat in the current panel next to the one running.
+# Written as a WHITELIST for current: a state added to the closed set later lands
+# in history (it is "not running and not waiting") rather than silently joining
+# the current panel. The values are trusted constants (11 S4.4 closed set), so
+# interpolating them is not an injection surface -- query inputs never reach the
+# SQL as strings.
+CURRENT_STATES = ("running", "pending", "ready", "scheduled", "blocked")
+assert all(s not in TERMINAL_STATES for s in CURRENT_STATES)  # a live state only
+_CURRENT_IN = "(" + ",".join("'%s'" % s for s in sorted(CURRENT_STATES)) + ")"
 
 _SCOPE_WHERE = {
-    "current": "state NOT IN %s" % _TERMINAL_IN,
-    "history": "state IN %s" % _TERMINAL_IN,
+    "current": "state IN %s" % _CURRENT_IN,
+    "history": "state NOT IN %s" % _CURRENT_IN,
 }
 
 

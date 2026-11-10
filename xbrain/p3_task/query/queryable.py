@@ -20,7 +20,8 @@ back on the zenoh thread.
 
 Selector grammar (zenoh: params are ';'-separated, NOT '&'):
     query/tasks?scope=history;limit=20;before=42
-  * scope: 'current' (non-terminal) | 'history' (terminal); default 'current'
+  * scope: 'current' (running + queued / timed) | 'history' (everything else,
+    suspended included -- 99 U156); default 'current'
   * limit: page size, clamped to [1, MAX_LIMIT]; default DEFAULT_LIMIT
   * before: keyset cursor (a submit_seq); rows strictly older, for lazy history
 

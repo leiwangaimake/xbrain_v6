@@ -7,7 +7,7 @@ Brief: P3 task-panel query -- current/history split + card projection (17 S6.8.4
 
 Description:
 Pins query_task_cards against a real in-memory task.db: the current/history split
-(non-terminal vs terminal), newest-first ordering, keyset paging (has_more +
+(running + waiting vs everything else, suspended included -- 99 U156), newest-first ordering, keyset paging (has_more +
 next_before), and the five-field card projection with fields 1/2/3/5 (task_id /
 created_at / command_text / percent) and the deferred field 4 (targets == []).
 Each check names the mutation it reddens (CLAUDE.md 3.3). The load-bearing ones
@@ -88,6 +88,44 @@ async def test_history_scope_terminal_newest_first(dao):
     # ASC order, or leaking an active task, reddens.
     assert ids == ["t-5", "t-4", "t-3"]
     assert reply["has_more"] is False and reply["next_before"] is None
+
+
+@pytest.mark.asyncio
+async def test_suspended_is_history_and_waiting_states_are_current(dao):
+    """99 U156 (user 2026-11-10): current = running + waiting to run (pending /
+    ready / scheduled / blocked); every executed task -- suspended included --
+    is history. A suspended task that is resumed is `running` again and so back
+    under current without anything moving it (asserted by the second half).
+
+    MUTATION: go back to "current = non-terminal" -> t-s shows under current and
+    is missing from history; drop a waiting state from the whitelist -> that
+    task vanishes from current.
+    """
+    await _seed(dao)
+    # Inserted running, then suspended the way P3 writes it: the schema CHECKs
+    # require suspend_kind + suspend_reason exactly when state is suspended.
+    await _insert(dao, task_id="t-s", state="running", submit_seq=6)
+    await dao._conn.execute(
+        "UPDATE tasks SET state='suspended', suspend_kind='passive', "
+        "suspend_reason='estop_soft' WHERE task_id='t-s'")
+    await dao._conn.commit()
+    await _insert(dao, task_id="t-r", state="ready", submit_seq=7)
+    await _insert(dao, task_id="t-c", state="scheduled", submit_seq=8)
+    await _insert(dao, task_id="t-b", state="blocked", submit_seq=9)
+    cur = {c["task_id"] for c in
+           (await query_task_cards(dao._conn, scope="current", limit=20))["tasks"]}
+    his = [c["task_id"] for c in
+           (await query_task_cards(dao._conn, scope="history", limit=20))["tasks"]]
+    assert cur == {"t-1", "t-2", "t-r", "t-c", "t-b"}
+    assert his == ["t-s", "t-5", "t-4", "t-3"]
+    # Resumed: suspended -> running moves it back to current.
+    await dao._conn.execute(
+        "UPDATE tasks SET state='running', suspend_kind=NULL, suspend_reason=NULL "
+        "WHERE task_id='t-s'")
+    await dao._conn.commit()
+    cur2 = {c["task_id"] for c in
+            (await query_task_cards(dao._conn, scope="current", limit=20))["tasks"]}
+    assert "t-s" in cur2
 
 
 @pytest.mark.asyncio
