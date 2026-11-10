@@ -49,26 +49,35 @@ body { margin: 0; overflow: hidden; background: var(--bg); color: var(--ink);
   background: var(--bg); color: var(--ink); cursor: pointer; font-size: 30px; }
 .zoom-btn:hover { background: var(--blue); border-color: var(--cyan); }
 
-/* ESTOP (ADDED, contract 17 S6.4 / NAV-64): prominent red. States per 17 S6.3,
-   decided in hmi.js estopView: ok = armed pulse; degraded = still pressable with a
-   yellow border + notice; down / 2 s without downlink = greyed + notice. */
+/* ESTOP (ADDED, contract 17 S6.4 / NAV-64). States per 17 S6.3, decided in hmi.js
+   estopView, one whole-button colour each (user 2026-11-10: the colour of the
+   button IS the state, not its border): ok = red + armed pulse; degraded = YELLOW,
+   still pressable; down / 2 s without downlink = GREY, disabled. The label stays
+   white in red and yellow. */
 .estop-btn { padding: 8px 20px; border: 2px solid var(--danger); border-radius: 5px;
   background: #b0161a; color: #fff; font-weight: 700; font-size: 22px; letter-spacing: 1px;
   cursor: pointer; }
 .estop-btn:hover:not(:disabled) { background: var(--danger); }
-.estop-btn:disabled { background: #3a2b2c; border-color: #6b4b4c; color: #8a7576;
+/* Disconnected: a plain grey button, unmistakably off -- not the old dark red-brown
+   that still read as "a red button in shadow". */
+.estop-btn:disabled { background: #7a7a7a; border-color: #9a9a9a; color: #e8e8e8;
   cursor: not-allowed; }
 .estop-btn.armed { animation: estop-pulse 1.4s ease-in-out infinite; }
 @keyframes estop-pulse { 50% { box-shadow: 0 0 0 4px rgba(230,57,50,.28); } }
-/* degraded: the stop still gets through, so the button keeps its red body and
-   only the border turns warning-yellow -- it must not look disabled. */
-.estop-btn.degraded:not(:disabled) { border-color: var(--warn); box-shadow: 0 0 0 3px rgba(241,143,23,.45); }
+/* degraded: the stop still gets through, so the whole button turns yellow and stays
+   pressable -- yellow says "works, but slow", grey would say "gone". The white label
+   is kept (user 2026-11-10); the text-shadow only keeps it legible on yellow. */
+.estop-btn.degraded:not(:disabled) { background: #e6b800; border-color: #ffd21f;
+  text-shadow: 0 1px 2px rgba(0,0,0,.65); }
+.estop-btn.degraded:hover:not(:disabled) { background: #ffcc00; }
 /* The sentence beside the button. Visible text, not a tooltip: NAV-64 / 11 S12.3
    require the "use the hardware stop" line to be SHOWN. Same size as the button
-   label so it is read, not discovered. */
+   label. The "unavailable" line breathes red <-> white (user 2026-11-10: plain red
+   on the dark toolbar does not catch the eye); the degraded line stays yellow. */
 .estop-notice { font-weight: 700; font-size: 22px; }
-.estop-notice.bad  { color: var(--danger); }
-.estop-notice.warn { color: var(--warn); }
+.estop-notice.bad  { color: var(--danger); animation: estop-notice-breathe 1.6s ease-in-out infinite; }
+.estop-notice.warn { color: #ffd21f; }
+@keyframes estop-notice-breathe { 0%, 100% { color: var(--danger); } 50% { color: #ffffff; } }
 
 /* -- map ------------------------------------------------------------------ */
 /* Grid background: deep black (user 2026-08-14). Only the map area is black;
@@ -318,7 +327,7 @@ body { margin: 0; overflow: hidden; background: var(--bg); color: var(--ink);
 .mode-text { font-weight: 400; }
 /* footer convergence states: bright green = ok, red = LOSS/断. No dots. */
 .stat.ok  { color: var(--ok-bright); }
-.stat.warn { color: var(--warn); }       /* estop link degraded (17 S6.3) */
+.stat.warn { color: #ffd21f; }           /* estop link degraded (17 S6.3), same yellow as the button */
 .stat.bad { color: var(--danger); }
 .dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%;
   background: var(--muted); margin-right: 5px; }
