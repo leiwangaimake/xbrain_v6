@@ -222,6 +222,25 @@ def test_ra3_times_out_on_the_monotonic_window_and_allows_two_retries():
     assert out.retry_allowed is False
 
 
+def test_a_confirmed_push_gives_the_next_push_its_full_retry_budget():
+    """15 S2.4.2: the retry budget is per push. Field log 2026-11-10 read
+    "RA-1 after 9 attempt(s)" for pushes confirmed in 0.5 s: the count was
+    never zeroed on a confirm, so after three successful pushes one timeout
+    already failed the next task with no re-push.
+
+    MUTATION: drop the reset in observe() -> the counts climb 1, 2, 3 and
+    the first timeout of the fourth push comes back retry_allowed False.
+    """
+    w = RouteAckWindow(timeout_s=3.0, max_retry=2)
+    for n in range(3):
+        w.open("r", n, now_mono_ms=n * 10)
+        out = w.observe(loading=False, route_id="r", route_rev=n)
+        assert out.attempts == 1
+    w.open("r", 9, now_mono_ms=100)
+    out = w.tick(now_mono_ms=3100)
+    assert out.ack is RouteAck.RA3_TIMEOUT and out.retry_allowed is True
+
+
 def test_report_incomplete_does_not_wait_out_the_window():
     """15 S2.4.4: an E_GEO_INCOMPLETE on event/warn/motion re-pushes at once
     rather than costing another 3 s."""

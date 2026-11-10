@@ -365,7 +365,16 @@ class RouteAckWindow:
                 and route_rev == want_rev):
             return None
         self._route = None
-        return AckOutcome(RouteAck.RA1_CONFIRMED, False, self._attempts)
+        out = AckOutcome(RouteAck.RA1_CONFIRMED, False, self._attempts)
+        # The retry budget (15 S2.4.2 route_push_retry) is per push. Until
+        # 2026-11-10 a confirm left the count standing, so it grew across
+        # every successful push since P3 started (the field log read "RA-1
+        # after 9 attempt(s)" for a push confirmed in 0.5 s), and from the
+        # fourth push on a single RA-3 timeout already exceeded the budget:
+        # the task failed with E_GEO_INCOMPLETE and was never re-pushed.
+        # Only reset() (fatal / clear) zeroed it.
+        self._attempts = 0
+        return out
 
     def report_incomplete(self) -> Optional[AckOutcome]:
         """event/warn/motion carried E_GEO_INCOMPLETE: re-push at once rather
