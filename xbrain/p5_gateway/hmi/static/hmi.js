@@ -1851,7 +1851,7 @@
   }
   // </battery-view>
   let lastBattery = {};                  // last snapshot.battery
-  const BAT_BODY_W = 121, BAT_NUB_W = 7;   // fill widths in SVG units
+  const BAT_BODY_W = 121;                // body fill width in SVG units
   function renderBattery(bat) {
     if (bat !== undefined) lastBattery = bat || {};
     const packs = (lastBattery && lastBattery.packs) || [];
@@ -1861,13 +1861,11 @@
       const pack = packs.find((x) => x && x.label === label) || {};
       const v = batteryCellView(pack, phase);
       el.className = "battery-cell " + v.cls;
-      // Spread the level over the body's inner width plus the nub's (the nub
-      // counts toward the percentage and fills last). Geometry = the SVG in
-      // index.html: body fill x 7.5..128.5, nub fill x 137.5..144.5.
-      const run = v.width / 100 * (BAT_BODY_W + BAT_NUB_W);
-      el.querySelector(".bat-fill").setAttribute("width", Math.min(run, BAT_BODY_W).toFixed(2));
-      el.querySelector(".bat-nubfill").setAttribute("width",
-        Math.max(0, run - BAT_BODY_W).toFixed(2));
+      // The level fills the body only; the nub is always solid (user
+      // 2026-11-11, like the reference icon). Geometry = the SVG in
+      // index.html: body fill x 7.5..128.5.
+      el.querySelector(".bat-fill").setAttribute("width",
+        (v.width / 100 * BAT_BODY_W).toFixed(2));
       el.querySelector(".battery-text").textContent = v.text;
       const fmt = (x, d, u) => (typeof x === "number" ? x.toFixed(d) + u : "--");
       el.title = "电池 " + label + (v.cls === "absent" ? ": 槽位无电池"

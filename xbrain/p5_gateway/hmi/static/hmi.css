@@ -100,10 +100,11 @@ body { margin: 0; overflow: hidden; background: var(--bg); color: var(--ink);
    thick rounded outline, a rounded fill bar inset with a gap, and a rounded
    terminal nub on the right. The OUTLINE, the nub and the fill all take the
    level colour (the cell's `color`, read as currentColor): >= 50 green (the
-   same emerald as the unlocked button), 20-49 yellow, < 20 red. The nub still
-   counts toward the percentage (user, earlier the same day): hmi.js
-   renderBattery spreads the level over body + nub, so the nub fills last.
-   Absent = grey dashed outline, unknown = grey outline; neither draws a fill.
+   same emerald as the unlocked button), 20-49 yellow, < 20 red. The nub is
+   ALWAYS solid, like the reference (user 2026-11-11, replacing "the nub counts
+   toward the percentage"); the fill covers the body only. Absent = the same
+   solid outline in grey over the earlier grey-stripe background (.battery-bg
+   behind the SVG, inside the body); unknown = grey outline, no fill.
    The SVG is the ESTOP button's height (44px). */
 .battery-box { display: flex; align-items: center; gap: 10px; margin-left: 12px;
   color: #fff; font-weight: 700; font-size: 22px; }
@@ -112,14 +113,17 @@ body { margin: 0; overflow: hidden; background: var(--bg); color: var(--ink);
 .battery-bar { position: relative; display: inline-block; width: 150px; height: 44px; }
 .battery-svg { position: absolute; inset: 0; width: 150px; height: 44px; overflow: visible; }
 .bat-frame { fill: none; stroke: currentColor; stroke-width: 3.5; }
-.bat-nub { fill: none; stroke: currentColor; stroke-width: 2.5; }
-.bat-fill, .bat-nubfill { fill: currentColor; }
+.bat-nub { fill: currentColor; stroke: none; }
+.bat-fill { fill: currentColor; }
+.battery-bg { position: absolute; left: 4px; top: 4px; width: 128px; height: 36px;
+  border-radius: 7px; }
 .battery-text { position: absolute; left: 0; top: 0; bottom: 0; right: 16px; color: #fff;
   text-align: center; line-height: 44px; text-shadow: 0 1px 2px rgba(0,0,0,.85); }
 .battery-cell.ok   { color: #10a83c; }
 .battery-cell.warn { color: #e6b800; }
 .battery-cell.low  { color: #e02020; }
-.battery-cell.absent .bat-frame { stroke-dasharray: 6 4; }
+.battery-cell.absent .battery-bg { background: repeating-linear-gradient(45deg,
+  #3a4150 0 8px, #2a303c 8px 16px); }
 .battery-cell.absent .battery-text,
 .battery-cell.unknown .battery-text { color: #c8ccd4; }
 .chassis-lock-btn.unknown,
