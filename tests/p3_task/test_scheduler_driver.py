@@ -267,3 +267,26 @@ async def test_resume_blocked_stops_every_auto_resume_but_not_dispatch(dao_conn)
     await scheduler_tick(conn, dao, now_mono_ms=1, on_transition=_noop_t, resume_blocked=True)
     assert (await dao.fetch_by_id("t-p")).state == "suspended"  # not resumed
     assert (await dao.fetch_by_id("t-q")).state == "running"  # the queue still runs
+
+
+@pytest.mark.asyncio
+async def test_only_the_urgent_task_preempts_an_equal_priority(dao_conn):
+    """99 U157 (user 2026-11-11): the low-battery return (95) preempts a running
+    link-loss return_home (95); any other equal-priority task still queues.
+    MUTATION: ignore urgent_task_id -> t-lb waits -> red; let every equal
+    priority preempt -> t-other preempts -> red."""
+    dao, conn = dao_conn
+    await dao.insert(_pending("t-rh", priority=95, seq=1))
+    await conn.commit()
+    await scheduler_tick(conn, dao, now_mono_ms=1, on_transition=_noop_t)
+    assert (await dao.fetch_by_id("t-rh")).state == "running"
+    await dao.insert(_pending("t-other", priority=95, seq=2))
+    await conn.commit()
+    await scheduler_tick(conn, dao, now_mono_ms=2, on_transition=_noop_t, urgent_task_id="t-lb")
+    assert (await dao.fetch_by_id("t-rh")).state == "running"  # not urgent: queues
+    await dao.insert(_pending("t-lb", priority=95, seq=3))
+    await conn.commit()
+    await scheduler_tick(conn, dao, now_mono_ms=3, on_transition=_noop_t, urgent_task_id="t-lb")
+    await scheduler_tick(conn, dao, now_mono_ms=4, on_transition=_noop_t, urgent_task_id="t-lb")
+    assert (await dao.fetch_by_id("t-lb")).state == "running"
+    assert (await dao.fetch_by_id("t-rh")).state == "suspended"

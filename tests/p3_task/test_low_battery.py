@@ -60,13 +60,27 @@ def _power(soc, charging=False, remain_km=5.0, charge="idle"):  # a chassis powe
 
 
 # -- the episode ----------------------------------------------------------------------
-# trigger, stop, period, charge_full, swap_resume, swap_absent_min_s, cold_swap_min_rise_pct (U157)
-RULE = (20.0, 5.0, 2.0, 100.0, 80.0, 5.0, 10.0)
+# trigger, stop, period, charge_full, swap_resume, swap_absent_min_s, cold_swap_min_rise_pct,
+# plug_confirm_s, unplug_confirm_s (U157). The charging debounce is 0.5 s here (5 s shipped)
+# so the unit cases stay short; a charging change takes two frames 0.5 s apart.
+RULE = (20.0, 5.0, 2.0, 100.0, 80.0, 5.0, 10.0, 0.5, 0.5)
 
 
-def _mon():  # the shipped rule
-    """A monitor with the shipped thresholds (configs/p3_task.yaml)."""
-    return lb.LowBatteryMonitor(*RULE)
+def _mon(prime=True):  # the shipped thresholds, a short debounce
+    """A monitor; primed = the debounced charging flag already known False, as
+    in steady running. A restart test uses prime=False: right after a start the
+    flag is unknown (ChargingDebouncer.stable is None)."""
+    m = lb.LowBatteryMonitor(*RULE)
+    if prime:
+        m.charging.update(False, -10.0)
+        m.charging.update(False, -9.0)
+    return m
+
+
+def _plug(m, body, t):  # a charging change confirmed: two frames 0.5 s apart
+    """Feed body at t and t + 0.5; the events of the second frame."""
+    m.update(body, t)
+    return m.update(body, t + 0.5)
 
 
 def test_low_starts_once_and_alarms_every_period():  # trigger and cadence
@@ -89,10 +103,11 @@ def test_charging_turns_the_alarm_into_charging_not_an_end(body):  # either char
     charging (the U146 rule) -> `low` false -> red."""
     m = _mon()
     m.update(_power(19.0), 0.0)  # an episode
-    assert m.update(body, 1.0) == ["charging", "alarm"]  # phase change, alarm at once
+    assert m.update(body, 1.0) == []  # one charging frame: not confirmed yet (CD-1)
+    assert m.update(body, 1.5) == ["charging", "alarm"]  # confirmed: phase change, alarm at once
     assert m.low and m.phase == lb.PHASE_CHARGING  # still an episode
     assert m.update(body, 2.0) == []  # not due
-    assert m.update(body, 3.0) == ["alarm"]  # the charging alarm keeps its cadence
+    assert m.update(body, 3.5) == ["alarm"]  # the charging alarm keeps its cadence
 
 
 @pytest.mark.parametrize("soc,ends", [(99.0, False), (100.0, True)])
@@ -101,7 +116,7 @@ def test_the_charging_alarm_ends_only_at_charge_full(soc, ends):  # U157 charge_
     charging soc -> 99 ends -> red."""
     m = _mon()
     m.update(_power(19.0), 0.0)
-    m.update(_power(30.0, charging=True), 1.0)  # charging phase
+    _plug(m, _power(30.0, charging=True), 1.0)  # charging phase
     got = m.update(_power(soc, charging=True), 4.0)
     assert (got == ["charge_full"]) is ends and m.low is not ends
 
@@ -113,13 +128,14 @@ def test_unplugged_before_full_holds_or_drives_back():  # U157 ruling 2
     re-entry -> no second "low" -> red."""
     m = _mon()
     m.update(_power(19.0), 0.0)
-    m.update(_power(40.0, charging=True), 1.0)  # charging
-    assert m.update(_power(60.0), 2.0) == ["interrupted", "alarm"]  # pulled at 60 %
+    _plug(m, _power(40.0, charging=True), 1.0)  # charging
+    assert m.update(_power(60.0), 2.0) == []  # one unplugged frame: not confirmed (CD-1)
+    assert m.update(_power(60.0), 2.5) == ["interrupted", "alarm"]  # pulled at 60 %
     assert m.phase == lb.PHASE_INTERRUPTED and m.low
     assert m.update(_power(19.0), 5.0)[:1] == ["low"]  # drained: back to low
-    m.update(_power(19.0, charging=True), 6.0)  # replugged
-    assert m.update(_power(15.0), 7.0)[:1] == ["low"]  # pulled again while low: low
-    m.update(_power(50.0, charging=True), 8.0)
+    _plug(m, _power(19.0, charging=True), 6.0)  # replugged
+    assert _plug(m, _power(15.0), 7.0)[:1] == ["low"]  # pulled again while low: low
+    _plug(m, _power(50.0, charging=True), 8.0)
     assert m.update(_power(100.0), 10.0) == ["charge_full"]  # unplugged at full: ends
 
 
@@ -129,9 +145,9 @@ def test_the_five_percent_latch_rearms_after_charging():  # stop once per low ph
     stop -> red."""
     m = _mon()
     assert "stop" in m.update(_power(4.0), 0.0)
-    m.update(_power(4.0, charging=True), 1.0)
+    _plug(m, _power(4.0, charging=True), 1.0)
     assert not m.stopped  # the dispatch pause is lifted on the charger
-    assert m.update(_power(4.0), 2.0)[:2] == ["low", "stop"]  # unplugged at 4 %
+    assert _plug(m, _power(4.0), 2.0)[:2] == ["low", "stop"]  # unplugged at 4 %
 
 
 # -- the battery swap (99 U154 / U157) --------------------------------------------------
@@ -179,7 +195,7 @@ def test_a_swap_resumes_at_swap_resume_and_parks_below(soc, want):  # U154 floor
     got = m.update(_packs(soc, (True, 95.0), (True, soc)), 8.0)  # slot 0 refilled 7 s later
     if want is None:
         assert not {"swapped", "swapped_partial"} & set(got) and m.low  # still low
-        m.update(dict(_packs(soc, (True, 95.0), (True, soc)), charge="charging"), 9.0)
+        _plug(m, dict(_packs(soc, (True, 95.0), (True, soc)), charge="charging"), 9.0)
         got = m.update(dict(_packs(20.0, (True, 95.0), (True, 20.0)), charge="charging"), 12.0)
         assert got == ["alarm"] and m.phase == lb.PHASE_CHARGING  # charging to 20 is no swap
     else:
@@ -197,7 +213,7 @@ def test_a_presence_glitch_is_not_a_swap():  # swap_absent_min_s
     m.update(_packs(15.0, (True, 15.0), (True, 15.0)), 0.0)
     m.update(_packs(15.0, (False, 0.0), (True, 15.0)), 1.0)  # glitch
     m.update(_packs(15.0, (True, 15.0), (True, 15.0)), 1.5)  # back after 0.5 s
-    m.update(dict(_packs(15.0, (True, 15.0), (True, 15.0)), charge="charging"), 2.0)
+    _plug(m, dict(_packs(15.0, (True, 15.0), (True, 15.0)), charge="charging"), 2.0)
     got = m.update(dict(_packs(20.0, (True, 20.0), (True, 20.0)), charge="charging"), 5.0)
     assert got == ["alarm"] and m.phase == lb.PHASE_CHARGING
     m2 = _mon()  # single pack, slot 0 always empty
@@ -231,15 +247,22 @@ def test_a_swap_during_charging_ends_it_too():  # any episode phase
 
 
 def test_swap_history_belongs_to_one_episode():  # reset on close
-    """MUTATION: keep the presence history after the close -> the next
-    episode closes on a wobble -> red."""
+    """A slot still empty when an episode ends must not carry its empty-since
+    time into the next one. Episode 1 ends at full charge with slot 0 out;
+    episode 2 starts and slot 0 is filled 0.5 s later -- a glitch, not a swap.
+    MUTATION: drop the presence reset in _end_episode -> slot 0 counts as empty
+    since episode 1 (9 s) -> swapped_partial -> red. (The earlier version of
+    this case ended episode 1 with a judged swap, which empties the history by
+    itself, so the mutant stayed green -- 2026-11-11 audit.)"""
     m = _mon()
-    m.update(_packs(18.0, (True, 18.0)), 0.0)  # episode 1
-    m.update(_packs(None, (False, 0.0)), 1.0)  # pulled
-    assert m.update(_packs(90.0, (True, 90.0)), 8.0) == ["swapped"]  # swapped
-    assert "low" in m.update(_packs(19.0, (True, 19.0)), 9.0)  # episode 2, no swap since
-    got = m.update(_packs(25.0, (True, 25.0)), 10.0)
-    assert not {"swapped", "swapped_partial"} & set(got) and m.low  # a wobble only
+    m.update(_packs(15.0, (True, 15.0), (True, 15.0)), 0.0)  # episode 1
+    _plug(m, dict(_packs(30.0, (True, 30.0), (True, 30.0)), charge="charging"), 1.0)
+    m.update(dict(_packs(30.0, (False, 0.0), (True, 30.0)), charge="charging"), 2.0)  # slot 0 out
+    assert m.update(dict(_packs(100.0, (False, 0.0), (True, 100.0)), charge="charging"),
+                    3.0) == ["charge_full"]  # ends with slot 0 still out
+    assert "low" in _plug(m, _packs(19.0, (False, 0.0), (True, 19.0)), 10.0)  # episode 2
+    got = m.update(_packs(25.0, (True, 95.0), (True, 25.0)), 11.0)  # filled 0.5 s later
+    assert not {"swapped", "swapped_partial"} & set(got) and m.low
 
 
 def test_stop_once_at_five_percent():  # the 5 % latch
@@ -250,17 +273,24 @@ def test_stop_once_at_five_percent():  # the 5 % latch
     assert "stop" not in m.update(_power(4.0), 6.0)  # once
 
 
+_OK = (20.0, 5.0, 2.0, 100.0, 80.0, 5.0, 10.0, 5.0, 5.0)
+
+
+def _bad(i, v):  # the shipped tuple with one value replaced
+    return _OK[:i] + (v,) + _OK[i + 1:]
+
+
 @pytest.mark.parametrize("args", [
-    (None, 5.0, 2.0, 100.0, 80.0, 5.0, 10.0), (20.0, 0.0, 2.0, 100.0, 80.0, 5.0, 10.0),
-    (20.0, 20.0, 2.0, 100.0, 80.0, 5.0, 10.0), (20.0, 5.0, 0, 100.0, 80.0, 5.0, 10.0),
-    (20.0, 5.0, 2.0, None, 80.0, 5.0, 10.0), (20.0, 5.0, 2.0, 100.0, None, 5.0, 10.0),
-    (20.0, 5.0, 2.0, 101.0, 80.0, 5.0, 10.0),   # full could never be reached
-    (20.0, 5.0, 2.0, 70.0, 80.0, 5.0, 10.0),    # swap_resume above full
-    (20.0, 5.0, 2.0, 100.0, 20.0, 5.0, 10.0),   # swap_resume not above the trigger
-    (20.0, 5.0, 2.0, 100.0, 80.0, None, 10.0),  # swap_absent_min_s missing
-    (20.0, 5.0, 2.0, 100.0, 80.0, 5.0, 0.0),    # cold_swap_min_rise_pct not positive
-    (20.0, 5.0, float("nan"), 100.0, 80.0, 5.0, 10.0),  # NaN period: the alarm never repeats
-    (20.0, 5.0, 2.0, 100.0, 80.0, float("inf"), 10.0)])
+    _bad(0, None), _bad(1, 0.0), _bad(1, 20.0), _bad(2, 0),
+    _bad(3, None), _bad(4, None),
+    _bad(3, 101.0),   # full could never be reached
+    _bad(3, 70.0),    # swap_resume above full
+    _bad(4, 20.0),    # swap_resume not above the trigger
+    _bad(5, None),    # swap_absent_min_s missing
+    _bad(6, 0.0),     # cold_swap_min_rise_pct not positive
+    _bad(2, float("nan")),  # NaN period: the alarm never repeats
+    _bad(5, float("inf")),
+    _bad(7, None), _bad(8, 0.0)])  # the CD-1 debounce pair
 def test_thresholds_are_required_and_ordered(args):  # config refusals
     """CLAUDE.md 3.1 + U157 order stop < trigger < swap_resume <= full <= 100,
     every value finite and positive (audit 2026-11-11: a NaN period passed).
@@ -271,7 +301,7 @@ def test_thresholds_are_required_and_ordered(args):  # config refusals
 
 def test_equal_swap_resume_and_full_is_allowed():  # the '<=' ends of the order
     """MUTATION: '<' for '<=' -> a legal 100/100 config refused -> red."""
-    lb.LowBatteryMonitor(20.0, 5.0, 2.0, 100.0, 100.0, 5.0, 10.0)
+    lb.LowBatteryMonitor(*_bad(4, 100.0))
 
 
 def test_a_nan_soc_is_no_reading():
@@ -288,11 +318,25 @@ def test_snapshot_and_rollback_undo_a_frame():
     frame raises the same events again. MUTATION: rollback skips a field ->
     the second "low" never comes -> red."""
     m = _mon()
+    m.update(_packs(15.0, (False, 0.0), (True, 15.0)), 0.0)  # low, slot 0 empty
+    m.update(dict(_packs(15.0, (False, 0.0), (True, 15.0)), charge="charging"), 1.0)  # raw true
     snap = m.snapshot()
-    assert m.update(_power(19.0), 0.0) == ["low", "alarm"]
+    assert _plug(m, dict(_packs(15.0, (False, 0.0), (True, 15.0)), charge="charging"),
+                 1.2) == ["charging", "alarm"]
     m.rollback(snap)
-    assert m.phase == lb.PHASE_IDLE
-    assert m.update(_power(19.0), 0.5) == ["low", "alarm"]  # raised again
+    assert m.snapshot() == snap  # every field, not just the phase (2026-11-11 audit)
+    assert m.update(dict(_packs(15.0, (False, 0.0), (True, 15.0)), charge="charging"),
+                    1.7) == ["charging", "alarm"]  # raised again
+    # a rolled-back END must bring the restore facts back too (the cold-swap
+    # baseline is cleared when an episode ends). MUTATION: rollback skips
+    # restored_soc -> the snapshots differ -> red.
+    m2 = _mon(prime=False)
+    m2.restore(lb.PHASE_LOW, 8.0)
+    m2.update(_power(69.0), 0.0)  # flag unknown: not judged
+    snap2 = m2.snapshot()
+    assert m2.update(_power(69.0), 0.6) == ["swapped_partial"]  # the cold swap ends it
+    m2.rollback(snap2)
+    assert m2.snapshot() == snap2 and m2.low
 
 
 # -- restart protection, second layer + cold swap (U157, 2026-11-11) --------------------
@@ -304,6 +348,28 @@ def test_charging_below_full_reads_the_chassis(body, want):
     """MUTATION: '<=' for '<' -> 100 still blocks -> red; unknown soc while
     charging treated as full -> red; ignore the six-state field -> red."""
     assert lb.charging_below_full(body, 100.0) is want
+
+
+def test_the_guard_also_reads_the_debounced_flag():
+    """CD-1 for the guard: a one-frame drop of the raw bit while charging is
+    confirmed must not lift it. MUTATION: ignore stable_charging -> False -> red."""
+    assert lb.charging_below_full(_power(50.0), 100.0, True) is True
+    assert lb.charging_below_full(_power(50.0), 100.0, None) is False
+
+
+def test_the_charging_debouncer():
+    """15 S8.5 CD-1. Unknown until confirmed; a flicker shorter than the confirm
+    time changes nothing either way. MUTATION: judge on one frame -> the
+    flickers flip it -> red; start at False instead of unknown -> red."""
+    d = lb.ChargingDebouncer(5.0, 5.0)
+    assert d.update(True, 0.0) is None  # nothing known yet
+    assert d.update(True, 4.9) is None
+    assert d.update(True, 5.0) is True  # held 5 s
+    assert d.update(False, 6.0) is True  # a drop...
+    assert d.update(True, 7.0) is True  # ...shorter than 5 s: still charging
+    assert d.update(False, 8.0) is True
+    assert d.update(False, 13.0) is False  # held false 5 s
+    assert d.update(True, 14.0) is False  # a blip of charging: not yet
 
 
 @pytest.mark.parametrize("last,soc,want,cold", [(8.0, 69.0, ["swapped_partial"], True),
@@ -321,9 +387,10 @@ def test_a_cold_swap_is_judged_on_the_first_reading_after_a_restore(last, soc, w
     MUTATION: no cold rule -> red; drop the rise check -> the wobble ends ->
     red; '>' for '>=' on the rise -> 22.0 stays -> red; judge on any later
     frame -> the 69 % frame below closes the wobble case -> red."""
-    m = _mon()
+    m = _mon(prime=False)  # right after a start: the charging flag is unknown
     m.restore(lb.PHASE_LOW, last)
-    got = m.update(_power(soc), 0.0)
+    assert m.update(_power(soc), 0.0) == ["alarm"]  # flag unknown: not judged yet
+    got = m.update(_power(soc), 0.6)  # flag confirmed not charging: judged now
     if want is None:
         assert m.low and not {"swapped", "swapped_partial"} & set(got)
         assert m.update(_power(69.0), 3.0) == ["alarm"]  # only the first reading counts
@@ -335,12 +402,13 @@ def test_no_cold_swap_while_charging_or_outside_the_low_phase():
     """Charging at boot is the charging phase, and a restored charging phase
     unplugged above the trigger is interrupted -- neither is a cold swap.
     MUTATION: drop the `not charging` / phase condition -> red."""
-    m = _mon()
+    m = _mon(prime=False)
     m.restore(lb.PHASE_LOW, 8.0)
-    assert m.update(_power(69.0, charging=True), 0.0) == ["charging", "alarm"]
-    m2 = _mon()
+    assert _plug(m, _power(69.0, charging=True), 0.0) == ["charging", "alarm"]
+    m2 = _mon(prime=False)
     m2.restore(lb.PHASE_CHARGING, 8.0)
-    assert m2.update(_power(69.0), 0.0) == ["interrupted", "alarm"]
+    assert m2.update(_power(69.0), 0.0) == ["alarm"]  # unknown flag: still charging
+    assert m2.update(_power(69.0), 0.6) == ["interrupted", "alarm"]
 
 
 def test_a_hot_swap_is_not_reported_cold():
@@ -411,7 +479,8 @@ async def test_a_cold_swap_ends_a_restored_episode_end_to_end(tmp_path, monkeypa
 # -- __main__ (U157 keys) ---------------------------------------------------------------
 _FULL_LB = {"trigger_soc_pct": 20.0, "stop_soc_pct": 5.0, "cloud_alarm_period_s": 2.0,
             "charge_full_soc_pct": 100.0, "swap_resume_soc_pct": 80.0,
-            "swap_absent_min_s": 5.0, "cold_swap_min_rise_pct": 10.0}
+            "swap_absent_min_s": 5.0, "cold_swap_min_rise_pct": 10.0,
+            "plug_confirm_s": 5.0, "unplug_confirm_s": 5.0}
 
 
 @pytest.mark.parametrize("patch,rc", [
@@ -419,7 +488,8 @@ _FULL_LB = {"trigger_soc_pct": 20.0, "stop_soc_pct": 5.0, "cloud_alarm_period_s"
     ({"charge_full_soc_pct": 99.0, "swap_resume_soc_pct": 99.5}, 78),  # swap_resume above full
     ({"charge_full_soc_pct": 99.0}, 0),  # a chassis that tops out at 99 %
     ({"swap_absent_min_s": None}, 78), ({"cold_swap_min_rise_pct": None}, 78),
-    ({"cloud_alarm_period_s": float("nan")}, 78)])  # NaN passed `<= 0` until 2026-11-11
+    ({"cloud_alarm_period_s": float("nan")}, 78),  # NaN passed `<= 0` until 2026-11-11
+    ({"plug_confirm_s": None}, 78), ({"unplug_confirm_s": 0.0}, 78)])
 def test_main_refuses_without_the_u157_keys(monkeypatch, patch, rc):
     """EX_CONFIG 78 by key path, and the five values reach the wiring.
     MUTATION: drop either new key from the __main__ check, or the order check
@@ -459,8 +529,9 @@ def test_restore_rejects_an_unknown_phase_and_restarts_the_cadence():
     m = _mon()
     with pytest.raises(ValueError):
         m.restore("nap")
-    m.restore(lb.PHASE_CHARGING)
-    assert m.update(_power(50.0, charging=True), 0.0) == ["alarm"]  # no phase event, alarm at once
+    assert m.update(_power(19.0), 0.0) == ["low", "alarm"]  # a cadence is running
+    m.restore(lb.PHASE_LOW, 19.0)  # (production restores a fresh monitor; this pins the reset)
+    assert m.update(_power(19.0), 0.1) == ["alarm"]  # alarm at once, not 2 s after 0.0
 
 
 # -- the target ------------------------------------------------------------------------
@@ -543,7 +614,8 @@ async def test_renaming_into_a_dock_off_every_route_is_refused(geo, lat, lon, re
 # -- through the real P3 loop ------------------------------------------------------------
 LB = {"trigger_soc_pct": 20.0, "stop_soc_pct": 5.0, "cloud_alarm_period_s": 2.0,  # the rule
       "charge_full_soc_pct": 100.0, "swap_resume_soc_pct": 80.0,  # U157
-      "swap_absent_min_s": 5.0, "cold_swap_min_rise_pct": 10.0}  # U157, 2026-11-11
+      "swap_absent_min_s": 5.0, "cold_swap_min_rise_pct": 10.0,  # U157, 2026-11-11
+      "plug_confirm_s": 1.0, "unplug_confirm_s": 1.0}  # CD-1, short for the loop cases
 
 
 async def _feed(h, body, seconds):  # power frames at 2 Hz
@@ -893,12 +965,11 @@ async def test_a_link_loss_return_waits_for_the_episode(tmp_path, monkeypatch):
 async def test_a_retry_after_the_insert_does_not_send_a_second_return_task(
         tmp_path, monkeypatch):
     """The "low" handler failing AFTER the return task was inserted (here: the
-    held snapshot fails once) is rolled back and retried; the retry keeps the
-    live return task instead of inserting another, and the episode record
-    carries the current whole-percent soc (the cold-swap rise is measured from
-    it). MUTATION: drop the live-task check in _inject_return_task -> two lb-
-    rows -> red; drop the soc re-persist -> the record's soc stays None ->
-    red."""
+    held snapshot fails once) is rolled back: the task that frame inserted is
+    cancelled (no return task may drive without an episode behind it) and the
+    retry inserts the one live return task. The episode record then follows
+    the whole-percent soc. MUTATION: skip the orphan cancel -> two live lb-
+    rows -> red; drop the soc re-persist -> the record keeps 18 -> red."""
     calls = {"n": 0}
     real = lb.live_task_ids
 
@@ -914,13 +985,133 @@ async def test_a_retry_after_the_insert_does_not_send_a_second_return_task(
     try:
         await _feed(h, _power(18.0), 3.0)
         assert calls["n"] >= 2
-        lbs = [t for t in await _live_states(task_db) if t.startswith("lb-")]
-        assert len(lbs) == 1, lbs
+        st = await _live_states(task_db)
+        live = [t for t in st if t.startswith("lb-") and st[t] != "cancelled"]
+        assert len(live) == 1, st
         await _feed(h, _power(16.0), 1.5)  # no phase change: only the soc moved
         from xbrain.p3_task.dao.simple_daos import MemoryDAO
         async with aiosqlite.connect(task_db) as t:
             rec = lb.decode_episode(await MemoryDAO(t).get(lb.EPISODE_MEMORY_KEY))
         assert rec is not None and rec[3] == 16.0  # re-persisted on the whole-percent change
+    finally:
+        await stop_p3(stop, loop)
+
+
+# -- 2026-11-11 third audit -----------------------------------------------------------------
+def _return_row(task_id, state, seq, waypoint_id):  # an injected return task as P3 writes it
+    from xbrain.p3_task.dao.tasks_dao import TaskRow
+    return TaskRow(task_id=task_id, task_type="charge", state=state, priority=95, submit_seq=seq,
+                   mission_json=json.dumps({"source": "auto", "reason": "low_battery",
+                                            "params": {"waypoint_id": waypoint_id}}),
+                   total_steps=1, current_step=0, step_status_json="[]", created_ms=0,
+                   updated_ms=0, source="charge", trace_id="lowbatt-" + task_id,
+                   resume_policy="continue")
+
+
+@pytest.mark.asyncio
+async def test_the_low_battery_return_preempts_a_link_loss_return(tmp_path, monkeypatch):
+    """User ruling 2026-11-11: a link-loss return_home running when the battery
+    drops below 20 % is preempted by the return task (both 95) and waits in the
+    held set. MUTATION: no urgent_task_id from the wiring -> rh- keeps running
+    -> red."""
+    from xbrain.p3_task.runtime.main_wiring import STATE_LINK_TOPIC
+    h, stop, loop, task_db = await start_p3(
+        tmp_path, monkeypatch, geo_sql=[ROUTE_SQL, DOCK_ON, HOME],
+        route_membership_m=5.0, low_battery=LB)
+    try:
+        await _feed(h, _power(60.0), 1.5)
+        h.send(STATE_LINK_TOPIC, {"level": 3, "gw_start_mono": 100.0, "link_epoch": 2,
+                                  "disconnected_s": 1801.0})
+        await _feed(h, _power(60.0), 1.5)
+        rh = [t for t, st in (await _live_states(task_db)).items() if t.startswith("rh-")]
+        assert rh and (await _live_states(task_db))[rh[0]] == "running"
+        await _feed(h, _power(18.0), 2.5)
+        st = await _live_states(task_db)
+        assert st[rh[0]] == "suspended"
+        assert [t for t in st if t.startswith("lb-") and st[t] == "running"]
+    finally:
+        await stop_p3(stop, loop)
+
+
+@pytest.mark.asyncio
+async def test_a_reissue_waits_for_the_first_power_frame(tmp_path, monkeypatch):
+    """Audit 2026-11-11: the boot reissue was dispatched before any power frame
+    was judged. Now nothing is sent until a frame is in; at <= 5 % none is sent
+    (the stop latched). MUTATION: inject at boot -> an lb- row before any frame
+    -> red; ignore `stopped` -> a row at 4 % -> red."""
+    rows = [goto_row("lb-old", "running", 1, priority=95)]
+    await _seed_task_db(tmp_path, rows, lb.encode_episode(lb.PHASE_LOW, set(), "lb-old", 15.0))
+    h, stop, loop, task_db = await start_p3(
+        tmp_path, monkeypatch, geo_sql=[ROUTE_SQL, DOCK_ON, HOME],
+        route_membership_m=5.0, low_battery=LB)
+    try:
+        await asyncio.sleep(1.5)  # no power frame yet
+        st = await _live_states(task_db)
+        assert st["lb-old"] == "cancelled" and [t for t in st if t.startswith("lb-")] == ["lb-old"]
+        await _feed(h, _power(4.0), 2.0)  # the last 5 %
+        st = await _live_states(task_db)
+        assert [t for t in st if t.startswith("lb-")] == ["lb-old"]  # stopped: none sent
+    finally:
+        await stop_p3(stop, loop)
+
+
+@pytest.mark.asyncio
+async def test_a_restored_alarm_names_the_return_tasks_own_target(tmp_path, monkeypatch):
+    """Audit 2026-11-11: after a restart the alarm named a pose-less pick (the
+    oldest dock). It now names the live return task's own waypoint. MUTATION:
+    pick again without a pose -> the older far dock is named -> red."""
+    far = _wp("w-d0", "0号充电站", "dock", 35.0019, 135.00002)  # older id, on the route, farther
+    rows = [_return_row("lb-old", "pending", 1, "w-d1")]
+    await _seed_task_db(tmp_path, rows, lb.encode_episode(lb.PHASE_LOW, set(), "lb-old", 15.0))
+    h, stop, loop, task_db = await start_p3(
+        tmp_path, monkeypatch, geo_sql=[ROUTE_SQL, far, DOCK_ON, HOME],
+        route_membership_m=5.0, low_battery=LB)
+    try:
+        await _feed(h, _power(15.0), 2.0)
+        lows = [a for a in h.frames("event/alarm/charging") if a["detail"]["type"] == "low_battery"]
+        assert lows and lows[0]["detail"]["target_name"] == "1号充电站"
+    finally:
+        await stop_p3(stop, loop)
+
+
+@pytest.mark.asyncio
+async def test_a_persist_without_a_reading_keeps_the_recorded_soc(tmp_path, monkeypatch):
+    """Audit 2026-11-11: a persist before the first power frame wrote soc None
+    and erased the cold-swap baseline. MUTATION: write None when no reading ->
+    the record's soc is None -> red."""
+    from xbrain.p3_task.dao.simple_daos import MemoryDAO
+    from xbrain.p3_task.runtime.main_wiring import CMD_TASK_TOPIC
+    rows = [goto_row("t-q", "pending", 1), _return_row("lb-old", "pending", 2, "w-d1")]
+    await _seed_task_db(tmp_path, rows, lb.encode_episode(lb.PHASE_LOW, {"t-q"}, "lb-old", 15.0))
+    h, stop, loop, task_db = await start_p3(
+        tmp_path, monkeypatch, geo_sql=[ROUTE_SQL, DOCK_ON, HOME],
+        route_membership_m=5.0, low_battery=LB)
+    try:
+        h.send(CMD_TASK_TOPIC, {"cmd_id": "c-c", "action": "cancel", "source": "hmi",
+                                "task_id": "t-q"})  # releases t-q -> a persist, no frame yet
+        assert await _poll_state(task_db, "t-q", "cancelled")
+        await asyncio.sleep(0.5)
+        async with aiosqlite.connect(task_db) as t:
+            rec = lb.decode_episode(await MemoryDAO(t).get(lb.EPISODE_MEMORY_KEY))
+        assert rec is not None and rec[1] == set() and rec[3] == 15.0
+    finally:
+        await stop_p3(stop, loop)
+
+
+@pytest.mark.asyncio
+async def test_an_episode_starting_at_five_percent_preempts_not_parks(tmp_path, monkeypatch):
+    """Audit 2026-11-11: an episode that began at <= 5 % in one frame parked the
+    running task passive / low_battery, so it never resumed although the end
+    said auto_resume. It is now suspended yielding / preempted. MUTATION: park
+    every running task passive -> red."""
+    monkeypatch.setenv("XBRAIN_ROBOT_ID", "gj-test")  # the prone envelope needs a rid
+    h, stop, loop, task_db = await start_p3(
+        tmp_path, monkeypatch, rows=[goto_row("t-run", "ready", 1)],
+        geo_sql=[ROUTE_SQL, DOCK_ON, HOME], route_membership_m=5.0, low_battery=LB)
+    try:
+        assert await wait_for(lambda: route_ops(h))  # t-run running
+        await _feed(h, _power(4.0), 2.0)  # low and stop in one frame
+        assert (await task_state(task_db, "t-run")) == ("suspended", "yielding", "preempted")
     finally:
         await stop_p3(stop, loop)
 

@@ -1151,7 +1151,9 @@ async def _amain(stop_flag: dict, heartbeat_period_s: float,
                                                low_battery["charge_full_soc_pct"],
                                                low_battery["swap_resume_soc_pct"],
                                                low_battery["swap_absent_min_s"],
-                                               low_battery["cold_swap_min_rise_pct"])
+                                               low_battery["cold_swap_min_rise_pct"],
+                                               low_battery["plug_confirm_s"],
+                                               low_battery["unplug_confirm_s"])
                           if low_battery is not None else None)
             # The episode's facts: the target picked at "low", the task
             # injected, whether the next alarm is the first (P4 speaks once),
@@ -1170,9 +1172,13 @@ async def _amain(stop_flag: dict, heartbeat_period_s: float,
                 phase = lb_monitor.phase if lb_monitor is not None else lb.PHASE_IDLE
                 _soc = (state_cache.get("power") or {}).get("soc_pct")
                 # whole percent: the cold-swap rise is measured from this, and
-                # the loop re-persists on every whole-percent change
-                lb_ctx["soc"] = round(_soc) if isinstance(_soc, (int, float)) and not isinstance(
-                    _soc, bool) and _soc == _soc else None
+                # the loop re-persists on every whole-percent change. No
+                # reading (no frame yet after a start, or a NaN) keeps the last
+                # known value -- writing None there erased the baseline, and a
+                # second restart could then never judge a cold swap (audit
+                # 2026-11-11).
+                if isinstance(_soc, (int, float)) and not isinstance(_soc, bool) and _soc == _soc:
+                    lb_ctx["soc"] = round(_soc)
                 await lb_memory.put(lb.EPISODE_MEMORY_KEY,
                                     lb.encode_episode(phase, lb_ctx["held"], lb_ctx["task_id"],
                                                       lb_ctx["soc"]),
@@ -1187,6 +1193,24 @@ async def _amain(stop_flag: dict, heartbeat_period_s: float,
                     return None
                 row = await dao.fetch_by_id(lb_ctx["task_id"])
                 return None if row is None else row.state
+
+            async def _target_of_return_task() -> None:
+                """lb_ctx["target"] from the live return task's own waypoint, so
+                the alarm names where the robot is actually going -- after a
+                restart the pose is not known yet and a fresh pick would fall
+                back to the oldest dock (audit 2026-11-11)."""
+                row = await dao.fetch_by_id(lb_ctx["task_id"]) if lb_ctx["task_id"] else None
+                if row is None:
+                    return
+                try:
+                    wid = (json.loads(row.mission_json or "{}").get("params") or {}).get("waypoint_id")
+                except ValueError:
+                    return
+                for wtype, kind in (("dock", "dock"), ("home", "home")):
+                    for gid, name, la, lo in await lb.list_role_points(geo_conn, wtype):
+                        if gid == wid:
+                            lb_ctx["target"] = lb.Target(gid, name, kind, la, lo)
+                            return
 
             async def _inject_return_task(power: dict, pose, routes, member: float) -> None:
                 """Pick the dock / home and insert the return task (99 U146).
@@ -1294,7 +1318,8 @@ async def _amain(stop_flag: dict, heartbeat_period_s: float,
                     _emit_charging("alarm", "low battery, returning to charge", d)
                     lb_ctx["first"] = False  # P4 speaks the first one only
                 elif ev == "stop":
-                    susp = await lb.suspend_running_for_low_battery(dao, conn, _now_mono_ms())
+                    susp = await lb.suspend_running_for_low_battery(
+                        dao, conn, _now_mono_ms(), return_task_id=lb_ctx["task_id"])
                     if susp is not None:
                         await _make_publish(
                             state_pub, _emit_task_event, _publish_task_state,
@@ -1379,11 +1404,8 @@ async def _amain(stop_flag: dict, heartbeat_period_s: float,
                         lb_monitor.restore(_rec[0], _rec[3])
                         lb_ctx.update(held=set(_rec[1]), task_id=_rec[2], soc=_rec[3])
                         if _rec[0] == lb.PHASE_LOW:
-                            # the alarm names the target; no pose yet at boot,
-                            # so the same deterministic pick as a pose-less low
-                            lb_ctx["target"] = await lb.pick_target(
-                                geo_conn, None, await load_route_geoms(geo_conn),
-                                route_membership_m if route_membership_m is not None else 0.0)
+                            # the alarm names the return task's own target
+                            await _target_of_return_task()
                         _logger.warning("p3 boot: low-battery episode restored (phase %s, "
                                         "holding %s, task %s)", _rec[0],
                                         sorted(_rec[1]), _rec[2])
@@ -1429,6 +1451,15 @@ async def _amain(stop_flag: dict, heartbeat_period_s: float,
             # and inject a fresh return task, as a restart did before episodes
             # were persisted. A return task that already arrived (done) is not
             # re-sent: the robot is at the dock.
+            #
+            # The fresh task is NOT injected here but in the loop, once a power
+            # frame has been judged and the pose is known (audit 2026-11-11):
+            # injected at boot it was dispatched before the first frame -- at
+            # <= 5 % the robot was sent off before the stop could latch, after a
+            # power-off swap it drove before the cold swap ended the episode,
+            # and with no pose the pick fell back to the OLDEST dock, not the
+            # nearest. The dead one is cancelled now (cancelling moves nothing).
+            lb_reissue = {"pending": False}
             if lb_monitor is not None and lb_monitor.phase == lb.PHASE_LOW:
                 try:
                     _rs = await _return_task_state()
@@ -1440,13 +1471,9 @@ async def _amain(stop_flag: dict, heartbeat_period_s: float,
                                 state_pub, _emit_task_event, _publish_task_state,
                                 fetch_terminal=_fetch_terminal_facts)(
                                     _closed[0], _closed[1], _closed[2], "low_battery_reissued")
-                        await _inject_return_task(
-                            state_cache.get("power") or {}, None,
-                            await load_route_geoms(geo_conn),
-                            route_membership_m if route_membership_m is not None else 0.0)
-                        await _lb_persist()
-                        _logger.warning("p3 boot: return task %s was %s -> reissued as %s",
-                                        _old, _rs, lb_ctx["task_id"])
+                        lb_reissue["pending"] = True
+                        _logger.warning("p3 boot: return task %s was %s -> cancelled, a "
+                                        "fresh one follows the first power frame", _old, _rs)
                 except Exception as exc:      # noqa: BLE001
                     _logger.error("p3 boot: low-battery return reissue failed: %s", exc)
 
@@ -1659,6 +1686,10 @@ async def _amain(stop_flag: dict, heartbeat_period_s: float,
                         # back, so the next frame raises it again; the handlers
                         # are idempotent. A failed alarm is only logged.
                         _lb_snap = lb_monitor.snapshot()
+                        # the wiring's half of the frame, rolled back with the
+                        # monitor (audit 2026-11-11: monitor alone left a filled
+                        # held set and a live return task behind an idle monitor)
+                        _ctx_snap = dict(lb_ctx, held=set(lb_ctx["held"]))
                         try:
                             for _lev in lb_monitor.update(state_cache.get("power"),
                                                           now_mono_s):
@@ -1669,9 +1700,45 @@ async def _amain(stop_flag: dict, heartbeat_period_s: float,
                                         _logger.error("p3 low-battery alarm failed: %s", exc)
                                         continue
                                     lb_monitor.rollback(_lb_snap)
+                                    _new_tid, _n = lb_ctx["task_id"], lb_ctx["n"]
+                                    lb_ctx.clear()
+                                    lb_ctx.update(_ctx_snap)
+                                    # the id counter only moves forward: rolled back,
+                                    # the retry re-minted the same lb- id and hit the
+                                    # UNIQUE key on every frame after (caught by the test)
+                                    lb_ctx["n"] = _n
+                                    if _new_tid and _new_tid != _ctx_snap["task_id"]:
+                                        # a return task inserted by the failed frame
+                                        # would drive with no episode behind it
+                                        try:
+                                            await lb.close_low_battery_task(
+                                                dao, conn, _new_tid, _now_mono_ms())
+                                        except Exception as exc2:      # noqa: BLE001
+                                            _logger.error("p3 low-battery orphan %s not "
+                                                          "cancelled: %s", _new_tid, exc2)
                                     _logger.error("p3 low-battery %s failed, retried next "
                                                   "frame: %s", _lev, exc)
                                     break
+                            if (lb_reissue["pending"] and lb_monitor.phase == lb.PHASE_LOW
+                                    and isinstance((state_cache.get("power") or {}).get("soc_pct"),
+                                                   (int, float))
+                                    and start_from_pose(state_cache.get("pose")) is not None):
+                                # the deferred boot reissue: a frame judged (a cold
+                                # swap would have ended the episode, a <= 5 % stop
+                                # has latched), the pose known (nearest dock)
+                                lb_reissue["pending"] = False
+                                if not lb_monitor.stopped:
+                                    await _inject_return_task(
+                                        state_cache.get("power") or {},
+                                        start_from_pose(state_cache.get("pose")),
+                                        await load_route_geoms(geo_conn),
+                                        route_membership_m if route_membership_m is not None else 0.0)
+                                    await _lb_persist()
+                                    _logger.warning("p3 low battery: return task reissued as %s "
+                                                    "-> %s", lb_ctx["task_id"],
+                                                    lb_ctx["target"].name if lb_ctx["target"] else None)
+                            elif lb_reissue["pending"] and not lb_monitor.low:
+                                lb_reissue["pending"] = False  # the episode ended first
                             # the cold-swap rise is measured from the record's soc:
                             # keep it current while an episode lasts
                             _psoc = (state_cache.get("power") or {}).get("soc_pct")
@@ -1837,7 +1904,12 @@ async def _amain(stop_flag: dict, heartbeat_period_s: float,
                                 # 99 U157 second layer, off the chassis: charging
                                 # below full -> no preempted task resumes itself.
                                 resume_blocked=(low_battery is not None and lb.charging_below_full(
-                                    state_cache.get("power"), low_battery["charge_full_soc_pct"])))
+                                    state_cache.get("power"), low_battery["charge_full_soc_pct"],
+                                    lb_monitor.charging.stable if lb_monitor is not None else None)),
+                                # 99 U157 (2026-11-11): the low-battery return may
+                                # preempt an equal-priority link-loss return
+                                urgent_task_id=(lb_ctx["task_id"] if lb_monitor is not None
+                                                and lb_monitor.low else None))
                             # EX-2 RP-1 (15 S2.4.1): every ready -> running
                             # this tick made gets its geometry pushed. Driven
                             # off the tick's RETURN VALUE rather than from

@@ -187,7 +187,8 @@ def main(argv: Optional[list] = None) -> int:
         _lb = (_cfg.get("low_battery") or {}) if hasattr(_cfg, "get") else {}
         _lb_keys = ("trigger_soc_pct", "stop_soc_pct", "cloud_alarm_period_s",
                     "charge_full_soc_pct", "swap_resume_soc_pct",
-                    "swap_absent_min_s", "cold_swap_min_rise_pct")
+                    "swap_absent_min_s", "cold_swap_min_rise_pct",
+                    "plug_confirm_s", "unplug_confirm_s")
         for _lk in _lb_keys:
             _lv = _lb.get(_lk)
             # finite too: a .nan passed `<= 0` and silenced the alarm cadence

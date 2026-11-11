@@ -117,7 +117,8 @@ async def scheduler_tick(conn, dao, *, now_mono_ms: int,
                          list_route_ids=None,
                          now_wall_s: Optional[float] = None,
                          held: AbstractSet[str] = frozenset(),
-                         resume_blocked: bool = False
+                         resume_blocked: bool = False,
+                         urgent_task_id: Optional[str] = None
                          ) -> List[Tuple[str, str, str]]:
     """One scheduler pass. Returns the transitions made as
     (task_id, from_state, to_state). See module docstring.
@@ -140,7 +141,16 @@ async def scheduler_tick(conn, dao, *, now_mono_ms: int,
     yielding scan from resuming ANY preempted task this tick: the wiring sets
     it while the chassis reports charging below charge_full_soc_pct, episode
     record or not. Queued tasks are not affected by it (they are held only
-    through `held`). Default False for the plain-scheduler tests, as above."""
+    through `held`). Default False for the plain-scheduler tests, as above.
+
+    urgent_task_id (99 U157, user ruling 2026-11-11) names the one task that
+    may preempt a running task of EQUAL priority: the low-battery return task
+    (95) over a running link-loss return_home (also 95). Under the plain
+    strictly-greater rule it could not, and the robot kept driving to the home
+    point -- possibly far away -- while the alarm said it was returning to the
+    dock. A new priority slot would have meant a sixth value in the locked
+    common.priority.task key set, so the exception is named, not numbered.
+    None (the plain tests, and every tick without an episode) keeps the rule."""
     made: List[Tuple[str, str, str]] = []
 
     # -- phase 1: validate every pending task --
@@ -253,6 +263,13 @@ async def scheduler_tick(conn, dao, *, now_mono_ms: int,
         due_at[tid] = None if full is None else _not_before(full)
     ready.sort(key=lambda r: (-r[1], due_at[r[0]] is None,
                               due_at[r[0]] or 0.0, r[2]))
+    # 99 U157: the urgent task goes first among its own priority, so an older
+    # equal-priority ready task cannot stand between it and the preemption.
+    if urgent_task_id is not None and ready:
+        _u = [r for r in ready if r[0] == urgent_task_id and r[1] == ready[0][1]]
+        if _u:
+            ready.remove(_u[0])
+            ready.insert(0, _u[0])
 
     if not running:
         # 决策树第 1 步: 没有 running -> 取 ready 队列最高优先级启动.
@@ -266,9 +283,12 @@ async def scheduler_tick(conn, dao, *, now_mono_ms: int,
         # 15 S6.3 表第二行逐字"同优先级任务到达 -> 不抢占, 入队等待". 用 >=
         # 的话两条同优先级任务会互相抢占, 每拍换一次, 谁也跑不完 -- 而每次
         # 抢占都是一次合法的状态迁移, 没有任何东西会报错.
+        # 唯一例外 (99 U157, 用户 2026-11-11): urgent_task_id 指定的低电回充
+        # 任务可以抢占同为 95 的断链返航. 只有这一个 id, 被抢占的那条已在暂缓
+        # 名单里不会反抢, 所以不会出现上面说的每拍互换.
         cur_id, cur_prio, _cur_seq = running[0]
         top_id, top_prio, _top_seq = ready[0]
-        if top_prio > cur_prio:
+        if top_prio > cur_prio or (top_id == urgent_task_id and top_prio >= cur_prio):
             # 15 S7.2 挂起动作的四步, 顺序不可换:
             #   1. 停止运动 -- 2026-11-06 订正: 原写 cmd/motion/behavior=hold
             #      且"本期做不到". 11 S2.2 已于 2026-10-08 (99 U90) 把 p3_task
