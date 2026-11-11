@@ -191,6 +191,10 @@ def _goto(cmd_id: str, task_id: str, payload: Dict) -> Dict[str, Any]:
             # 的[计划级]路径 ID, 后者是后端[实际加载]的, 两者可能不同(路径被
             # 重录过). 解析要查 geo 库, 而网关读不到(平面隔离) -- 所以这里
             # 原样传, 由持有 geo.db 的 p3 去解析并在 state/task 回报实际值.
+            # 99 U164 (2026-11-11): p3 把它当作[沿哪条路径走]: waypoints[] 按序
+            # 串成一条线, 每段只沿这条路径规划 (route_push_runtime.
+            # plan_keypoints); 此前 p3 把带 route_id 的 goto 当巡逻, 整条路径
+            # 走一遍, waypoints 与 arrival_radius_m 从不被读.
             "route_id": payload.get("recorded_path_id"),
             # 业务字段进 params: 15 S5.10 的 mission_json 就是从 task.params
             # 建的, 它是"当初要求了什么"的不可变记录, 调度与审计都读它.
