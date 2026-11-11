@@ -103,7 +103,8 @@ body { margin: 0; overflow: hidden; background: var(--bg); color: var(--ink);
    Shape (user 2026-11-11): a battery -- a body with a narrower terminal nub on
    the right. Two clipped layers draw it: .battery-bar is the outline colour
    cut to the battery shape, .battery-inner sits 2px inside it with the same
-   shape (nub band 34%-66% of its height so the nub keeps a ~2px outline). The
+   shape. The nub is only slightly shorter than the body (user 2026-11-11:
+   12%-88% of the height outside, 13%-87% inside, ~2px outline kept). The
    fill is a percentage of the WHOLE inner width, nub included, and is clipped
    by the same shape -- so the nub fills last, only above ~93%, as on a real
    battery icon. The text is centred over the body, not the nub. */
@@ -113,12 +114,12 @@ body { margin: 0; overflow: hidden; background: var(--bg); color: var(--ink);
 .battery-label { color: #fff; font-weight: 700; font-size: 22px; letter-spacing: 1px; }
 .battery-bar { position: relative; display: inline-block; width: 150px; height: 44px;
   background: #9aa4b2;
-  clip-path: polygon(0 0, calc(100% - 10px) 0, calc(100% - 10px) 30%, 100% 30%,
-    100% 70%, calc(100% - 10px) 70%, calc(100% - 10px) 100%, 0 100%); }
+  clip-path: polygon(0 0, calc(100% - 10px) 0, calc(100% - 10px) 12%, 100% 12%,
+    100% 88%, calc(100% - 10px) 88%, calc(100% - 10px) 100%, 0 100%); }
 .battery-inner { position: absolute; left: 2px; top: 2px; right: 2px; bottom: 2px;
   background: #1b2230;
-  clip-path: polygon(0 0, calc(100% - 10px) 0, calc(100% - 10px) 34%, 100% 34%,
-    100% 66%, calc(100% - 10px) 66%, calc(100% - 10px) 100%, 0 100%); }
+  clip-path: polygon(0 0, calc(100% - 10px) 0, calc(100% - 10px) 13%, 100% 13%,
+    100% 87%, calc(100% - 10px) 87%, calc(100% - 10px) 100%, 0 100%); }
 .battery-fill { position: absolute; left: 0; top: 0; bottom: 0; width: 0; }
 .battery-text { position: absolute; left: 0; top: 0; bottom: 0; right: 10px;
   text-align: center; line-height: 40px; text-shadow: 0 1px 2px rgba(0,0,0,.8); }
