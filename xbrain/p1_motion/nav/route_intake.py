@@ -23,9 +23,13 @@ Assembly. Chunks of one cmd_id are collected by chunk.index; a chunk from a
 different cmd_id abandons the pending set (a new push supersedes an unfinished
 one; RG-3 keeps the LIVE mission untouched meanwhile). The set completes when
 all `total` indices are present; seq must then run 0..n-1 without gaps (a lost
-chunk shows as a seq gap even if chunk.total was mis-stated). RG-2: more than
-MAX_POINTS points is refused, not grown into. A re-sent chunk index replaces
-the earlier copy (Q3 reliable delivery may repeat a frame).
+chunk shows as a seq gap even if chunk.total was mis-stated). ~~RG-2: more
+than MAX_POINTS (5000) points is refused, not grown into~~ -- removed
+2026-11-11 (99 U163, user ruling: no point or length limit on navigation). A
+180 min recording is ~10800 points; the follower's per-tick cost does not grow
+with the route (rns/route.py searches an index window, RNS-N-4), so the cap
+bought nothing here and made long routes undrivable. A re-sent chunk index
+replaces the earlier copy (Q3 reliable delivery may repeat a frame).
 
 op == "clear" (20 S9.0.3 cancel): points may be empty and chunk may be absent;
 the result is a RouteClear the wiring turns into rns.cancel() -- IDLE, audit
@@ -54,8 +58,6 @@ from typing import Any, Dict, List, Optional, Tuple, Union
 
 from xbrain.p1_motion.path.local_frame import LocalFrame, LocalFrameError
 
-#: RG-2 preallocation cap (11 S3.5A / S14.2): refuse above, never grow.
-MAX_POINTS = 5000
 #: 11 S3.5B dir_sign note: pingpong may run -1; oneway / closed are +1.
 LOOP_MODES = ("oneway", "closed", "pingpong")
 OP_SET = "set"
@@ -214,9 +216,6 @@ class RouteAssembler:
         raw_points = body.get("points")
         if not isinstance(raw_points, list):
             raise RouteIntakeError("points must be an array")
-        if len(raw_points) > MAX_POINTS:
-            raise RouteIntakeError("chunk carries %d points > %d (RG-2)"
-                                   % (len(raw_points), MAX_POINTS))
         pts = [_parse_point(p, i) for i, p in enumerate(raw_points)]
         # --- assembly ---
         if self._pending_cmd != cmd_id:
@@ -228,9 +227,6 @@ class RouteAssembler:
             raise RouteIntakeError(
                 "chunk of cmd_id %s disagrees with its earlier chunks" % cmd_id)
         self._chunks[index] = pts
-        n = sum(len(c) for c in self._chunks.values())
-        if n > MAX_POINTS:
-            raise RouteIntakeError("route exceeds %d points (RG-2)" % MAX_POINTS)
         if len(self._chunks) < total:
             return None
         ordered: List[Tuple[float, float, int, float]] = []

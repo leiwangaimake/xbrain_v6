@@ -18,7 +18,6 @@ from __future__ import annotations
 import pytest
 
 from xbrain.p1_motion.nav.route_intake import (
-    MAX_POINTS,
     RouteAssembler,
     RouteClear,
     RouteIntakeError,
@@ -115,11 +114,14 @@ def test_off_contract_frames_are_refused(mutate):
     assert a.rejected == 1
 
 
-def test_rg2_cap_refuses_oversize():
+def test_a_long_route_is_accepted_whole():
+    """99 U163 (user 2026-11-11): no point limit on navigation -- a 180 min
+    recording is ~10800 points. MUTATION: put a point cap back -> refused ->
+    red; truncate -> fewer points -> red."""
     a = _asm()
-    pts = [_pt(i, dlat=i * 1e-6) for i in range(MAX_POINTS + 1)]
-    with pytest.raises(RouteIntakeError):
-        a.accept(_body(pts))
+    pts = [_pt(i, dlat=i * 1e-6) for i in range(12000)]
+    route = a.accept(_body(pts))
+    assert route is not None and len(route.points_xy) == 12000
 
 
 def test_absent_op_means_set():
@@ -135,14 +137,15 @@ def test_disagreeing_chunk_meta_is_refused():
         a.accept(_body([_pt(1)], index=1, total=2, rev=8))
 
 
-def test_rg2_cap_counts_across_chunks():
-    """mutant: drop the running-total check -> two under-cap chunks assemble
-    into an over-cap polyline -> red."""
+def test_chunks_of_a_long_route_assemble_whole():
+    """99 U163: ~~the running total across chunks was capped at 5000 (RG-2)~~.
+    Two chunks totalling 5001 points now assemble into one 5001-point route,
+    seq continuous. MUTATION: put the running-total cap back -> refused -> red."""
     a = _asm()
-    a.accept(_body([_pt(i, dlat=i * 1e-6) for i in range(3000)], index=0, total=2))
-    with pytest.raises(RouteIntakeError):
-        a.accept(_body([_pt(3000 + i, dlat=(3000 + i) * 1e-6) for i in range(2001)],
-                       index=1, total=2))
+    assert a.accept(_body([_pt(i, dlat=i * 1e-6) for i in range(3000)], index=0, total=2)) is None
+    route = a.accept(_body([_pt(3000 + i, dlat=(3000 + i) * 1e-6) for i in range(2001)],
+                           index=1, total=2))
+    assert route is not None and len(route.points_xy) == 5001
 
 
 def test_malformed_frame_of_another_push_keeps_the_pending_set():
