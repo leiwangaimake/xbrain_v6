@@ -94,6 +94,9 @@ rtk_loss:
 #   的任务, 以及低电开始时已在排队 / 定时的任务, 只有结束后才自动恢复 / 派发
 #   (人工"继续"不受限). 换电后 soc_pct 在 trigger 与 swap_resume 之间: 告警结束,
 #   被打断的任务等人工"继续". 底盘最高只报到 99 % 时把 charge_full_soc_pct 调低.
+#   另: 底盘报告充电且 soc_pct < charge_full_soc_pct 时, 不论有无低电记录, 被抢占的
+#   任务都不自动恢复; P3 从记录恢复出低电阶段后首个 soc_pct >= trigger_soc_pct 且
+#   未充电, 按关机期间换电 (冷换电) 分档结束 (99 U157 补齐 2026-11-11).
 #   缺失 / null / <= 0, 或不满足 stop < trigger < swap_resume <= charge_full <= 100
 #   时 p3 拒绝启动 (EX_CONFIG 78).
 low_battery:
