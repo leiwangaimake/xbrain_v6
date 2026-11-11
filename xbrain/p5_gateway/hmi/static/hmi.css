@@ -93,41 +93,33 @@ body { margin: 0; overflow: hidden; background: var(--bg); color: var(--ink);
 .chassis-lock-btn.unlocked { background: #10a83c; border-color: #34d05f; cursor: default; }
 /* Battery gauges (99 U160): two slots A / B after the chassis-lock button.
    The A / B label uses the ESTOP label's font (white, 22px bold; user
-   2026-11-11, no "电池" title). Each bar is the ESTOP button's height; inside
-   it a present pack alternates percentage (5 s) and temperature (2 s), the
-   temperature in the same white text (the contract defines no temperature
-   limit, so no warning colour is invented for it). The fill width is the
-   level; its colour is the user's rule: >= 50 green (the same emerald as the
-   unlocked button), 20-49 yellow, < 20 red, also while the temperature is
-   showing. Absent = grey stripes, unknown = plain grey; neither draws a fill.
-   Shape (user 2026-11-11): a battery -- a body with a narrower terminal nub on
-   the right. Two clipped layers draw it: .battery-bar is the outline colour
-   cut to the battery shape, .battery-inner sits 2px inside it with the same
-   shape. The nub is only slightly shorter than the body (user 2026-11-11:
-   12%-88% of the height outside, 13%-87% inside, ~2px outline kept). The
-   fill is a percentage of the WHOLE inner width, nub included, and is clipped
-   by the same shape -- so the nub fills last, only above ~93%, as on a real
-   battery icon. The text is centred over the body, not the nub. */
+   2026-11-11, no "电池" title). Inside the gauge a present pack alternates
+   percentage (5 s) and temperature (2 s) in white text (the contract defines
+   no temperature limit, so no warning colour is invented for it).
+   Look (user 2026-11-11, from a reference icon): an inline SVG battery -- a
+   thick rounded outline, a rounded fill bar inset with a gap, and a rounded
+   terminal nub on the right. The OUTLINE, the nub and the fill all take the
+   level colour (the cell's `color`, read as currentColor): >= 50 green (the
+   same emerald as the unlocked button), 20-49 yellow, < 20 red. The nub still
+   counts toward the percentage (user, earlier the same day): hmi.js
+   renderBattery spreads the level over body + nub, so the nub fills last.
+   Absent = grey dashed outline, unknown = grey outline; neither draws a fill.
+   The SVG is the ESTOP button's height (44px). */
 .battery-box { display: flex; align-items: center; gap: 10px; margin-left: 12px;
   color: #fff; font-weight: 700; font-size: 22px; }
-.battery-cell { display: flex; align-items: center; gap: 6px; }
+.battery-cell { display: flex; align-items: center; gap: 6px; color: #8a93a3; }
 .battery-label { color: #fff; font-weight: 700; font-size: 22px; letter-spacing: 1px; }
-.battery-bar { position: relative; display: inline-block; width: 150px; height: 44px;
-  background: #9aa4b2;
-  clip-path: polygon(0 0, calc(100% - 10px) 0, calc(100% - 10px) 12%, 100% 12%,
-    100% 88%, calc(100% - 10px) 88%, calc(100% - 10px) 100%, 0 100%); }
-.battery-inner { position: absolute; left: 2px; top: 2px; right: 2px; bottom: 2px;
-  background: #1b2230;
-  clip-path: polygon(0 0, calc(100% - 10px) 0, calc(100% - 10px) 13%, 100% 13%,
-    100% 87%, calc(100% - 10px) 87%, calc(100% - 10px) 100%, 0 100%); }
-.battery-fill { position: absolute; left: 0; top: 0; bottom: 0; width: 0; }
-.battery-text { position: absolute; left: 0; top: 0; bottom: 0; right: 10px;
-  text-align: center; line-height: 40px; text-shadow: 0 1px 2px rgba(0,0,0,.8); }
-.battery-cell.ok   .battery-fill { background: #10a83c; }
-.battery-cell.warn .battery-fill { background: #e6b800; }
-.battery-cell.low  .battery-fill { background: #d01818; }
-.battery-cell.absent .battery-inner { background: repeating-linear-gradient(45deg,
-  #3a4150 0 8px, #2a303c 8px 16px); }
+.battery-bar { position: relative; display: inline-block; width: 150px; height: 44px; }
+.battery-svg { position: absolute; inset: 0; width: 150px; height: 44px; overflow: visible; }
+.bat-frame { fill: none; stroke: currentColor; stroke-width: 3.5; }
+.bat-nub { fill: none; stroke: currentColor; stroke-width: 2.5; }
+.bat-fill, .bat-nubfill { fill: currentColor; }
+.battery-text { position: absolute; left: 0; top: 0; bottom: 0; right: 16px; color: #fff;
+  text-align: center; line-height: 44px; text-shadow: 0 1px 2px rgba(0,0,0,.85); }
+.battery-cell.ok   { color: #10a83c; }
+.battery-cell.warn { color: #e6b800; }
+.battery-cell.low  { color: #e02020; }
+.battery-cell.absent .bat-frame { stroke-dasharray: 6 4; }
 .battery-cell.absent .battery-text,
 .battery-cell.unknown .battery-text { color: #c8ccd4; }
 .chassis-lock-btn.unknown,
