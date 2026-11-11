@@ -67,7 +67,8 @@ async def rt():
     fence = await _open(FENCE_DB_STATEMENTS)
     runtime = TeachRuntime(task, geo, fence, boot_id="b0",
                            sample_hz=1.0, min_dist_m=0.5,  # common.recording (99 U132)
-                           snap_max_age_ms=8000)  # p3_task.yaml value
+                           snap_max_age_ms=8000,  # p3_task.yaml value
+                           record_duration_s=10800)  # 99 U162 configured
     # Healthy caches by default; the missing-source case clears them.
     runtime.update_pose({"lat": _LAT, "lon": _LON, "fix_type": "rtk_fixed",
                          "heading_rad": 0.0, "heading_valid": True,
@@ -187,7 +188,8 @@ async def test_the_configured_spacing_decides_which_points_are_kept():
     kept. MUTATION: keep a 0.5 m constant in code -> 1.5 m samples kept -> red."""
     task, geo, fence = (await _open(ALL_DDL_STATEMENTS), await _open(GEO_DB_STATEMENTS),
                         await _open(FENCE_DB_STATEMENTS))
-    rt2 = TeachRuntime(task, geo, fence, boot_id="b0", sample_hz=1.0, min_dist_m=2.0)
+    rt2 = TeachRuntime(task, geo, fence, boot_id="b0", sample_hz=1.0, min_dist_m=2.0,
+                       record_duration_s=10800)
     rt2.update_health({"allow_motion": True})
     rt2.update_robot({"hes": False, "estop_path": "up"})
     rt2.update_power({"soc_pct": 80.0})
@@ -208,7 +210,15 @@ async def test_start_refuses_when_the_sampling_pair_is_not_configured():
     rt2 = TeachRuntime(task, geo, fence, boot_id="b0", sample_hz=None, min_dist_m=None)
     ack = await rt2.handle(_cmd("start", start={"kind": "route"}), now_mono_s=100.0, now_ms=1)
     assert ack["result"] == "rejected" and ack["detail"]["reason"] == "recording_config_missing"
-    assert ack["detail"]["missing"] == ["teach.sample_hz", "teach.min_dist_m"]
+    # 99 U162: the recording duration is refused by key name the same way.
+    assert ack["detail"]["missing"] == ["teach.sample_hz", "teach.min_dist_m",
+                                        "teach.record_duration_s"]
+    # ... and alone: a wiring with the sampling pair but no duration refuses
+    # too (MUTATION: drop the record_duration_s check -> accepted -> red).
+    rt3 = TeachRuntime(task, geo, fence, boot_id="b0", sample_hz=1.0, min_dist_m=0.5)
+    ack = await rt3.handle(_cmd("start", start={"kind": "route"}), now_mono_s=100.0, now_ms=1)
+    assert ack["result"] == "rejected" and ack["detail"]["reason"] == "recording_config_missing"
+    assert ack["detail"]["missing"] == ["teach.record_duration_s"]
     for c in (task, geo, fence):
         await c.close()
 
@@ -651,9 +661,10 @@ async def test_session_expires_at_its_deadline(rt):
     end the session early or extend it."""
     sid = await _start(rt)
     await _drive(rt, sid, metres=2.0, t0=101.0, count=2)
-    assert rt.expire(500.0) is None            # well inside 1800 s
-    assert rt.expire(100.0 + 1800.0) == "max_duration"
-    assert rt.teach_state_payload(2000.0)["session"]["state"] == "finalizing"
+    assert rt.expire(100.0 + 1800.0) is None   # the old 30 min is no limit (99 U162)
+    assert rt.expire(100.0 + 10799.0) is None  # still inside the configured 10800 s
+    assert rt.expire(100.0 + 10800.0) == "max_duration"
+    assert rt.teach_state_payload(11000.0)["session"]["state"] == "finalizing"
 
 
 @pytest.mark.asyncio

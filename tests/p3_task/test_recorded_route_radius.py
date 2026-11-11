@@ -136,7 +136,8 @@ def test_main_refuses_to_start_without_the_radius(monkeypatch, route, rc):
     from xbrain.p3_task import __main__ as p3main  # unit under test
 
     cfg = {"geo": {"enu_origin": {"lat": 31.0, "lon": 121.0, "alt": 0.0}},  # minimal resolved config
-           "teach": {"snap_max_age_ms": 8000, "min_dist_m": 0.5, "sample_hz": 1.0},  # U132 pair
+           "teach": {"snap_max_age_ms": 8000, "min_dist_m": 0.5, "sample_hz": 1.0,
+                     "record_duration_s": 10800},  # U132 pair
            "route": route,  # a resolved p3 config
            "rtk_loss": {"lost_sustain_s": 1.0, "recover_sustain_s": 2.0},  # 99 U142 pair
            "low_battery": {"trigger_soc_pct": 20.0, "stop_soc_pct": 5.0,

@@ -105,7 +105,8 @@ class TeachRuntime:
                  sample_hz: Optional[float],
                  min_dist_m: Optional[float],
                  snap_max_age_ms: Optional[int] = None,
-                 route_membership_m: Optional[float] = None) -> None:
+                 route_membership_m: Optional[float] = None,
+                 record_duration_s: Optional[float] = None) -> None:
         self._task_conn = task_conn
         # 99 U146: a 充电桩 / 充电站 point must lie within this of a route
         # (common.geo.route_membership_m); None = tests of the teach path alone.
@@ -115,6 +116,10 @@ class TeachRuntime:
         # (a wiring that was not given them) refuses every start by key name.
         self._sample_hz = sample_hz
         self._min_dist_m = min_dist_m
+        # 99 U162: how long a recording may run (p3_task.yaml
+        # teach.record_duration_s = common.recording.session_timeout_s). The
+        # ONLY recording limit; no default -- None refuses every start by key.
+        self._record_duration_s = record_duration_s
         # 18 PS-6 teach.snap_max_age_ms (p3_task.yaml, 15 S12): the oldest a
         # mark_once pose_snap may be. None = not configured, and every capture
         # that carries a snapshot is then refused by name -- never defaulted.
@@ -273,11 +278,9 @@ class TeachRuntime:
         self._sync_stats()
         if kept:
             await self._persist_point(sample, now_ms)
-        if self._recorder.point_count >= self._recorder.max_points:
-            # S12A.6: reaching max_points auto-finishes with a warn rather than
-            # silently dropping every later point.
-            if "max_points" not in self._session.warn:
-                self._session.warn.append("max_points")
+        # ~~max_points warn~~ -- removed 2026-11-11 (99 U162): it only
+        # stopped storing points (the contract said auto-finish), and the user
+        # ruled the configured duration the ONLY recording limit.
         return kept
 
     async def _persist_point(self, sample: PoseSample, now_ms: int) -> None:
@@ -428,13 +431,16 @@ class TeachRuntime:
                      running_task_types: Tuple[str, ...]) -> Dict[str, Any]:
         # checked first: a process that cannot record must say so whatever
         # the live state is
-        if self._sample_hz is None or self._min_dist_m is None:
-            # 99 U132: never fall back to a number written here.
+        if (self._sample_hz is None or self._min_dist_m is None
+                or self._record_duration_s is None):
+            # 99 U132 / U162: never fall back to a number written here.
             return teach_ack(
                 cmd.cmd_id, "rejected", E_TEACH_STATE,
                 {"reason": "recording_config_missing",
                  "missing": [k for k, v in (("teach.sample_hz", self._sample_hz),
-                                            ("teach.min_dist_m", self._min_dist_m))
+                                            ("teach.min_dist_m", self._min_dist_m),
+                                            ("teach.record_duration_s",
+                                             self._record_duration_s))
                              if v is None]})
         name = cmd.start.get("name") or ""
         if name:
@@ -460,9 +466,9 @@ class TeachRuntime:
             return teach_ack(cmd.cmd_id, "rejected", result.code,
                              result.detail or {"reason": result.reason})
         limits, applied = clamp_limits(cmd.start["sample"],
-                                       cmd.start["max_duration_s"],
                                        sample_hz=self._sample_hz,
-                                       min_dist_m=self._min_dist_m)
+                                       min_dist_m=self._min_dist_m,
+                                       max_duration_s=self._record_duration_s)
         limits.require_fix = cmd.start["require_fix"]
         session_id = "ts-%s-%04d" % (self._boot_id, len(self._acks) + 1)
         self._session = TeachSession(
@@ -478,8 +484,7 @@ class TeachRuntime:
         self._session.state = "recording"
         self._recorder = Recorder(dedup_min_dist_m=limits.dedup_min_dist_m,
                                   sample_hz=limits.sample_hz,
-                                  require_fix=limits.require_fix,
-                                  max_points=limits.max_points)
+                                  require_fix=limits.require_fix)
         self._seq = 0
         return teach_ack(cmd.cmd_id, "accepted", "OK",
                          {"session_id": session_id, "state": "recording",
@@ -816,7 +821,6 @@ class TeachRuntime:
                         "teleop_age_ms": None},
             "warn": list(s.warn),
             "limits": {"max_duration_s": s.limits.max_duration_s,
-                       "max_points": s.limits.max_points,
                        "finalize_timeout_s": s.limits.finalize_timeout_s},
         }
 

@@ -425,7 +425,12 @@ common:
     # (keeps RTK points from piling up while the robot stands or creeps).
     # The U42 value. Read by P3 via p3_task.yaml teach.min_dist_m. > 0.
     min_dist_m: 0.5
-    session_timeout_s: null
+    # 99 U162 (user ruling 2026-11-11): how long one route / fence recording
+    # may run, seconds; at the end the named recording is saved as if the
+    # operator had said 退出录制. The ONLY recording limit (no point cap).
+    # 10800 = 180 min: the customer's routes are ~7 km, recorded at 0.5 m/s.
+    # Read by P3 via p3_task.yaml teach.record_duration_s. > 0.
+    session_timeout_s: 10800
     # 99 U132: the sample timer of the same U42 rule (one try per second).
     # Read by P3 via p3_task.yaml teach.sample_hz. > 0.
     sample_hz: 1.0

@@ -159,13 +159,15 @@ def main(argv: Optional[list] = None) -> int:
         # 99 U132: the recording sampling pair (common.recording.min_dist_m /
         # sample_hz via teach.*). Refused by key path rather than recorded at
         # a rate or spacing nobody configured.
-        for _tk in ("min_dist_m", "sample_hz"):
+        # 99 U162: + record_duration_s, the recording's only limit
+        # (common.recording.session_timeout_s), refused the same way.
+        for _tk in ("min_dist_m", "sample_hz", "record_duration_s"):
             _tv = _teach.get(_tk)
             if (isinstance(_tv, bool) or not isinstance(_tv, (int, float))
                     or _tv <= 0.0):
                 _logger.error(
                     "p3_task config: teach.%s=%r must be a positive number "
-                    "(99 U132 recording sampling)", _tk, _tv)
+                    "(99 U132 / U162 recording)", _tk, _tv)
                 return 78
         # 99 U142 / 11 S3.3.3: how long single / no_fix must last before the
         # running task is suspended and the alarm raised, and how long a usable
@@ -218,6 +220,7 @@ def main(argv: Optional[list] = None) -> int:
             route_membership_m=float(_member),
             teach_sample_hz=float(_teach["sample_hz"]),
             teach_min_dist_m=float(_teach["min_dist_m"]),
+            teach_record_duration_s=float(_teach["record_duration_s"]),
             rtk_lost_sustain_s=float(_rtk["lost_sustain_s"]),
             rtk_recover_sustain_s=float(_rtk["recover_sustain_s"]),
             low_battery={k: float(_lb[k]) for k in _lb_keys})

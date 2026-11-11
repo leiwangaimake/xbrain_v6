@@ -76,9 +76,12 @@ _STATELESS_ACTIONS = frozenset({"query", "takeover"})
 #: 0.5 m dedup") used to be constants here too; since 99 U132 they come from
 #: common.recording (p3_task.yaml teach.sample_hz / teach.min_dist_m) and are
 #: injected -- a value written in code is the "代码写死" the user ruled out.
-DEFAULT_MAX_POINTS = 2000
-DEFAULT_MAX_DURATION_S = 1800          # CMD-17
-MAX_DURATION_CAP_S = 7200
+# ~~DEFAULT_MAX_POINTS = 2000 / DEFAULT_MAX_DURATION_S = 1800 (CMD-17) /
+# MAX_DURATION_CAP_S = 7200~~ -- removed 2026-11-11 (99 U162, user ruling):
+# a recording is limited by ONE rule only, its configured duration
+# (common.recording.session_timeout_s via p3_task.yaml
+# teach.record_duration_s, injected; 10800 s = 180 min, for the customer's
+# ~7 km routes at 0.5 m/s). No point cap, no 2 h ceiling, no code default.
 DEFAULT_REQUIRE_FIX = "rtk_fixed"
 DEFAULT_FINALIZE_TIMEOUT_S = 600
 #: Below this SoC arming is refused (S12A.6 teach_min_soc). This is a policy
@@ -103,12 +106,12 @@ class TeachStateError(Exception):
 class SessionLimits:
     """Per-session limits, clamped at start (S12A.4: an out-of-range value is
     clamped and REPORTED in the ack detail, never silently taken).
-    sample_hz / dedup_min_dist_m have no default (99 U132): the caller passes
-    the configured values."""
+    sample_hz / dedup_min_dist_m have no default (99 U132), and neither has
+    max_duration_s (99 U162): the caller passes the configured values. There
+    is no point cap any more -- the duration is the only limit."""
     sample_hz: float
     dedup_min_dist_m: float
-    max_duration_s: float = DEFAULT_MAX_DURATION_S
-    max_points: int = DEFAULT_MAX_POINTS
+    max_duration_s: float
     finalize_timeout_s: float = DEFAULT_FINALIZE_TIMEOUT_S
     require_fix: str = DEFAULT_REQUIRE_FIX
 
@@ -245,10 +248,10 @@ def check_arming(inp: ArmingInputs) -> ArmingResult:
     return ArmingResult(True, "OK", "", None, tuple(warn))
 
 
-def clamp_limits(raw: Optional[Dict[str, Any]],
-                 max_duration_s: Optional[float], *,
+def clamp_limits(raw: Optional[Dict[str, Any]], *,
                  sample_hz: float,
-                 min_dist_m: float) -> Tuple[SessionLimits, Dict[str, Any]]:
+                 min_dist_m: float,
+                 max_duration_s: float) -> Tuple[SessionLimits, Dict[str, Any]]:
     """Build the per-session limits from start.sample, clamping out-of-range
     values and reporting what was applied (S12A.4: "越界值被钳到合法区间并在 ack
     的 detail 中回报").
@@ -260,7 +263,11 @@ def clamp_limits(raw: Optional[Dict[str, Any]],
     raw = raw or {}
     # the configured U42 pair (99 U132) is the base; start.sample may still
     # override per session, clamped and reported below
-    limits = SessionLimits(sample_hz=sample_hz, dedup_min_dist_m=min_dist_m)
+    # max_duration_s is the configured one (99 U162) and is NOT taken from
+    # the start command: "按配置的时间落地". ~~start.max_duration_s override,
+    # capped at 7200 s~~ -- superseded 2026-11-11.
+    limits = SessionLimits(sample_hz=sample_hz, dedup_min_dist_m=min_dist_m,
+                           max_duration_s=float(max_duration_s))
     hz = raw.get("min_interval_ms")
     if isinstance(raw.get("sample_hz"), (int, float)):
         # 0.2 .. 5 Hz. Below 0.2 the route is a set of disconnected guesses;
@@ -274,12 +281,9 @@ def clamp_limits(raw: Optional[Dict[str, Any]],
     if isinstance(raw.get("min_dist_m"), (int, float)):
         limits.dedup_min_dist_m = min(10.0, max(0.05,
                                                 float(raw["min_dist_m"])))
-    if isinstance(max_duration_s, (int, float)) and max_duration_s > 0:
-        limits.max_duration_s = min(MAX_DURATION_CAP_S, float(max_duration_s))
     applied = {"sample_hz": limits.sample_hz,
                "dedup_min_dist_m": limits.dedup_min_dist_m,
-               "max_duration_s": limits.max_duration_s,
-               "max_points": limits.max_points}
+               "max_duration_s": limits.max_duration_s}
     return limits, applied
 
 

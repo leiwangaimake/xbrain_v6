@@ -499,7 +499,8 @@ def test_main_refuses_without_the_u157_keys(monkeypatch, patch, rc):
     import xbrain.p3_task.runtime.main_wiring as mw  # the wiring main calls
     from xbrain.p3_task import __main__ as p3main  # unit under test
     cfg = {"geo": {"enu_origin": {"lat": 31.0, "lon": 121.0, "alt": 0.0}},  # minimal resolved config
-           "teach": {"snap_max_age_ms": 8000, "min_dist_m": 0.5, "sample_hz": 1.0},
+           "teach": {"snap_max_age_ms": 8000, "min_dist_m": 0.5, "sample_hz": 1.0,
+                     "record_duration_s": 10800},
            "route": {"recorded_arrive_radius_m": 1.0, "membership_m": 5.0},
            "rtk_loss": {"lost_sustain_s": 1.0, "recover_sustain_s": 2.0},
            "low_battery": dict(_FULL_LB, **patch)}

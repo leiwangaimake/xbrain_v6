@@ -53,6 +53,11 @@ teach:
   #   代码里没有缺省值 (CLAUDE.md 3.1 同一纪律).
   min_dist_m: ${common.recording.min_dist_m}
   sample_hz: ${common.recording.sample_hz}
+  #   99 U162: 一次录制最长多久 (s), 真源 common.recording.session_timeout_s;
+  #   到时按开始时的名字自动保存. 录制唯一的限制 (不再有点数上限).
+  #   键名不能用 session_timeout_s / max_duration_s (10 S5.4.5 别名黑名单).
+  #   缺失 / null / <= 0 时 p3 拒绝启动 (EX_CONFIG 78).
+  record_duration_s: ${common.recording.session_timeout_s}
 
 # -- 路径推送 (取值, 非定义) ------------------------------------------------
 #   示教录制的路径是模式 B 密集折线, 没有逐点到点半径; 15 S2.4.3 规定取

@@ -142,6 +142,7 @@ def run_voice_loop_wiring(stop_flag: dict,
                           route_membership_m: Optional[float] = None,
                           teach_sample_hz: Optional[float] = None,
                           teach_min_dist_m: Optional[float] = None,
+                          teach_record_duration_s: Optional[float] = None,
                           rtk_lost_sustain_s: Optional[float] = None,
                           rtk_recover_sustain_s: Optional[float] = None,
                           low_battery: Optional[Dict[str, float]] = None) -> int:
@@ -168,7 +169,9 @@ def run_voice_loop_wiring(stop_flag: dict,
     teach_sample_hz / teach_min_dist_m are p3_task.yaml teach.sample_hz /
     teach.min_dist_m (= common.recording.*, 99 U132): the S12A.6 sampling
     pair. None (tests) refuses every recording start by key name; the
-    production __main__ refuses to start without them.
+    production __main__ refuses to start without them. teach_record_duration_s
+    is teach.record_duration_s (= common.recording.session_timeout_s, 99 U162),
+    the recording's only limit, handled the same way.
 
     rtk_lost_sustain_s / rtk_recover_sustain_s are p3_task.yaml rtk_loss.*
     (11 S3.3.3, 99 U142): how long single / no_fix must last before the task
@@ -187,6 +190,7 @@ def run_voice_loop_wiring(stop_flag: dict,
                recorded_arrive_radius_m, route_membership_m,
                teach_sample_hz=teach_sample_hz,
                teach_min_dist_m=teach_min_dist_m,
+               teach_record_duration_s=teach_record_duration_s,
                rtk_lost_sustain_s=rtk_lost_sustain_s,
                rtk_recover_sustain_s=rtk_recover_sustain_s,
                low_battery=low_battery))
@@ -201,6 +205,7 @@ async def _amain(stop_flag: dict, heartbeat_period_s: float,
                  route_membership_m: Optional[float] = None,
                  teach_sample_hz: Optional[float] = None,
                  teach_min_dist_m: Optional[float] = None,
+                 teach_record_duration_s: Optional[float] = None,
                  rtk_lost_sustain_s: Optional[float] = None,
                  rtk_recover_sustain_s: Optional[float] = None,
                  low_battery: Optional[Dict[str, float]] = None) -> int:
@@ -728,6 +733,7 @@ async def _amain(stop_flag: dict, heartbeat_period_s: float,
                                  # 99 U132: the configured sampling pair
                                  sample_hz=teach_sample_hz,
                                  min_dist_m=teach_min_dist_m,
+                                 record_duration_s=teach_record_duration_s,
                                  snap_max_age_ms=teach_snap_max_age_ms,
                                  route_membership_m=route_membership_m)  # 99 U146
             if teach_snap_max_age_ms is None:

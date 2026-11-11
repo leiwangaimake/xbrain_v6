@@ -62,7 +62,8 @@ async def rt():
     task, geo, fence = (await _open(ALL_DDL_STATEMENTS), await _open(GEO_DB_STATEMENTS),
                         await _open(FENCE_DB_STATEMENTS))  # three dbs
     runtime = TeachRuntime(task, geo, fence, boot_id="b0", sample_hz=1.0, min_dist_m=0.5,  # U132 pair
-                           snap_max_age_ms=8000)  # p3_task.yaml value
+                           snap_max_age_ms=8000,  # p3_task.yaml value
+                           record_duration_s=10800)  # 99 U162 configured
     _pose(runtime, _LAT, _LON, 100.0)  # a fresh fix
     runtime.update_health({"allow_motion": True})  # arming check 4
     runtime.update_robot({"hes": False, "estop_path": "up"})  # check 4 / 7
@@ -157,13 +158,16 @@ async def test_a_taken_name_is_refused_at_start(rt):  # bound at start
 
 @pytest.mark.asyncio  # async case
 async def test_a_named_session_auto_finished_at_its_deadline_is_saved(rt):  # max_duration
-    """MUTATION: save_named ignores sessions finished by expire -> no row -> red."""
+    """MUTATION: save_named ignores sessions finished by expire -> no row -> red.
+    99 U162: the duration is the configured one; a start.max_duration_s is
+    ignored (MUTATION: honour it again -> expire(111) fires -> red)."""
     ack = await rt.handle(_cmd("c-s", "start", start={"kind": "route", "name": "3号路径",
                                                       "max_duration_s": 10}),
-                          now_mono_s=100.0, now_ms=1000)  # a short session
+                          now_mono_s=100.0, now_ms=1000)  # asks for 10 s
     assert ack["result"] == "accepted"  # armed
     await _drive(rt, 2.0, 3)  # three points
-    assert rt.expire(111.0) == "max_duration"  # auto-finished
+    assert rt.expire(111.0) is None  # the 10 s request is not honoured
+    assert rt.expire(100.0 + 10800.0) == "max_duration"  # the configured 180 min
     detail = await rt.save_named(3000)  # what the loop does next
     assert detail["saved"] is True and detail["applied"]["name"] == "3号路径"  # saved
 
@@ -231,7 +235,8 @@ async def test_the_live_loop_refuses_a_task_during_a_recording(tmp_path, monkeyp
     task = asyncio.create_task(mw._amain(
         stop, 99.0, str(tmp_path / "task.db"), geo_db_path=str(tmp_path / "geo.db"),
         fence_db_path=str(tmp_path / "fence.db"), recorded_arrive_radius_m=1.0,
-        teach_sample_hz=1.0, teach_min_dist_m=0.5))  # configured as in production
+        teach_sample_hz=1.0, teach_min_dist_m=0.5,  # configured as in production
+        teach_record_duration_s=10800.0))  # 99 U162
     try:  # always stop
         for _ in range(300):  # wait for the subscribers
             if mw.CMD_TEACH_TOPIC in subs and mw.CMD_TASK_TOPIC in subs:  # up

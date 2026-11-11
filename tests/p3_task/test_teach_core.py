@@ -185,18 +185,28 @@ def test_clamped_limits_are_reported():
     """S12A.4: an out-of-range sample setting is clamped AND reported. MUTATION:
     clamp silently and the operator believes they are recording at 50 Hz."""
     limits, applied = clamp_limits({"sample_hz": 50.0, "min_dist_m": 0.0},
-                                   max_duration_s=99999,
-                                   sample_hz=1.0, min_dist_m=0.5)  # 99 U132 configured pair
+                                   sample_hz=1.0, min_dist_m=0.5,  # 99 U132 configured pair
+                                   max_duration_s=10800)           # 99 U162 configured
     assert limits.sample_hz == 5.0 and applied["sample_hz"] == 5.0
     assert limits.dedup_min_dist_m == 0.05
-    assert limits.max_duration_s == 7200        # capped at the S12A.4 ceiling
+
+
+def test_duration_is_the_configured_one_with_no_ceiling():
+    """99 U162: the configured duration is used as is -- no 2 h ceiling -- and
+    it is the only limit (no max_points in the limits any more).
+    MUTATION: bring back min(7200, ...) -> 10800 becomes 7200 -> red."""
+    limits, applied = clamp_limits({}, sample_hz=1.0, min_dist_m=0.5,
+                                   max_duration_s=10800)
+    assert limits.max_duration_s == 10800 and applied["max_duration_s"] == 10800
+    assert "max_points" not in applied and not hasattr(limits, "max_points")
 
 
 def test_min_interval_ms_is_honoured_not_ignored():
     """S12A.4 still documents the sample block with min_interval_ms. A sender
     using the documented name must not be silently overridden by the default."""
-    limits, _applied = clamp_limits({"min_interval_ms": 500}, None,
-                                    sample_hz=1.0, min_dist_m=0.5)
+    limits, _applied = clamp_limits({"min_interval_ms": 500},
+                                    sample_hz=1.0, min_dist_m=0.5,
+                                    max_duration_s=10800)
     assert limits.sample_hz == 2.0
 
 
@@ -221,8 +231,7 @@ def test_fix_ranking_is_an_ordering_not_a_membership_test():
 
 
 def _rec(**over):
-    base = dict(dedup_min_dist_m=0.5, sample_hz=1.0, require_fix="rtk_fixed",
-                max_points=2000)
+    base = dict(dedup_min_dist_m=0.5, sample_hz=1.0, require_fix="rtk_fixed")
     base.update(over)
     return Recorder(**base)
 
@@ -283,11 +292,14 @@ def test_undo_removes_points_and_recomputes_length():
     assert r.offer(_sample(10.0, 100.0))[0] is True
 
 
-def test_max_points_stops_the_recorder():
-    r = _rec(max_points=2)
-    r.offer(_sample(0.0, 100.0))
-    r.offer(_sample(2.0, 101.0))
-    assert r.offer(_sample(4.0, 102.0)) == (False, "full")
+def test_the_recorder_has_no_point_cap():
+    """99 U162: the configured duration is the ONLY recording limit -- 2500
+    points (more than the old 2000 cap) are all kept.
+    MUTATION: reinstate a 2000-point "full" gate -> the 2001st is dropped -> red."""
+    r = _rec()
+    for i in range(2500):
+        assert r.offer(_sample(i * 1.0, 100.0 + i))[0] is True
+    assert r.point_count == 2500
 
 
 # ------------------------------------------------------------- validation ---

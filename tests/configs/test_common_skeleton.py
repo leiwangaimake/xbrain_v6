@@ -702,6 +702,11 @@ _LANDED = {
     # p3_task/teach/session.py.
     "common.recording.min_dist_m": 0.5,
     "common.recording.sample_hz": 1.0,
+    # 99 U162 (user ruling 2026-11-11 "默认值3小时, 180分钟 ... 按配置的时间
+    # 落地"): the recording duration, the ONLY recording limit; P3 reads it as
+    # p3_task.yaml teach.record_duration_s. Authorised by the 10 S5.4.5
+    # recording row. Before it the key was null and P3 used a 1800 s constant.
+    "common.recording.session_timeout_s": 10800,
 }
 
 

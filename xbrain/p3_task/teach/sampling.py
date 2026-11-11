@@ -98,7 +98,6 @@ class Recorder:
     dedup_min_dist_m: float
     sample_hz: float
     require_fix: str
-    max_points: int
     points: List[PoseSample] = None            # type: ignore[assignment]
     dropped_by_quality: int = 0
     dropped_by_distance: int = 0
@@ -118,11 +117,11 @@ class Recorder:
         """Offer one sample. Returns (kept, reason).
 
         reason names the gate that rejected it -- quality / interval /
-        distance / full -- because "the point did not appear" is the operator's
-        symptom and each of those four needs a different response from them.
+        distance -- because "the point did not appear" is the operator's
+        symptom and each of those needs a different response from them.
+        There is no "full" gate (99 U162): the recording's configured duration
+        is its only limit.
         """
-        if len(self.points) >= self.max_points:
-            return False, "full"
         # A mark point (F05) bypasses BOTH the interval and the distance gate:
         # the operator is saying "this corner matters", and the whole value of
         # F05 is that it survives simplification. Quality is still enforced --
