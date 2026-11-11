@@ -97,7 +97,7 @@ rtk_loss:
 #   另: 底盘报告充电且 soc_pct < charge_full_soc_pct 时, 不论有无低电记录, 被抢占的
 #   任务都不自动恢复; P3 从记录恢复出低电阶段后首个 soc_pct >= trigger_soc_pct 且
 #   未充电, 按关机期间换电 (冷换电) 分档结束 (99 U157 补齐 2026-11-11).
-#   缺失 / null / <= 0, 或不满足 stop < trigger < swap_resume <= charge_full <= 100
+#   任一键缺失 / null / NaN / <= 0, 或不满足 stop < trigger < swap_resume <= charge_full <= 100
 #   时 p3 拒绝启动 (EX_CONFIG 78).
 low_battery:
   trigger_soc_pct: 20.0
@@ -105,3 +105,9 @@ low_battery:
   cloud_alarm_period_s: 2.0
   charge_full_soc_pct: 100.0
   swap_resume_soc_pct: 80.0
+  # 99 U157 (2026-11-11): 电池槽连续空着至少这么多秒, 再插回才算一次换电;
+  # 更短的空缺视为在位信号抖动, 忽略. 按插回那一刻的 soc_pct 判定.
+  swap_absent_min_s: 5.0
+  # 99 U157 (2026-11-11): P3 重启后恢复出低电阶段, 首个 soc_pct 比记录里的电量
+  # 至少高出这么多个百分点, 才算关机期间换电 (冷换电); 防 19 -> 20 的抖动误判.
+  cold_swap_min_rise_pct: 10.0
