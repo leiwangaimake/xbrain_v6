@@ -94,10 +94,14 @@ rtk_loss:
 #   的任务, 以及低电开始时已在排队 / 定时的任务, 只有结束后才自动恢复 / 派发
 #   (人工"继续"不受限). 换电后 soc_pct 在 trigger 与 swap_resume 之间: 告警结束,
 #   被打断的任务等人工"继续". 底盘最高只报到 99 % 时把 charge_full_soc_pct 调低.
-#   另: 底盘报告充电且 soc_pct < charge_full_soc_pct 时, 不论有无低电记录, 被抢占的
-#   任务都不自动恢复; P3 从记录恢复出低电阶段后首个 soc_pct >= trigger_soc_pct 且
-#   未充电, 按关机期间换电 (冷换电) 分档结束 (99 U157 补齐 2026-11-11).
-#   任一键缺失 / null / NaN / <= 0, 或不满足 stop < trigger < swap_resume <= charge_full <= 100
+#   另 (99 U157 补齐 2026-11-11): 底盘报告充电且 soc_pct < charge_full_soc_pct 时,
+#   不论有无低电记录, 被抢占的任务都不自动恢复; P3 从记录恢复出低电阶段后首个
+#   soc_pct >= trigger_soc_pct, 未充电, 且比记录电量高 >= cold_swap_min_rise_pct,
+#   按关机期间换电 (冷换电) 分档结束; 重启时回充任务已失效则重派 (读到电量与定位
+#   之后); 低电期间断链返航任务暂缓, 回充任务可抢占同为 95 的断链返航; 再次进入
+#   低电阶段时当时所有未终结任务并入暂缓名单, 并再播报一次. 充电与拔电都按
+#   plug_confirm_s / unplug_confirm_s 去抖.
+#   九个键任一缺失 / null / NaN / <= 0, 或不满足 stop < trigger < swap_resume <= charge_full <= 100
 #   时 p3 拒绝启动 (EX_CONFIG 78).
 low_battery:
   trigger_soc_pct: 20.0
@@ -111,3 +115,7 @@ low_battery:
   # 99 U157 (2026-11-11): P3 重启后恢复出低电阶段, 首个 soc_pct 比记录里的电量
   # 至少高出这么多个百分点, 才算关机期间换电 (冷换电); 防 19 -> 20 的抖动误判.
   cold_swap_min_rise_pct: 10.0
+  # 15 S8.5 CD-1 (99 U157 2026-11-11 采纳): 充电标志去抖. 连续 charging 为真这么多秒
+  # 才算开始充电; 连续为假这么多秒才算拔掉. 15 文档建议值, 待 T-CHG-3 实测抖动特性.
+  plug_confirm_s: 5.0
+  unplug_confirm_s: 5.0
