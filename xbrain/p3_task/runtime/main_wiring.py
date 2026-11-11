@@ -243,6 +243,7 @@ async def _amain(stop_flag: dict, heartbeat_period_s: float,
         ack_outcome_is_fatal,
         make_ack_window,
         load_route_geoms,
+        is_keypoint_plan,
         push_goto_for_task,
         push_route_for_task,
         start_from_pose,
@@ -764,7 +765,10 @@ async def _amain(stop_flag: dict, heartbeat_period_s: float,
             # same DAO the scheduler uses -- P3 has one db thread (15 S2.1), so
             # an HMI cancel serialises with the tick rather than racing it.
             # 99 U133: submits are refused while a recording runs (CMD-16)
-            from xbrain.p3_task.ingest.goto_precheck import hmi_goto_refusal  # noqa: PLC0415
+            from xbrain.p3_task.ingest.goto_precheck import (  # noqa: PLC0415
+                cloud_goto_refusal,
+                hmi_goto_refusal,
+            )
 
             async def _keypoint_latlon(wid: str):
                 cur = await geo_conn.execute(
@@ -797,9 +801,23 @@ async def _amain(stop_flag: dict, heartbeat_period_s: float,
                     fence_set=await _active_fence_set(),
                     keypoint=_keypoint_latlon)
 
+            async def _route_exists(geo_id):
+                cur = await geo_conn.execute(
+                    "SELECT 1 FROM routes WHERE geo_id=? AND tombstone=0 "
+                    "AND state='active'", (geo_id,))
+                return await cur.fetchone() is not None
+
+            async def _cloud_goto_precheck(task):
+                # 99 U164: the cloud GOTO_KEYPOINT plan -- path, waypoints,
+                # fence -- refused at submit with the v2.0 S3.1 locators.
+                return await cloud_goto_refusal(
+                    task, fence_set=await _active_fence_set(),
+                    keypoint=_keypoint_latlon, route_exists=_route_exists)
+
             task_ctx = TaskContext(task_conn=conn, dao=dao,
                                    teach_busy=lambda: teach.active,
-                                   goto_precheck=_goto_precheck)
+                                   goto_precheck=_goto_precheck,
+                                   cloud_goto_precheck=_cloud_goto_precheck)
 
             #: task_id of the push the ack window is currently waiting on, so
             #: a retry knows what to re-push and a failure knows what to fail.
@@ -899,6 +917,16 @@ async def _amain(stop_flag: dict, heartbeat_period_s: float,
                     params = {"waypoint_id": gid}
                     _logger.info("p3 %s %s -> point %s", full.task_type,
                                  task_id, gid)
+                    pushing.update(task_id=task_id, route_geo_id=None,
+                                   goto_params=params)
+                    await _push_goto(task_id, params, trigger)
+                    return
+                if full.task_type == "goto" and is_keypoint_plan(_goto_params(full)):
+                    # 99 U164 (user ruling 2026-11-11): a cloud GOTO_KEYPOINT
+                    # goes to its waypoints in order along recorded_path_id
+                    # (route_geo_id), never a patrol of the whole path -- the
+                    # route branch below did exactly that until 2026-11-11.
+                    params = dict(_goto_params(full), via_route_id=route_geo_id)
                     pushing.update(task_id=task_id, route_geo_id=None,
                                    goto_params=params)
                     await _push_goto(task_id, params, trigger)

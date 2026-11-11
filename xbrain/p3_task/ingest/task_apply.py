@@ -82,7 +82,7 @@ class TaskContext:
     """The live handles an applier may touch."""
 
     def __init__(self, task_conn, dao=None, teach_busy=None,
-                 goto_precheck=None) -> None:
+                 goto_precheck=None, cloud_goto_precheck=None) -> None:
         self.task_conn = task_conn
         self.dao = dao
         # 99 U133 / 11 S12A.3 CMD-16: a callable answering "is a recording
@@ -93,6 +93,9 @@ class TaskContext:
         # or None -- P3's half of an HMI goto (ingest/goto_precheck). None =
         # not wired (tests of the task path alone); production wires it.
         self.goto_precheck = goto_precheck
+        # 99 U164 (2026-11-11): the same shape for a cloud GOTO_KEYPOINT plan
+        # (ingest/goto_precheck.cloud_goto_refusal). None = not wired.
+        self.cloud_goto_precheck = cloud_goto_precheck
 
 
 async def handle_task_payload(payload: Dict[str, Any], ctx: TaskContext, *,
@@ -281,6 +284,15 @@ async def _submit(cmd: TaskCommand, ctx: TaskContext, now_mono_ms: int,
         # "accepted" whatever the world looked like. HMI-originated only: the W2
         # table is the HMI's, and the other channels keep their behaviour.
         refusal = await ctx.goto_precheck(cmd.task)
+        if refusal is not None:
+            code, message, detail = refusal
+            raise TaskCommandError(code, message, detail)
+    if (ctx.cloud_goto_precheck is not None and cmd.source == "cloud"
+            and isinstance(cmd.task, dict) and cmd.task.get("type") == "goto"):
+        # 99 U164: a cloud plan naming a missing path / waypoint, or a
+        # waypoint outside the fence, is refused in the ack with the locator
+        # (v2.0 S3.1) -- it used to be accepted and fail at dispatch.
+        refusal = await ctx.cloud_goto_precheck(cmd.task)
         if refusal is not None:
             code, message, detail = refusal
             raise TaskCommandError(code, message, detail)

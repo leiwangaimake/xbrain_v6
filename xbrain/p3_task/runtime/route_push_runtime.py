@@ -51,7 +51,7 @@ import json
 import logging
 import math
 from dataclasses import dataclass
-from typing import Any, Dict, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 from xbrain.p3_task.persistence.schema_task import iso_from_wall_ms
 from xbrain.p3_task.route.push import (
@@ -335,6 +335,72 @@ async def load_goto_target(geo_conn, params: Dict[str, Any], task_id: str):
     raise GotoTargetError("goto carries no waypoint_id or coordinate to resolve")
 
 
+#: One resolved stop of a cloud keypoint plan: (geo_id, lat, lon, radius, name, rev).
+Keypoint = Tuple[str, float, float, float, str, int]
+
+
+def is_keypoint_plan(params: Any) -> bool:
+    """True for the cloud GOTO_KEYPOINT plan (99 U164): params.waypoints is a
+    non-empty list. The gateway passes v2.0 S2.1 waypoints[] through
+    unchanged (p5 inbound/task_router._goto); no other producer sends it."""
+    return (isinstance(params, dict) and isinstance(params.get("waypoints"), list)
+            and bool(params["waypoints"]))
+
+
+async def load_keypoint_targets(geo_conn, params: Dict[str, Any]) -> List[Keypoint]:
+    """The cloud plan's waypoints, in order, resolved against geo.db.
+
+    The coordinate is the waypoint ROW's (the manifest's authority, v2.0
+    S4.4), not the latitude / longitude the plan echoes; the radius is the
+    plan's own arrival_radius_m (v2.0 S2.1: required, 0.5..10, "不得在缺失时
+    静默补默认值" -- the gateway refused a missing or out-of-range one, so a
+    missing one here is a caller bug and raises). Raises GotoTargetError
+    naming the item, so a waypoint deleted after admission fails the task
+    with the index the operator can find."""
+    out: List[Keypoint] = []
+    for i, item in enumerate(params.get("waypoints") or []):
+        wid = item.get("id") if isinstance(item, dict) else None
+        if not isinstance(wid, str) or not wid.strip():
+            raise GotoTargetError("waypoints[%d] carries no id" % i)
+        radius = item.get("arrival_radius_m")
+        if isinstance(radius, bool) or not isinstance(radius, (int, float)) \
+                or not math.isfinite(radius) or radius <= 0.0:
+            raise GotoTargetError("waypoints[%d] arrival_radius_m must be a positive "
+                                  "number, got %r" % (i, radius))
+        cur = await geo_conn.execute(
+            "SELECT rtk_lat, rtk_lon, rev, name FROM waypoints"
+            " WHERE geo_id=? AND tombstone=0", (wid.strip(),))
+        row = await cur.fetchone()
+        if row is None:
+            raise GotoTargetError("waypoints[%d] %r not found or tombstoned" % (i, wid))
+        out.append((wid.strip(), float(row[0]), float(row[1]), float(radius),
+                    row[3] or wid, int(row[2] or 0)))
+    return out
+
+
+def plan_keypoints(start: Tuple[float, float], targets: List[Keypoint],
+                   routes: List[RouteGeom],
+                   membership_m: Optional[float]) -> Tuple[List[Tuple[float, float]], bool]:
+    """99 U164 (user ruling 2026-11-11): the waypoints strung into ONE line in
+    order -- robot -> 1st -> 2nd ... -> last, each leg planned by U127 over
+    `routes` (the plan's recorded_path_id only), straight when membership_m
+    is None. Returns (points, followed_a_route). Intermediate waypoints are
+    passed through, not stopped at: P1 judges arrival at the last point only
+    (build_composite_snapshot)."""
+    pts: List[Tuple[float, float]] = [start]
+    cur, followed = start, False
+    for t in targets:
+        target = (t[1], t[2])
+        if membership_m is not None:
+            leg = plan_goto(cur, target, routes, membership_m)
+            followed = followed or leg.route_id is not None
+            pts.extend(leg.points[1:])  # leg.points[0] is cur, already in
+        else:
+            pts.append(target)
+        cur = target
+    return pts, followed
+
+
 async def push_goto_for_task(*, task_id: str, params: Dict[str, Any],
                              start: Optional[Tuple[float, float]],
                              task_conn, geo_conn, snapshot_dao, progress_dao,
@@ -351,15 +417,33 @@ async def push_goto_for_task(*, task_id: str, params: Dict[str, Any],
     target than to that route, it is ONE point (11 S3.5A v2.0, 12 S4.2c.3)
     as before. None (tests that predate U127) keeps the single point.
 
+    99 U164: params.waypoints[] (the cloud GOTO_KEYPOINT plan) is strung into
+    one line in order (plan_keypoints) along params.via_route_id only, and
+    arrives at the last waypoint by ITS arrival_radius_m. A re-push (RA retry,
+    resume) re-plans the whole line from where the robot is then.
+
     Returns PushResult(pushed=False, reason) -- never raises -- for an
     unresolvable target, no current position, or a robot already at the
     target; the caller fails the task with that reason (15 S2.4.2).
     """
     if trigger is RoutePushTrigger.RP4_TASK_TERMINAL:
         return PushResult(False, 0, "", "rp4_pushes_nothing", "plan_refused")
+    keypoints = is_keypoint_plan(params)
     try:
-        route_id, rev, lat, lon, radius, name = await load_goto_target(
-            geo_conn, params, task_id)
+        if keypoints:
+            # 99 U164: the cloud GOTO_KEYPOINT plan. Until 2026-11-11 it was
+            # dispatched as a PATROL of recorded_path_id (route_geo_id set ->
+            # push_route_for_task): the whole path driven, waypoints[] and
+            # arrival_radius_m stored and never read.
+            targets = await load_keypoint_targets(geo_conn, params)
+            last = targets[-1]
+            route_id = GOTO_ROUTE_PREFIX + (last[0] if len(targets) == 1 else task_id)
+            rev = last[5] if len(targets) == 1 else 0
+            lat, lon, radius = last[1], last[2], last[3]
+            name = " -> ".join(t[4] for t in targets)
+        else:
+            route_id, rev, lat, lon, radius, name = await load_goto_target(
+                geo_conn, params, task_id)
     except GotoTargetError as exc:
         return PushResult(False, 0, "", "goto_target: %s" % exc, "target_missing")
     if start is None:
@@ -368,13 +452,33 @@ async def push_goto_for_task(*, task_id: str, params: Dict[str, Any],
         return PushResult(False, 0, "", "goto_target: no current position "
                                         "(state/pose has no lat/lon)", "no_position")
     plan = None  # U127 route-following plan, when one applies
-    if route_membership_m is not None:  # route-aware goto configured
+    chain = None  # U164 keypoint line, when it is more than one straight point
+    if keypoints:
+        routes = await load_route_geoms(geo_conn)
+        via = params.get("via_route_id")
+        if via:
+            # user ruling 2026-11-11: follow recorded_path_id ONLY, never the
+            # cheapest of all routes (that is the voice B01 rule, U127)
+            routes = [r for r in routes if r.geo_id == via]
+            if not routes:
+                return PushResult(False, 0, "", "goto_target: route %r not found, "
+                                  "tombstoned or not active" % via, "target_missing")
+        pts, followed = plan_keypoints(start, targets, routes, route_membership_m)
+        if len(targets) > 1 or followed:
+            chain = pts
+    elif route_membership_m is not None:  # route-aware goto configured
         plan = plan_goto(start, (lat, lon), await load_route_geoms(geo_conn),
                          route_membership_m)
         if plan.route_id is None:  # straight is the plan: the single point below
             plan = None
     try:
-        if plan is not None:  # follow the route: robot, entry, route leg, exit, target
+        if chain is not None:  # the keypoint line: robot, legs, last waypoint
+            snap = build_composite_snapshot(
+                task_id=task_id, route_id=route_id, rev=rev,
+                points=chain, arrive_radius_m=radius)
+            _logger.info("p3 goto %s keypoint plan %s via %s (%d stops)",
+                         task_id, name, params.get("via_route_id"), len(targets))
+        elif plan is not None:  # follow the route: robot, entry, route leg, exit, target
             snap = build_composite_snapshot(
                 task_id=task_id, route_id=route_id, rev=rev,
                 points=plan.points, arrive_radius_m=radius)

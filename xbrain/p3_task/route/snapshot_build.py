@@ -268,7 +268,9 @@ def build_composite_snapshot(*, task_id: str, route_id: str, rev: int,
     Every point carries arrive_radius_m; P1 judges arrival at the LAST point
     only (route_intake exposes the last radius), so the intermediate values
     only keep the wire field legal. Refuses fewer than two points, a
-    non-positive radius, an over-cap point count and a zero length."""
+    non-positive radius and a zero length. ~~an over-cap point count~~ (99
+    U163: no point cap). Also the cloud GOTO_KEYPOINT line (99 U164): the
+    intermediate waypoints are passed through, the last one is arrived at."""
     if isinstance(arrive_radius_m, bool) or not isinstance(arrive_radius_m, (int, float)) \
             or not math.isfinite(arrive_radius_m) or arrive_radius_m <= 0.0:
         raise SnapshotBuildError(
