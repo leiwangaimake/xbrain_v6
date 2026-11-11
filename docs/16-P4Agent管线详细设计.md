@@ -3722,6 +3722,7 @@ BC-1/BC-2 是纵深防御，防的是实现方漏了 BC-3。
 > - `turn_orchestrator` 的录制态 = `state/teach` 会话处于 `arming / recording / paused`：此时 `_route_entry` 与 PTP 规则层对 A/B/C/D/E/H 类及除退出 / 取消 / 打点外的 F 类一律答复不下发；`session.recording.in_recording` 每轮由它置位（此前从无代码置位，U45 抑制从未生效）；
 > - 开始前按 `state/geo/manifest` 查同类重名；`cmd/teach start` 带 `start.name`；退出发 `finish`（P3 直接保存）；结果与拒绝原因由 `ack_speech` 按 `cmd/teach/ack` 播报。
 > - ★★ **2026-11-11 补（`99` U162）**：① **带名字的退出 / 取消说法**也走规则层 ——「X录制完成 / X录制完毕 / X录制结束 / X录制好了 / X录完了 / 结束X录制 / 退出X录制(模式)」与「取消X录制 / 放弃X录制」（X 须是完整名称，判据同开始）；名字与正在录的会话一致（`canonical_name` 归一）⇒ 照常 `finish` / `discard`，**不一致** ⇒ 只答复不下发：「正在录制的是A, 不是B. 要结束请说: A录制完成」/「… 要取消请说: 取消A录制」；空闲时与不带名字的说法同样答「现在没有在录制」。此前这类说法既不进规则层、也不是关键词，落到 LLM 层。② **保存结果补发到 `state/voice_turn`**：`ack_speech` 收到 `cmd/teach/ack`（`finish` / `discard`）后除播报外再发一条 `layer=teach_result` 的 voice_turn 记录（字段见 `11` §8.7.6 ⑧），原轮静默也发；为此 `note_turn` 先登记结果待配（不论原轮是否出声），云端入口 `cloud_input._emit` 改为把本轮 voice_turn 记录一并交给 `on_turn`（此前 `on_turn` 先于记录生成，云端轮次配不上）。判据：`tests/p4_agent/runtime/test_record_turn.py`、`test_ack_speech.py`、`test_voice_turn.py`，6 个变异体全杀。
+> - ★★ **2026-11-11 补（`99` U165）**：① `ack_speech` 的结果集加入 `start`：P3 回开始的 ack 后发 `layer=teach_result` 的记录（成功「已开始录制X」不播报；被拒为原因句，`verdict=rejected`），见 `11` §8.7.6 ⑩；② 录制拒绝一律 `denied`：`_rec_reply` 默认 `refused=True`（状态问答 `refused=False`），F 类预检里对开始录制（`_REC_STARTS`）的拒绝同样 `denied`；其它 F 类预检拒绝不在本裁决内，仍是 `reply`；③ 手动结束写入失败、数据保留时说「X没有保存: 原因. 录制数据还在…」，~~落到兜底句「录制没有正确结束」~~ 被替代。
 
 > `18` §8.2、CMD-15：**录制是多轮有状态流程，不是单轮槽位填充。**
 >

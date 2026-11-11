@@ -144,7 +144,11 @@
   - 取「录制 / 记录」之后的整段，必须以 `路径 / 路线 / 线路 / 环线`（路径录制）或 `围栏`（围栏录制）结尾，2～12 个字。
   - 不能与已有同类对象重名。
   - 缺名或重名都直接拒绝，不追问。
-- 机器人在开始前依次检查下表，第一条不满足就拒绝。⚠️【偏差·待修】拒绝**不进** `state/voice_turn`：该轮记录照常是 `verdict=accepted`、`reply_text`「好的, 开始录制X…」（只表示指令已发出），随后机器人的拒绝只**出声**播报原因（`require_tts_reply=false` 时连声音也没有），录制实际没有开始。云端目前没有 key 能确认录制是否真的开始；请提示操作员听现场播报，或发文本「录了几个点」查询（2026-11-11 `gj-001` 室内实测：定位不是 RTK 固定解时即如此）。
+- 机器人在开始前依次检查下表，第一条不满足就拒绝。★ 2026-11-11（U165）起开始的结果会**再发一条** `state/voice_turn`（§8.5）：
+  - 该轮自己的记录只表示指令已发出（`layer="record_rule"`，`reply_text`「好的,开始录制X…」），**不能**据此开放键盘；
+  - 随后的 `layer="teach_result"` 记录：开始成功 `verdict=accepted`、`reply_text`「已开始录制X」；被拒 `verdict=rejected`、`reject_code` 为下表的码、`reply_text` 为原因句（例如「现在不能开始录制: 定位不是RTK固定解」）。
+  - 缺名、名字长度不对、重名、已在录制这几种在机器人发出命令之前就拒绝，该轮记录直接是 `verdict=rejected`，**不会再有** `teach_result`。
+  - ~~【偏差·待修】拒绝不进 `state/voice_turn`，该轮记录照常是 `verdict=accepted`~~ —— U165 前的行为（2026-11-11 gj-001 室内实测），已修。
 
 | 检查项 | 不满足时的错误码 |
 |---|---|
@@ -162,7 +166,7 @@
 - **没有点数、长度限制**（用户裁决 U163，2026-11-11）。唯一的限制是时长，见 §3.4。
 - 录制中只接受：查询类、会话应答、闲聊，以及「退出 / 取消 / 打点 / 查询录制」。
   - 其它指令（运动、导航任务、云台、声光等）回复「正在录制X, 录制期间只能用键盘控制机器人. 要结束请说退出录制」。
-  - ⚠️ 这种拒绝的 `verdict` 是 **`accepted`**，`reject_code` 为 null，见 §8.4。
+  - 这种拒绝的 `verdict` 是 **`rejected`**，`reject_code` 为 null，原因在 `reply_text`，见 §8.4（U165；~~此前为 `accepted`~~）。
   - 录制中再说开始录制，回复「正在录制X, 不能开始新的录制…」。
 - 录制中说「停 / 急停 / 趴下 / 站起来」**不执行**：`verdict=rejected`、`bypass="estop"`（或对应值），回复「录制中语音急停不生效, 请用键盘空格键停车」。
 - 录制中云端下发 `GOTO_KEYPOINT`，回 `rejected`、`error_code=2002`、`detail.code=E_BUSY`、`detail.reason=teach_session_active`。
@@ -178,6 +182,7 @@
 - 结果通过**第二条** `state/voice_turn` 回报，`layer="teach_result"`（§8.5）。
   - 成功示例：「已保存3号路径, 共64个点, 长320米」。
   - 几何不合格（路径不足 2 点、围栏不足 3 顶点、自交、面积过小）时不保存，会话关闭，原因写在回复里。
+  - 写入失败（例如名字在录制期间被别处占用）时**数据保留**：`verdict=rejected`，`reject_code` 为真实原因（如 `E_NAME_CONFLICT`），回复「X没有保存: 名字已被占用. 录制数据还在, 请说保存为新的名字, 或者放弃录制」（U165；~~此前码一律 `E_TEACH_GEOMETRY`~~）。
 
 ### 3.4 录制时长上限与自动保存（U162 / U163，2026-11-11）
 
@@ -583,10 +588,11 @@ v2.0 §9.5 要求可靠事件断线后在原 key 上补发、复用 `eid`。**�
 
 ### 8.4 录制期间的回复【新增 · 见 §3.2】
 
-被拦截的指令回 `verdict=accepted`，`reject_code` 为 null，`reply_text` 说明原因。录制中的语音急停回 `verdict=rejected`、`bypass` 非空。
+被拦截的指令回 `verdict=rejected`，`reject_code` 为 null，`reply_text` 说明原因（U165；~~此前为 `accepted`~~）。录制相关的其它拒绝（缺名、重名、已在录制、名字不是正在录的、没有在录制）同样是 `rejected`；只有录制状态问答（「录了几个点」）是 `accepted`。录制中的语音急停回 `verdict=rejected`、`bypass` 非空。
 
 ### 8.5 一轮两条 / 无请求的 `voice_turn`【新增 · v1.0 §5.1「每轮一条」不再成立】
 
+- **录制开始的结果**（U165）：说「开始录制X」且通过了规则检查的那一轮照常发一条（`verdict` 只表示指令已发出），机器人跑完开始检查后**再发一条** `layer="teach_result"`：成功 `accepted`「已开始录制X」，被拒 `rejected` 加原因码与原因句。**以这条为准开放键盘。**
 - **录制结束或取消的结果**（U162）：
   - 说「退出录制 / 取消录制」的那一轮照常发一条，`verdict` 只表示指令已发出。
   - 机器人处理完后**再发一条**：新 `turn_id`，`layer="teach_result"`，`verdict` 为 `accepted`（已保存、已丢弃）或 `rejected`（未保存，`reject_code` 为原因码），`reply_text` 为结果句。
