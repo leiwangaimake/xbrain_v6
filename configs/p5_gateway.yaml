@@ -175,6 +175,8 @@ hmi:
         # 用户 2026-11-10: 网格线屏幕粗细固定, 不随缩放变. 取原 10 m 网格时的
         # 可见线宽 (约 2 px, 原 0.7 m 线宽在图案边上被裁掉一半).
         line_px: 2
+        # 用户 2026-11-11: 网格线颜色再黑一倍 -- 亮度减半, ~~#555555~~ -> #2a2a2a.
+        line_color: "#2a2a2a"
       viewbox: "-100 -65 240 145"     # ENU meters; from customer sample
       # U4. 用户 2026-11-10: 网格要能放大到 1 m. 1 m 格须在屏上 >= 42 px, 即地图宽
       # <= 屏宽/42 (1000 px 宽约 24 m), 从 240 m 的基础视窗要放大约 10 倍, 取 16 留余量.
@@ -199,9 +201,17 @@ hmi:
       realtime:                       # 实时行走轨迹: 亮黄粗实线
         line: { style: "solid", color: "#ffd400", width_px: 2.4 }
         show_after_complete: true     # 巡逻完成后是否仍显示黄色轨迹(false=隐藏)
-    waypoint:                         # U6: marker shape/color/size (recorded vs unrecorded)
-      recorded:   { shape: "circle", color: "#3aa0ff", size_px: 3 }
-      unrecorded: { shape: "circle", color: "#8a8f99", size_px: 3 }
+    waypoint:                         # U6: 位置点 (用户 2026-11-11): 亮白实心正圆 + 亮红外框, 两者之间无镂空
+      fill_color: "#ffffff"           # 圆点填充: 亮白
+      ring_color: "#ff1f1f"           # 外框: 亮红
+      # 外径 12 px: 用户先要旧版 (外径 4 px) 的 1.5 倍 = 6 px, 同日再要大一倍 = 12 px
+      radius_px: 11.0                 # 圆心到外框中线, 屏幕像素 (~~5.0~~ 2026-11-11 再大一倍)
+      ring_px: 2.0                    # 外框粗细, 屏幕像素; 压在圆周上, 一半在内, 所以与白点之间无缝
+      # ~~recorded / unrecorded: { shape, color, size_px }~~ 2026-11-11 起不再区分, 统一上面的样子
+    robot:                            # U9: 机器人当前位置三角 (用户 2026-11-11): 亮红
+      color: "#ff1f1f"
+      # 用户先要旧版 (9 px) 的 3 倍 = 27 px, 同日再缩小一半 = 13.5 px
+      size_px: 13.5                   # 三角半长, 屏幕像素 (~~27~~), 不随缩放变
     goto:                             # W2 点击导航的界面参数 (用户 2026-11-10)
       pin_diameter_px: 20             # 目标点圆点直径, 屏幕像素, 不随缩放变
       snap_px: 14                     # 点击处离路径点/关键点多近 (屏幕像素) 算点中
