@@ -283,6 +283,7 @@
     // history from GET /api/tasks (17 S6.8.4, refreshTasks below). snap.plan
     // (state/task) still drives the `patrolling` trajectory flag above.
     renderStatus(snap.status || {}, snap.pose || {}, origin, snap.clock || {});
+    renderChassisLock((snap.status || {}).chassis_lock || {});   // 99 U159
     renderHeading(snap.pose || {});
     renderTeach(snap.teach || {}, origin);
     renderGotoPins();                     // W2 target dot(s), fixed screen size
@@ -1384,6 +1385,11 @@
     if (m.req_type === "estop") { onEstopAck(m); return; }
     const btn = pendingReqs.get(m.req_id);
     // W2 has its own flow (the target dot, the echo, the tracking).
+    if (m.req_type === "chassis_enable") {
+      pendingReqs.delete(m.req_id);
+      onChassisEnableAck(m);
+      return;
+    }
     if (m.req_type === "goto") {
       pendingReqs.delete(m.req_id);
       if (btn) btn.disabled = false;
@@ -1729,6 +1735,88 @@
     clearTimeout(bannerTimer);
     const b = $("gotoBanner"); if (b) b.hidden = true;
   }
+  // -- chassis lock button (99 U159) ------------------------------------
+  // Colour and label are the state/robot READ-BACK, never the click: deep red
+  // 底盘已锁定 while hes_lock or timeout_lock is set, teal 底盘已解锁 when both
+  // are clear, grey 底盘状态未知 when P5 has no fresh state/robot. So an unlock
+  // from anywhere else (commx 「解锁」, the cloud) turns the button teal on the
+  // next snapshot, and an accepted unlock that did NOT clear the lock (the
+  // hardware stop still pressed, 11 S9.3.4 E-2) leaves it red -- BOOT-L3:
+  // only the read-back says the lock is gone.
+  //
+  // Clicks: red -> the first click ARMS (再点确认解锁, CHASSIS_ARM_MS) and the
+  // second sends W9 with confirm.level L2 (S9.3.4 E-1: enable is a loosening
+  // command). Teal -> nothing: the contract has no lock command (a lock only
+  // comes from the hardware stop or a command timeout, S9.12.2).
+  // <chassis-lock-view>
+  function chassisLockView(cl) {
+    if (!cl || !cl.available || typeof cl.locked !== "boolean") {
+      return { cls: "unknown", text: "底盘状态未知", enabled: false,
+               title: "未收到底盘状态, 无法判断是否锁定" };
+    }
+    if (cl.locked) {
+      return { cls: "locked", text: "底盘已锁定", enabled: true,
+               title: cl.hes_lock ? "硬件急停锁定: 先松开硬件急停, 再点击解锁"
+                                  : "底盘已锁定: 点击后再点一次确认解锁" };
+    }
+    return { cls: "unlocked", text: "底盘已解锁", enabled: true,
+             title: "底盘已解锁 (系统没有上锁指令, 锁定只由硬件急停或指令超时产生)" };
+  }
+  // </chassis-lock-view>
+  const CHASSIS_ARM_MS = 5000;           // armed window, same as task cancel
+  const CHASSIS_ACK_SETTLE_MS = 3000;    // accepted -> read-back must follow
+  let chassisLock = {};                  // last chassis_lock group
+  let chassisArmed = false, chassisArmTimer = null;
+  let chassisSentAt = null;              // performance.now() of an accepted unlock
+  function renderChassisLock(cl) {
+    chassisLock = cl || {};
+    const v = chassisLockView(chassisLock);
+    const btn = $("chassisLockBtn"); if (!btn) return;
+    if (v.cls !== "locked") disarmChassis();
+    btn.className = "chassis-lock-btn " + v.cls + (chassisArmed ? " confirm" : "");
+    btn.disabled = !v.enabled;
+    btn.title = v.title;
+    btn.textContent = chassisArmed ? "再点确认解锁" : v.text;
+    if (chassisSentAt != null) {
+      if (v.cls === "unlocked") chassisSentAt = null;          // read-back cleared
+      else if (performance.now() - chassisSentAt > CHASSIS_ACK_SETTLE_MS) {
+        chassisSentAt = null;
+        showBanner("fail", chassisLock.hes_lock
+          ? "解锁未生效: 硬件急停仍处于锁定, 请先松开硬件急停再解锁"
+          : "解锁未生效: 底盘仍为锁定状态");
+      }
+    }
+  }
+  function disarmChassis() {
+    chassisArmed = false;
+    if (chassisArmTimer) { clearTimeout(chassisArmTimer); chassisArmTimer = null; }
+  }
+  function onChassisLockClick() {
+    const v = chassisLockView(chassisLock);
+    if (v.cls !== "locked") return;      // teal / grey: no action exists
+    if (!chassisArmed) {
+      chassisArmed = true;
+      chassisArmTimer = setTimeout(() => { disarmChassis(); renderChassisLock(chassisLock); },
+                                   CHASSIS_ARM_MS);
+      renderChassisLock(chassisLock);
+      return;
+    }
+    disarmChassis();
+    renderChassisLock(chassisLock);
+    sendUplink({ type: "chassis_enable", confirm: { level: "L2" } }, $("chassisLockBtn"));
+  }
+  function onChassisEnableAck(m) {
+    const btn = $("chassisLockBtn"); if (btn) btn.disabled = false;
+    if (m.result === "accepted" || m.result === "duplicate") {
+      // Accepted is not unlocked (BOOT-L3): wait for the read-back.
+      chassisSentAt = performance.now();
+      return;
+    }
+    const d = m.detail || {};
+    showBanner("fail", "解锁被拒绝 " + (m.code || "") +
+               ((d.reason_text || d.reason) ? ": " + (d.reason_text || d.reason) : ""));
+  }
+
   // Offline refusals keep this name.
   function alertBanner(text, withConfirm) { showBanner(withConfirm ? "confirm" : "info", text); }
 
@@ -1774,6 +1862,8 @@
     updateEstopUi();
     setInterval(updateEstopUi, 250);
     wireInteraction(); applyView(); buildDialFace(); wireHistoryFolding();
+    const clb = $("chassisLockBtn");
+    if (clb) clb.addEventListener("click", onChassisLockClick);
     $("mapSvg").addEventListener("click", onMapClick);
     const gs = $("gotoSend");
     if (gs) gs.addEventListener("click", sendGoto);

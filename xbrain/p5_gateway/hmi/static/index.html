@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>XBRAIN_V6 GPS 网格地图 HMI</title>
-<link rel="stylesheet" href="hmi.css?v=nobcast-1">
+<link rel="stylesheet" href="hmi.css?v=chlock-1">
 </head>
 <body>
 <main class="hmi">
@@ -17,6 +17,13 @@
            (NAV-64). Starts disabled: nothing has proved the path yet. -->
       <button id="estopBtn" class="estop-btn" title="紧急停止" disabled>急停 ESTOP</button>
       <span id="estopNotice" class="estop-notice bad" role="status">急停不可用, 请使用硬件急停</span>
+      <!-- Chassis lock (99 U159): colour and label follow the state/robot
+           read-back (hmi.js renderChassisLock). Locked -> deep red, a click arms
+           and a second click sends W9 unlock (11 S9.3.4 enable, L2). Unlocked ->
+           teal, clicks do nothing (the system has no lock command). Starts grey
+           and disabled: nothing is known until the first snapshot. -->
+      <button type="button" id="chassisLockBtn" class="chassis-lock-btn unknown"
+              title="底盘状态未知" disabled>底盘状态未知</button>
       <div class="zoom-group">
         <button id="zoomIn" class="zoom-btn" title="放大">＋</button>
         <button id="zoomOut" class="zoom-btn" title="缩小">－</button>
@@ -141,6 +148,6 @@
     </footer>
   </section>
 </main>
-<script src="hmi.js?v=nobcast-2"></script>
+<script src="hmi.js?v=chlock-1"></script>
 </body>
 </html>

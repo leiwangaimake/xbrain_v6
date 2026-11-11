@@ -59,6 +59,10 @@ CMD_GEO_ACK_TOPIC = "cmd/geo/ack"
 #: it uses one that was reserved for the HMI and never declared.
 CMD_TASK_TOPIC = "cmd/task"
 CMD_TASK_ACK_TOPIC = "cmd/task/ack"
+#: 11 S12.1.1 W9 (99 U159): the HMI chassis-unlock button -> S9.3.4
+#: cmd/chassis/ctrl{enable}; the answer comes back on CR-12's ack key.
+CMD_CHASSIS_CTRL_TOPIC = "cmd/chassis/ctrl"
+CMD_CHASSIS_CTRL_ACK_TOPIC = "cmd/chassis/ctrl/ack"
 #: 17 S6.2.1 WD-1/WD-6: the release P5 sends when an HMI WebSocket closes and on
 #: P5's own shutdown. 11 S2.2.4 registers p5_gateway as this key's sole
 #: publisher, so the declaration needs no CR (WD-5). Not an uplink class -- the
@@ -122,6 +126,10 @@ FENCE_STALE_AFTER_MS = 10000             # P5F-2: cache silent this long -> degr
 # keep showing the last fix as if it were live (3.1/3.2 fail-silent). Tight vs the
 # geo window because pose is a real-time safety readout, not semi-static geometry.
 POSE_STALE_AFTER_MS = 1500
+# state/robot is 10 Hz (CR-4). The HMI chassis-lock button (99 U159) is drawn
+# from it; once it has been silent this long the button must say "unknown",
+# never keep a stale "unlocked" on screen. Same window as pose, same reason.
+ROBOT_STALE_AFTER_MS = 1500
 # 11 CLK-A3 verbatim: >= 5 s without ClockStatus -> ts_sync is false. Used by the
 # HMI clock readout and the estop-probe envelope ts_sync (2026-10-24 review: both
 # read the last state/clock forever). cloud_state.CLOCK_STALE_MS is the same 5 s.
@@ -224,6 +232,22 @@ def _clock_if_fresh(hmi_state: dict, now_ms: int):
     return clock if (now_ms - updated) <= CLOCK_STALE_AFTER_MS else None
 
 
+def _robot_if_fresh(hmi_state: dict, now_ms: int):
+    """state/robot data only while it is younger than ROBOT_STALE_AFTER_MS.
+
+    None when it never arrived or has gone silent: the HMI chassis-lock button
+    (99 U159) then shows "unknown" instead of the last lock state, because an
+    "unlocked" frozen on screen after chassis_relay died is a false all-clear.
+    """
+    robot = hmi_state.get("robot")
+    if not robot:
+        return None
+    updated = hmi_state.get("robot_updated_ms")
+    if not isinstance(updated, (int, float)):
+        return None
+    return robot if (now_ms - updated) <= ROBOT_STALE_AFTER_MS else None
+
+
 def hmi_estop_cmd_id(boot: str, seq: int) -> str:
     """The cmd_id the HMI button puts on cmd/estop (11 S7.1 EstopCommand).
 
@@ -272,7 +296,8 @@ def hmi_estop_frame(cmd_id: str) -> dict:
 
 def _start_hmi(gen, hmi_cfg: dict, hmi_state: dict,
                site_timezone: Optional[str] = None,
-               emit_event: Optional[Callable[[str, dict], None]] = None):
+               emit_event: Optional[Callable[[str, dict], None]] = None,
+               stamp: Optional[Callable[[dict, list], bytes]] = None):
     """Wire + start the HMI web server against what P5 can serve TODAY.
 
     Returns (server, thread) or (None, None) when HMI is not configured / cannot
@@ -287,6 +312,11 @@ def _start_hmi(gen, hmi_cfg: dict, hmi_state: dict,
     envelope (it closes over the loop's _stamp); used for WD-4. None -> the
     release still goes out, only the audit record is skipped and logged.
     Also leaves hmi_state["hmi_release_teleop"] for the shutdown path (WD-6).
+
+    stamp(body, seq_slot) wraps a body in the S3.0 envelope (the loop's
+    _stamp). The W9 unlock needs it: quadruped refuses a bare
+    cmd/chassis/ctrl body (11 S9.3.4 E-3). None -> the unlock is refused
+    loudly instead of being sent bare.
     """
     from xbrain.p5_gateway.hmi.web_server import (
         HmiBindError,
@@ -335,7 +365,12 @@ def _start_hmi(gen, hmi_cfg: dict, hmi_state: dict,
                    # W2 goto + W7 task: both build a TaskCommand (S7.2) and
                    # both go out on this one key, which is why the map is keyed
                    # by KEY and not by uplink class.
-                   "cmd/task": gen.declare_publisher(CMD_TASK_TOPIC)}
+                   "cmd/task": gen.declare_publisher(CMD_TASK_TOPIC),
+                   # W9 chassis unlock (99 U159): cmd/chassis/ctrl{enable},
+                   # forwarded by chassis_relay CR-11. 11 S2.2.3 already lists
+                   # the HMI (via p5_gateway) as a publisher of this key.
+                   CMD_CHASSIS_CTRL_TOPIC: gen.declare_publisher(CMD_CHASSIS_CTRL_TOPIC)}
+    _ctrl_env_seq = [0]          # S3.0 seq for cmd/chassis/ctrl, this process
 
     def _send_uplink(key: str, payload: dict) -> None:
         pub = uplink_pubs.get(key)
@@ -345,6 +380,15 @@ def _start_hmi(gen, hmi_cfg: dict, hmi_state: dict,
             # silent drop is the one outcome it cannot distinguish from a slow
             # robot.
             raise KeyError("no publisher declared for uplink key %r" % (key,))
+        if key == CMD_CHASSIS_CTRL_TOPIC:
+            # 11 S9.3.4 E-3: this key must carry the full S3.0 envelope;
+            # quadruped refuses a bare body, so never fall back to one.
+            if stamp is None:
+                raise RuntimeError("no S3.0 stamper; cmd/chassis/ctrl not sent")
+            pub.put(stamp(payload, _ctrl_env_seq))
+            _logger.warning("p5 HMI chassis unlock -> cmd/chassis/ctrl enable "
+                            "(cmd_id=%s, origin=hmi)", payload.get("cmd_id"))
+            return
         pub.put(json.dumps(payload, ensure_ascii=False).encode("utf-8"))
         _logger.info("p5 HMI uplink -> %s (%s %s)", key,
                      payload.get("action"),
@@ -431,6 +475,9 @@ def _start_hmi(gen, hmi_cfg: dict, hmi_state: dict,
                                        hmi_state.get("pose_updated_ms", 0),
                                        _now_mono_ms()),
                 "clock": _clock_if_fresh(hmi_state, _now_mono_ms()),   # RTK time-sync (18-C G47); CLK-A3 5 s gate
+                # state/robot (CR-4) for the chassis-lock button (99 U159);
+                # None once stale so the button reads "unknown", not a lock state.
+                "robot": _robot_if_fresh(hmi_state, _now_mono_ms()),
                 "health": hmi_state.get("health"),  # health/factor (W8)
                 "teach": hmi_state.get("teach"),   # state/teach (S12A.5, read only)
             }
@@ -1438,6 +1485,13 @@ def run_voice_loop_wiring(stop_flag: dict,
                 body = json.loads(bytes(sample.payload).decode("utf-8"))
             except Exception:      # noqa: BLE001
                 return
+            if (isinstance(body, dict) and "cmd_id" not in body
+                    and isinstance(body.get("data"), dict)):
+                # cmd/chassis/ctrl/ack (W9) arrives inside the S3.0 envelope
+                # chassis_relay rebuilds on CR-12 (RT-C3.e); the Ack is its data.
+                body = body["data"]
+            if not isinstance(body, dict):
+                return
             cmd_id = body.get("cmd_id")
             if not isinstance(cmd_id, str) or not cmd_id.startswith("h-"):
                 # Not ours: these keys also carry answers to cloud- and
@@ -1453,6 +1507,9 @@ def run_voice_loop_wiring(stop_flag: dict,
         # voice- and cloud-originated commands are ignored here exactly as
         # cmd/geo/ack's already are.
         task_ack_sub = gen.declare_subscriber(CMD_TASK_ACK_TOPIC, _on_uplink_ack)
+        # W9 chassis unlock answers (99 U159), same "h-" routing.
+        ctrl_ack_sub = gen.declare_subscriber(CMD_CHASSIS_CTRL_ACK_TOPIC,
+                                              _on_uplink_ack)
         ack_sub = gen.declare_subscriber(
             CMD_AUDIO_SPEAK_ACK_TOPIC, _on_speak_ack)
         task_sub = gen.declare_subscriber(
@@ -1521,8 +1578,8 @@ def run_voice_loop_wiring(stop_flag: dict,
                          cloud_bridge.alive())
         _logger.info("p5 wiring: subscribed speak/ack + state/task + "
                      "cmd/fence + state/mode + event/** + estop/pong + health "
-                     "+ cmd/geo/ack + cmd/task/ack "
-                     "(HMI W2/W4/W7 uplink) "
+                     "+ cmd/geo/ack + cmd/task/ack + cmd/chassis/ctrl/ack "
+                     "(HMI W2/W4/W7/W9 uplink) "
                      "+ state/teach (read only)")
 
         # P5's own events from the HMI side (17 S6.2.1 WD-4), published like the
@@ -1539,7 +1596,8 @@ def run_voice_loop_wiring(stop_flag: dict,
         if hmi_cfg:
             hmi_server, _hmi_thread = _start_hmi(gen, hmi_cfg, hmi_state,
                                                  site_timezone,
-                                                 emit_event=_emit_hmi_event)
+                                                 emit_event=_emit_hmi_event,
+                                                 stamp=_stamp)
 
         try:
             last_hb = time.monotonic()
@@ -1747,7 +1805,7 @@ def run_voice_loop_wiring(stop_flag: dict,
             # tests/p_processes/test_wiring_teardown_covers_subs.py:
             # 那条判据用 AST 数[本函数里 X = ....declare_subscriber(...) 的
             # X] 与[本元组里的名字], 要求前者被后者全覆盖.
-            for entity in (teach_sub, geo_ack_sub, task_ack_sub,
+            for entity in (teach_sub, geo_ack_sub, task_ack_sub, ctrl_ack_sub,
                            ack_sub, task_sub, fence_sub, geo_sub, mode_sub,
                            audio_sub, pose_sub, clock_sub, robot_sub, power_sub,
                            event_sub, event_ack_sub, recon_rsp_sub, estop_pong_sub,

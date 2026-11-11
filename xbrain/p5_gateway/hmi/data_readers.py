@@ -198,6 +198,7 @@ def status_group(
     mode: Optional[str],
     link: Optional[Dict[str, Any]],
     health: Optional[Dict[str, Any]],
+    robot: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
     """17 S6.8 group C/E: footer status + link.
 
@@ -205,7 +206,8 @@ def status_group(
     field the ESTOP button greys itself by, 17 S6.3/NAV-64), health (P2 summary;
     the rtk item has no real input until rtk_driver, so its value may be null
     while its structure is present). None inputs are surfaced as null, not
-    defaulted.
+    defaulted. robot (state/robot, already staleness-gated by the wiring)
+    feeds the chassis-lock button, see chassis_lock_group.
     """
     estop_path = (link or {}).get("estop_path")
     return {
@@ -215,7 +217,34 @@ def status_group(
         "estop_path": estop_path,
         "link_latency_ms": (link or {}).get("latency_ms"),
         "health": health,                      # structure present, rtk value gated
+        "chassis_lock": chassis_lock_group(robot),
     }
+
+
+def chassis_lock_group(robot: Optional[Dict[str, Any]]) -> Dict[str, Any]:
+    """The chassis-lock button (99 U159), read back from state/robot (11 S4.1).
+
+    locked = hes_lock OR timeout_lock -- the two Tier 1 locks of 11 S9.12.2.
+    The derived `locked` field of S4.1 is NOT read: S4.1 marks it compat-only
+    and tells new code to use the two locks. A soft estop is not a lock (U35),
+    so it never turns the button red.
+
+    No state/robot, or a frame missing either lock field -> available False and
+    locked None: the button shows "unknown". Defaulting a missing lock to
+    False would paint a teal "unlocked" over a chassis nobody has heard from.
+    hes rides along so the frontend can say WHY an unlock will not clear
+    (S9.3.4 E-2: hes_lock only clears once the hardware stop is released).
+    """
+    if not robot:
+        return {"available": False, "locked": None, "hes_lock": None,
+                "timeout_lock": None, "hes": None}
+    hes_lock, timeout_lock = robot.get("hes_lock"), robot.get("timeout_lock")
+    if not isinstance(hes_lock, bool) or not isinstance(timeout_lock, bool):
+        return {"available": False, "locked": None, "hes_lock": hes_lock,
+                "timeout_lock": timeout_lock, "hes": robot.get("hes")}
+    return {"available": True, "locked": hes_lock or timeout_lock,
+            "hes_lock": hes_lock, "timeout_lock": timeout_lock,
+            "hes": robot.get("hes")}
 
 
 def events_group(events: Optional[Sequence[Dict[str, Any]]]) -> Dict[str, Any]:
@@ -288,6 +317,7 @@ def build_snapshot(
     events: Optional[Sequence[Dict[str, Any]]] = None,
     clock: Optional[Dict[str, Any]] = None,
     teach: Optional[Dict[str, Any]] = None,
+    robot: Optional[Dict[str, Any]] = None,
     site_timezone: Optional[str] = None,
 ) -> Dict[str, Any]:
     """Assemble the full 17 S6.8 HMI snapshot from P5 runtime state.
@@ -314,7 +344,7 @@ def build_snapshot(
         "geo": geo_group(fences, routes, waypoints, enu_origin),
         "pose": pose_group(pose),
         "plan": plan_group(tasks),
-        "status": status_group(mode, link, health),
+        "status": status_group(mode, link, health, robot),
         "events": events_group(events),
         "clock": clock_group(clock),
         "teach": teach_group(teach),

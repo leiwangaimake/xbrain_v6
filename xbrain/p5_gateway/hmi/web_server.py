@@ -114,7 +114,7 @@ class RuntimeStateProvider(Protocol):
 
     def send_uplink(self, key: str, payload: Dict[str, Any]) -> None:
         """Publish one HMI-originated command on the general plane (11 S12.1.1
-        W2/W4/W7). OPTIONAL: read via getattr, so a provider without it makes
+        W2/W4/W7/W9). OPTIONAL: read via getattr, so a provider without it makes
         the upstream classes answer E_NOT_IMPLEMENTED instead of failing the
         handshake -- the browser then shows a refusal rather than a dead link."""
         ...
@@ -223,6 +223,7 @@ _UPLINK_BUILDERS = {
     "geo": uplink.build_geo_command,                    # W4
     "task": uplink.build_task_command,                  # W7
     "goto": uplink.build_goto_command,                  # W2
+    "chassis_enable": uplink.build_chassis_enable_command,   # W9 (99 U159)
 }
 
 
@@ -331,10 +332,10 @@ async def _uplink_reader(websocket, provider, bucket, pending,
             await websocket.send_json(uplink.ack_frame(
                 req_id, req_type, "rejected", ref.code, ref.detail))
             continue
-        # The three classes this build serves, per _UPLINK_BUILDERS above:
-        # geo (W4), task (W7), goto (W2). estop (W1) is handled at G0 above
-        # (_answer_estop) and never reaches here, which closes the whole
-        # S12.1.1 whitelist.
+        # The four classes this build serves, per _UPLINK_BUILDERS above:
+        # geo (W4), task (W7), goto (W2), chassis_enable (W9). estop (W1) is
+        # handled at G0 above (_answer_estop) and never reaches here, which
+        # closes the whole S12.1.1 whitelist.
         # ~~"it has its own <=10 ms REST path"~~ -- superseded 2026-11-10: W1 is
         # now served on this socket first (17 S6.4); POST /api/estop remains only
         # as the frontend's fallback while the socket is down.

@@ -3,7 +3,7 @@ Copyright (c) 2026 Hachist Robotics
 Author: wanglei@hachist.com
 上海哈船智能船舶技术有限公司
 File: uplink.py
-Brief: HMI -> P5 upstream frames -- the 11 S12.1.1 whitelist (W2/W4/W7)
+Brief: HMI -> P5 upstream frames -- the 11 S12.1.1 whitelist (W2/W4/W7/W9)
 
 Description:
 The browser's writable surface. 11 S12.1.1 calls its table "the only
@@ -11,14 +11,23 @@ authoritative list of HMI upstream write operations in the whole document set",
 makes it frozen item F-8, and says in as many words that an implementer may not
 wire one more type in code. So the closed set here IS that table:
 
-    W1 estop | W2 goto | W4 geo | W7 task
+    W1 estop | W2 goto | W4 geo | W7 task | W9 chassis_enable
 
 W3, W5 and W6 are tombstones (never reused, so an old reference points at
 "removed" rather than silently at another class), and W8 is reserved-unopened.
 
-This module implements W2 (goto), W4 (geo) and W7 (task). W1 estop is the only
-whitelist class not built here: the WS reader forwards it at gate G0, before
-this module is consulted (17 S6.4).
+This module implements W2 (goto), W4 (geo), W7 (task) and W9 (chassis_enable).
+W1 estop is the only whitelist class not built here: the WS reader forwards it
+at gate G0, before this module is consulted (17 S6.4).
+
+*** W9 is the chassis-unlock button (99 U159). It sends 11 S9.3.4
+cmd/chassis/ctrl{action: enable}, the ONLY way to clear quadruped's
+timeout_lock (and hes_lock once the hardware stop is released). It is a
+LOOSENING command, so S9.3.4 E-1 asks for an L2 confirm -- the browser's
+two-click arm is that confirm, and a frame without confirm.level L2 is refused
+here. There is deliberately no "lock" counterpart: the contract has no lock
+command at all (a lock only comes from the hardware stop or a command timeout,
+S9.12.2), so the HMI cannot offer one.
 
 *** W2 and W7 both land on cmd/task, and neither writes anything itself.
 S12.1.1 requires goto to become a TASK rather than a BehaviorCommand (the fence
@@ -71,10 +80,10 @@ from xbrain.common.errors import (
     E_SCHEMA,
 )
 
-#: 11 S12.1.1 upstream `type` closed set. Four values; W3/W5/W6 are tombstones
+#: 11 S12.1.1 upstream `type` closed set. Five values; W3/W5/W6 are tombstones
 #: and W8 is reserved. Adding a member here without amending S12.1.1 first is
 #: the thing F-8 exists to prevent.
-UPSTREAM_TYPES = frozenset({"estop", "goto", "geo", "task"})
+UPSTREAM_TYPES = frozenset({"estop", "goto", "geo", "task", "chassis_enable"})
 
 #: The W4 ops the HMI may ask for, and the confirmation level each carries
 #: (S12.1.1 W4 row). refs is read-only. Any geo action outside this map -- force,
@@ -272,6 +281,43 @@ def build_task_command(msg: Dict[str, Any]) -> Any:
         payload["task_id"] = task_id
     return UplinkCommand(key="cmd/task", payload=payload, req_id=str(req_id),
                          req_type="task")
+
+
+def build_chassis_enable_command(msg: Dict[str, Any]) -> Any:
+    """W9: the HMI chassis-unlock button -> cmd/chassis/ctrl{enable}, or a refusal.
+
+    *** L2 is required (11 S9.3.4 E-1): enable lets a robot that locked itself
+    after losing its upstream move again, so a stray click must not do it. The
+    browser arms the button on the first click and sends on the second, with
+    confirm.level L2. A frame without it is refused E_CONFIRM_REQUIRED.
+
+    *** confirm_token: S9.3.4 makes it mandatory for enable, and P2's BOOT-L1
+    gate refuses an enable without one. No token-issuing service exists on the
+    robot (commx sends a fixed operator token), so the token here is derived
+    from the confirmed request -- "h-" + req_id -- which ties the unlock to the
+    one two-click confirmation that produced it and shows up in every log.
+
+    The body is published inside an 11 S3.0 envelope by the P5 wiring (S9.3.4
+    E-3: quadruped refuses a bare body); this function builds only the data.
+    Whether the lock really cleared is NOT decided here: quadruped may accept
+    the frame and still keep hes_lock while the hardware stop is pressed
+    (S9.12.2), so the HMI reads the result back from state/robot (BOOT-L3).
+    """
+    req_id = msg.get("req_id")
+    if not _has_confirm(msg, "L2"):
+        return UplinkRefusal(
+            E_CONFIRM_REQUIRED, "chassis unlock requires confirm.level L2 "
+            "(11 S9.3.4 E-1)", {"reason": "unlock_confirm_required"})
+    cmd_id = CMD_ID_PREFIX + str(req_id)
+    payload: Dict[str, Any] = {
+        "cmd_id": cmd_id,
+        "action": "enable",
+        # CH-2: stamped "hmi", never read from the frame (S9.3.4 origin set).
+        "origin": "hmi",
+        "confirm_token": cmd_id,
+    }
+    return UplinkCommand(key="cmd/chassis/ctrl", payload=payload,
+                         req_id=str(req_id), req_type="chassis_enable")
 
 
 #: W2 (user 2026-11-10): a coordinate tap must BE a route point. The frontend
