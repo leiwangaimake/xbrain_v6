@@ -221,6 +221,57 @@ def status_group(
     }
 
 
+#: Battery slot index -> on-screen label (user ruling 2026-11-11, 99 U160:
+#: "0 is A, 1 is B"). The chassis still reports battery_mapping "unknown"
+#: (13 BAT-1..4 / V-55), so this is the operator's on-site confirmation,
+#: not a left/right claim; state/power.list[] stays the authority.
+BATTERY_LABELS = {0: "A", 1: "B"}
+
+
+def battery_group(power: Optional[Dict[str, Any]]) -> Dict[str, Any]:
+    """The toolbar battery gauges (99 U160), from state/power.list[] (11 S4.2).
+
+    One entry per slot in BATTERY_LABELS, in label order, each:
+      present True  -> level_pct / temp_c / voltage_v / charging as reported;
+      present False -> "absent": level/temp/voltage None. *** The chassis
+                       reports an empty slot as level 0, 0 V, -273 C (measured
+                       2026-11-11); passing those through would paint a red
+                       "0%" and an impossible temperature over a slot that is
+                       simply empty.
+      no entry / malformed -> "unknown" for that slot.
+    power None (never arrived / stale, gated by the wiring) -> available False
+    and every slot unknown: the gauges grey out rather than keep old numbers.
+    A non-numeric level or temperature on a present pack is None, not 0.
+    """
+    def _num(v: Any) -> Optional[float]:
+        return float(v) if isinstance(v, (int, float)) and not isinstance(v, bool) else None
+
+    rows = (power or {}).get("list")
+    by_index: Dict[int, Dict[str, Any]] = {}
+    if isinstance(rows, list):
+        for row in rows:
+            if isinstance(row, dict) and isinstance(row.get("index"), int):
+                by_index[row["index"]] = row
+    packs = []
+    for index, label in sorted(BATTERY_LABELS.items()):
+        row = by_index.get(index) if power else None
+        if row is None or not isinstance(row.get("present"), bool):
+            packs.append({"label": label, "index": index, "state": "unknown",
+                          "level_pct": None, "temp_c": None, "voltage_v": None,
+                          "charging": None})
+        elif not row["present"]:
+            packs.append({"label": label, "index": index, "state": "absent",
+                          "level_pct": None, "temp_c": None, "voltage_v": None,
+                          "charging": None})
+        else:
+            packs.append({"label": label, "index": index, "state": "present",
+                          "level_pct": _num(row.get("level_pct")),
+                          "temp_c": _num(row.get("temp_c")),
+                          "voltage_v": _num(row.get("voltage_v")),
+                          "charging": row.get("charging") is True})
+    return {"available": bool(power) and isinstance(rows, list), "packs": packs}
+
+
 def chassis_lock_group(robot: Optional[Dict[str, Any]]) -> Dict[str, Any]:
     """The chassis-lock button (99 U159), read back from state/robot (11 S4.1).
 
@@ -318,6 +369,7 @@ def build_snapshot(
     clock: Optional[Dict[str, Any]] = None,
     teach: Optional[Dict[str, Any]] = None,
     robot: Optional[Dict[str, Any]] = None,
+    power: Optional[Dict[str, Any]] = None,
     site_timezone: Optional[str] = None,
 ) -> Dict[str, Any]:
     """Assemble the full 17 S6.8 HMI snapshot from P5 runtime state.
@@ -348,6 +400,7 @@ def build_snapshot(
         "events": events_group(events),
         "clock": clock_group(clock),
         "teach": teach_group(teach),
+        "battery": battery_group(power),   # toolbar gauges (99 U160)
         "timezone": tz,
     }
 

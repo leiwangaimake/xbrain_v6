@@ -130,6 +130,10 @@ POSE_STALE_AFTER_MS = 1500
 # from it; once it has been silent this long the button must say "unknown",
 # never keep a stale "unlocked" on screen. Same window as pose, same reason.
 ROBOT_STALE_AFTER_MS = 1500
+# state/power is 1 Hz (CR-5). The toolbar battery gauges (99 U160) grey out
+# once it has been silent for three periods, so a dead chassis_relay cannot
+# leave the last percentages on screen as if they were live.
+POWER_STALE_AFTER_MS = 3000
 # 11 CLK-A3 verbatim: >= 5 s without ClockStatus -> ts_sync is false. Used by the
 # HMI clock readout and the estop-probe envelope ts_sync (2026-10-24 review: both
 # read the last state/clock forever). cloud_state.CLOCK_STALE_MS is the same 5 s.
@@ -246,6 +250,21 @@ def _robot_if_fresh(hmi_state: dict, now_ms: int):
     if not isinstance(updated, (int, float)):
         return None
     return robot if (now_ms - updated) <= ROBOT_STALE_AFTER_MS else None
+
+
+def _power_if_fresh(hmi_state: dict, now_ms: int):
+    """state/power data only while younger than POWER_STALE_AFTER_MS, else None.
+
+    None makes the battery gauges (99 U160) read "unknown" instead of the last
+    percentages -- the same fail-safe rule as _robot_if_fresh.
+    """
+    power = hmi_state.get("power")
+    if not power:
+        return None
+    updated = hmi_state.get("power_updated_ms")
+    if not isinstance(updated, (int, float)):
+        return None
+    return power if (now_ms - updated) <= POWER_STALE_AFTER_MS else None
 
 
 def hmi_estop_cmd_id(boot: str, seq: int) -> str:
@@ -478,6 +497,8 @@ def _start_hmi(gen, hmi_cfg: dict, hmi_state: dict,
                 # state/robot (CR-4) for the chassis-lock button (99 U159);
                 # None once stale so the button reads "unknown", not a lock state.
                 "robot": _robot_if_fresh(hmi_state, _now_mono_ms()),
+                # state/power (CR-5) for the toolbar battery gauges (99 U160).
+                "power": _power_if_fresh(hmi_state, _now_mono_ms()),
                 "health": hmi_state.get("health"),  # health/factor (W8)
                 "teach": hmi_state.get("teach"),   # state/teach (S12A.5, read only)
             }

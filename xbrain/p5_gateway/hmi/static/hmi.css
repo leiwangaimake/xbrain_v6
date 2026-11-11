@@ -91,6 +91,30 @@ body { margin: 0; overflow: hidden; background: var(--bg); color: var(--ink);
 .chassis-lock-btn.locked.confirm { animation: chassis-lock-arm 1s ease-in-out infinite; }
 @keyframes chassis-lock-arm { 50% { box-shadow: 0 0 0 4px rgba(255,255,255,.35); } }
 .chassis-lock-btn.unlocked { background: #10a83c; border-color: #34d05f; cursor: default; }
+/* Battery gauges (99 U160): two slots A / B after the chassis-lock button,
+   each a label, a bar the height of the ESTOP button with the percentage
+   inside, and the pack temperature in neutral white (the contract defines no
+   temperature limit, so no warning colour is invented for it). The fill width
+   is the level; its colour is the user's rule: >= 50 green (the same emerald as
+   the unlocked button), 20-49 yellow, < 20 red. Absent = grey stripes, unknown
+   = plain grey; neither draws a fill. */
+.battery-box { display: flex; align-items: center; gap: 10px; margin-left: 12px;
+  color: #fff; font-weight: 700; font-size: 22px; }
+.battery-title { letter-spacing: 1px; }
+.battery-cell { display: flex; align-items: center; gap: 6px; }
+.battery-bar { position: relative; display: inline-block; width: 140px; height: 44px;
+  border: 2px solid #9aa4b2; border-radius: 5px; background: #1b2230; overflow: hidden; }
+.battery-fill { position: absolute; left: 0; top: 0; bottom: 0; width: 0; }
+.battery-text { position: relative; display: block; text-align: center; line-height: 40px;
+  text-shadow: 0 1px 2px rgba(0,0,0,.8); }
+.battery-cell.ok   .battery-fill { background: #10a83c; }
+.battery-cell.warn .battery-fill { background: #e6b800; }
+.battery-cell.low  .battery-fill { background: #d01818; }
+.battery-cell.absent .battery-bar { background: repeating-linear-gradient(45deg,
+  #3a4150 0 8px, #2a303c 8px 16px); }
+.battery-cell.absent .battery-text,
+.battery-cell.unknown .battery-text { color: #c8ccd4; }
+.battery-temp { min-width: 62px; font-size: 20px; color: #fff; }
 .chassis-lock-btn.unknown,
 .chassis-lock-btn:disabled { background: #7a7a7a; border-color: #9a9a9a; color: #e8e8e8;
   cursor: not-allowed; }

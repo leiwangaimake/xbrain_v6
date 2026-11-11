@@ -284,6 +284,7 @@
     // (state/task) still drives the `patrolling` trajectory flag above.
     renderStatus(snap.status || {}, snap.pose || {}, origin, snap.clock || {});
     renderChassisLock((snap.status || {}).chassis_lock || {});   // 99 U159
+    renderBattery(snap.battery || {});                            // 99 U160
     renderHeading(snap.pose || {});
     renderTeach(snap.teach || {}, origin);
     renderGotoPins();                     // W2 target dot(s), fixed screen size
@@ -1815,6 +1816,48 @@
     const d = m.detail || {};
     showBanner("fail", "解锁被拒绝 " + (m.code || "") +
                ((d.reason_text || d.reason) ? ": " + (d.reason_text || d.reason) : ""));
+  }
+
+  // -- battery gauges (99 U160) ------------------------------------------
+  // Slot 0 = A, slot 1 = B (user ruling), from snapshot.battery, which P5
+  // builds from state/power.list[] and greys out when state/power is stale.
+  // Colour rule (user 2026-11-11): >= 50 green, 20-49 yellow, < 20 red. An
+  // empty slot says 未插入 (the chassis reports it as 0% / -273 C, which P5
+  // already dropped); unknown says 未知. Temperature is shown as a plain
+  // number: the contract defines no battery temperature limit, so the HMI
+  // does not invent a warning colour for it.
+  // <battery-view>
+  function batteryCellView(pack) {
+    const p = pack || {};
+    if (p.state === "absent") {
+      return { cls: "absent", text: "未插入", width: 0, temp: "--" };
+    }
+    if (p.state !== "present" || typeof p.level_pct !== "number") {
+      return { cls: "unknown", text: "未知", width: 0, temp: "--" };
+    }
+    const lv = Math.max(0, Math.min(100, p.level_pct));
+    const cls = lv >= 50 ? "ok" : (lv >= 20 ? "warn" : "low");
+    const temp = typeof p.temp_c === "number" ? p.temp_c.toFixed(1) + "℃" : "--";
+    return { cls: cls, text: (p.charging ? "⚡" : "") + Math.round(lv) + "%",
+             width: lv, temp: temp };
+  }
+  // </battery-view>
+  function renderBattery(bat) {
+    const packs = (bat && bat.packs) || [];
+    for (const [id, label] of [["batteryA", "A"], ["batteryB", "B"]]) {
+      const el = $(id); if (!el) continue;
+      const pack = packs.find((x) => x && x.label === label) || {};
+      const v = batteryCellView(pack);
+      el.className = "battery-cell " + v.cls;
+      el.querySelector(".battery-fill").style.width = v.width + "%";
+      el.querySelector(".battery-text").textContent = v.text;
+      el.querySelector(".battery-temp").textContent = v.temp;
+      el.title = "电池 " + label + (v.cls === "absent" ? ": 槽位无电池"
+        : v.cls === "unknown" ? ": 未收到电量数据"
+        : ": " + v.text + "  " + v.temp +
+          (typeof pack.voltage_v === "number" ? "  " + pack.voltage_v.toFixed(1) + "V" : "") +
+          (pack.charging ? "  充电中" : ""));
+    }
   }
 
   // Offline refusals keep this name.
