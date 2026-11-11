@@ -27,8 +27,8 @@ and quoted a code E_RATE_LIMIT. Neither survives a check against the contract:
 So the two closed sets below are an IMPLEMENTATION RECORD of the kinds this
 build sends and accepts, not a contract citation. The authoritative upstream
 whitelist is 11 S12.1.1 (frozen item F-8) and it keys off `type`, not `kind`:
-estop | goto | geo | task (W3 exit_broadcast removed, 99 U158). That set
-lives in hmi/uplink.py, which is what the WS reader actually consults.
+estop | goto | geo | task. That set lives in hmi/uplink.py, which is what
+the WS reader actually consults.
 
 Of the nine downstream kinds, this build sends three -- state_snapshot,
 state_delta and ack. The rest are unimplemented names.

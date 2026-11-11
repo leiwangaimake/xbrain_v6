@@ -15,9 +15,6 @@ wire one more type in code. So the closed set here IS that table:
 
 W3, W5 and W6 are tombstones (never reused, so an old reference points at
 "removed" rather than silently at another class), and W8 is reserved-unopened.
-W3 exit_broadcast was the last to go (99 U158, user 2026-11-10: "the HMI does
-not need this function"); a frame of that type now fails the whitelist check in
-parse_envelope like any other unlisted type.
 
 This module implements W2 (goto), W4 (geo) and W7 (task). W1 estop is the only
 whitelist class not built here: the WS reader forwards it at gate G0, before

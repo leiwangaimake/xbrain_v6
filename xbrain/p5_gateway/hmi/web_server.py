@@ -223,8 +223,6 @@ _UPLINK_BUILDERS = {
     "geo": uplink.build_geo_command,                    # W4
     "task": uplink.build_task_command,                  # W7
     "goto": uplink.build_goto_command,                  # W2
-    # W3 exit_broadcast removed (99 U158): its type is no longer whitelisted,
-    # so uplink.parse_envelope refuses it before this map is reached.
 }
 
 
@@ -340,9 +338,6 @@ async def _uplink_reader(websocket, provider, bucket, pending,
         # ~~"it has its own <=10 ms REST path"~~ -- superseded 2026-11-10: W1 is
         # now served on this socket first (17 S6.4); POST /api/estop remains only
         # as the frontend's fallback while the socket is down.
-        # ~~"The four classes ... exit_broadcast (W3)"~~ -- superseded
-        # 2026-11-10: W3 was removed from the HMI (99 U158), so its type now
-        # fails parse_envelope's whitelist check above and never gets here.
         #
         # Anything NOT in the map still gets not_implemented, so "not built
         # yet" never reads as "your frame was wrong".

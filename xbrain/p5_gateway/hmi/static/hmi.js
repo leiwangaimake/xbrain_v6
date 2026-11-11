@@ -1039,7 +1039,7 @@
   // and put "link lost" across the top -- never keep rendering as if all were
   // well, or the operator believes they are still in control. Two degrees:
   //   * socket down, REST snapshots still arriving: the picture is live but
-  //     commands (task / goto / exit broadcast) have no path -> locked;
+  //     commands (task / goto) have no path -> locked;
   //   * nothing arriving for 2 s (LINK_DEAD_MS, same judgement as the ESTOP
   //     view): the picture itself is frozen -> say so.
   // The ESTOP button is NOT governed here: estopView owns it, and it stays

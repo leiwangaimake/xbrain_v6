@@ -59,9 +59,6 @@ CMD_GEO_ACK_TOPIC = "cmd/geo/ack"
 #: it uses one that was reserved for the HMI and never declared.
 CMD_TASK_TOPIC = "cmd/task"
 CMD_TASK_ACK_TOPIC = "cmd/task/ack"
-# ~~W3 exit_broadcast -> cmd/mode (CMD_MODE_TOPIC / CMD_MODE_ACK_TOPIC)~~ --
-# removed 2026-11-10 (99 U158): the HMI no longer has an exit-broadcast button,
-# so P5 neither publishes cmd/mode for the HMI nor listens to cmd/mode/ack.
 #: 17 S6.2.1 WD-1/WD-6: the release P5 sends when an HMI WebSocket closes and on
 #: P5's own shutdown. 11 S2.2.4 registers p5_gateway as this key's sole
 #: publisher, so the declaration needs no CR (WD-5). Not an uplink class -- the
