@@ -182,7 +182,7 @@ _Q_LENGTH = re.compile(r"^(?:查询|查一下|请问|告诉我)?(?P<x>.+?(?:路�
                        r"(?:有)?(?:多长|多少米|长度是多少|全长多少)(?:呢|啊)?$")  # route length
 
 #: A lap count at the end of a patrol: "3圈", "两遍", "一趟".
-_LOOPS = r"(?P<n>[0-9]+|[一二两三四五六七八九十]+)(?:圈|遍|趟|次)"  # digits or CJK numerals
+_LOOPS = r"(?P<n>[0-9]+|[零一二两三四五六七八九十百千万]+)(?:圈|遍|趟|次)"  # digits or CJK numerals
 #: The patrol verb, plain or as a round trip (U131): "巡逻" / "来回巡逻" /
 #: "来回巡" / "来回走". The bare 巡 and 走 only count after 来回 -- alone they
 #: are other words (巡航, 走路).
@@ -199,7 +199,7 @@ _REPEAT_XUN = re.compile(r"^(?:再|又)(?P<rt>来回)?(?:巡逻|巡查|巡检|�
 #: "再来一圈" / "再走两圈": 来 and 走 are too common to stand alone, so only
 #: with a lap count in 圈 (再来一次 repeats anything, 再走一趟 goes somewhere).
 _REPEAT_LAI = re.compile(r"^(?:再|又)(?P<rt>来回)?(?:来|走)"
-                         r"(?P<n>[0-9]+|[一二两三四五六七八九十]+)圈(?:吧|了)*$")  # count required
+                         r"(?P<n>[0-9]+|[零一二两三四五六七八九十百千万]+)圈(?:吧|了)*$")  # count required
 #: "来回巡三次" with no route and no 再: a round trip on the route just
 #: patrolled. The count is required (bare "来回巡逻" asks which route).
 _REPEAT_RT = re.compile(r"^(?P<rt>来回)(?:巡逻|巡查|巡检|巡)" + _LOOPS + r"(?:吧|了)*$")  # count required
@@ -232,29 +232,45 @@ _ROUTE_TAIL_FULL = ("路径", "路线", "线路", "环线")  # full route names
 _FENCE_TAIL = "围栏"  # a fence name
 #: A route object that is really just a lap count or a place word.
 _LAPS_ONLY = re.compile("^" + _LOOPS + "$")  # "巡逻一圈": no route named
-_CN_DIGIT = {"一": 1, "二": 2, "两": 2, "三": 3, "四": 4, "五": 5, "六": 6,
+_CN_DIGIT = {"零": 0, "一": 1, "二": 2, "两": 2, "三": 3, "四": 4, "五": 5, "六": 6,
              "七": 7, "八": 8, "九": 9}  # CJK numerals for lap counts
 
 
+_CN_UNIT = {"十": 10, "百": 100, "千": 1000}
+
+
+def _cn_int(n: str) -> Optional[int]:
+    """A Chinese numeral as an int: "三" 3, "十二" 12, "一百零五" 105, "两百"
+    200, "三千" 3000, "一万二千" 12000; None for anything it cannot read. A
+    unit with no digit before it counts one ("十二", "百五" is not a numeral and
+    reads as None)."""
+    total, section, num, seen = 0, 0, None, False
+    for ch in n:
+        if ch in _CN_DIGIT:
+            num, seen = _CN_DIGIT[ch], True
+        elif ch in _CN_UNIT:
+            section += (1 if num is None else num) * _CN_UNIT[ch]
+            num, seen = None, True
+        elif ch == "万":
+            total += (section + (num or 0)) * 10000
+            section, num, seen = 0, None, True
+        else:
+            return None
+    if not seen:
+        return None
+    return total + section + (num or 0)
+
+
 def _laps(n: Optional[str]) -> Optional[int]:
-    """The lap count as an int: "3" / "三" / "十二" -> 3 / 3 / 12; None when
-    nothing was said. Only 1..99 is a count; anything else is None."""
+    """The lap count as an int: "3" / "三" / "十二" / "一百零五" -> 3 / 3 / 12 /
+    105; None when nothing was said. Any count of at least one lap is a count:
+    ~~only 1..99~~ -- the 99 cap was removed 2026-11-11 (99 U163, user ruling:
+    no limit on a navigation task); the numeral reader learned 百 / 千 / 万
+    at the same time, since "巡逻一百圈" used to read as no count at all."""
     if not n:  # no lap count in the sentence
         return None  # the caller treats "not said" as one lap
-    if n.isdigit():  # Arabic digits
-        v = int(n)  # as said
-    elif n == "十":  # ten alone
-        v = 10  # 十
-    elif n.startswith("十"):  # 十X = 10 + X
-        v = 10 + _CN_DIGIT.get(n[1:], 0)  # 十二 -> 12
-    elif n.endswith("十"):  # X十 = 10X
-        v = 10 * _CN_DIGIT.get(n[:-1], 0)  # 二十 -> 20
-    elif "十" in n:  # X十Y
-        a, b = n.split("十", 1)  # tens and units
-        v = 10 * _CN_DIGIT.get(a, 0) + _CN_DIGIT.get(b, 0)  # 二十三 -> 23
-    else:  # a single CJK digit
-        v = _CN_DIGIT.get(n, 0)  # 三 -> 3
-    return v if 1 <= v <= 99 else None  # out of range: not a count
+    v = int(n) if n.isdigit() else _cn_int(n)  # Arabic digits or a Chinese numeral
+    return v if v is not None and v >= 1 else None  # zero / unreadable: not a count
 
 
 def _patrol(t: str, when: Optional[TimeExpr]) -> Optional[PtpParse]:
@@ -281,13 +297,13 @@ def _patrol(t: str, when: Optional[TimeExpr]) -> Optional[PtpParse]:
 def _repeat(t: str, when: Optional[TimeExpr]) -> Optional[PtpParse]:
     """B04 "再巡一圈" / "来回巡三次" (U131): no route named, the latest
     completed patrol again. None when t is not one of those sentences or
-    its count is not a count (out of 1..99)."""
+    its count is not a count (zero, or not a numeral)."""
     m = _REPEAT_XUN.match(t) or _REPEAT_LAI.match(t) or _REPEAT_RT.match(t)  # 再巡 / 再来N圈 / 来回巡N次
     if not m:  # not a repeat
         return None  # the other rules look
     n = m.group("n")  # the spoken count, if any
     loops = _laps(n)  # as an int
-    if n and loops is None:  # "再巡一百圈": said but not a count
+    if n and loops is None:  # "再巡零圈": said but not a count
         return None  # not ours; the keyword layer answers
     return PtpParse("repeat", "", when=when, loops=loops,  # B04
                     round_trip=bool(m.group("rt")))  # "来回"

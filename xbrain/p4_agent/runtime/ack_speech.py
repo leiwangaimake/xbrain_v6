@@ -88,6 +88,7 @@ from xbrain.p4_agent.runtime.intent_dispatch import (  # the command keys
 )
 from xbrain.p4_agent.runtime.voice_turn import encode as encode_turn  # 11 S8.7.6
 from xbrain.p4_agent.runtime.voice_turn import new_turn_id  # result record id
+from xbrain.p4_agent.runtime.voice_turn import SESSION_OF_CHANNEL  # channel -> session (11 S8.7.6)
 
 #: 99 U162: the recording actions whose RESULT also goes out as a second
 #: state/voice_turn record -- the turn's own record only says "正在保存 X"
@@ -125,6 +126,14 @@ _RTK_SOURCE = "tts_local"
 #: low-battery episode lasts. Only the one marked first is spoken (the ruling:
 #: a SINGLE voice alarm; the cloud gets them all).
 CHARGING_EVENT_KEY = "event/*/charging"  # wiring subscribes this
+#: 99 U163: the recording reports P3 raises with no command behind them (the
+#: time-left warnings, the auto-finish at the time limit).
+TEACH_EVENT_KEY = "event/*/teach"  # wiring subscribes this
+#: S12A.4 issuer.channel -> the 11 S8.7.6 voice_turn channel the report is
+#: recorded under: the session that started the recording sees its end.
+_TEACH_CHANNEL = (("local", "mic_local"), ("cloud", "cloud"), ("hmi", "hmi"),
+                  ("wecom", "wecom"))
+_KIND_CN = {"route": "路径", "fence": "围栏"}
 _LB_SPEECH = {  # by detail.type
     "low_battery": "电量剩余{soc}%, 正在返回{target}",  # going to a dock / home
     "low_battery_unreachable": "电量剩余{soc}%, 正在返回{target}, 剩余电量可能不够走到",  # range may not cover it
@@ -415,6 +424,72 @@ def low_battery_speech(data: bytes) -> Optional[Tuple[str, bytes]]:  # P3 marks 
     soc_txt = "%d" % int(round(soc)) if isinstance(soc, (int, float)) and not isinstance(soc, bool) else "不足"  # whole percent
     text = template.format(soc=soc_txt, target=detail.get("target_name") or "充电点")  # the sentence
     return _speak(text, _RTK_SOURCE)  # a local alarm voice
+
+
+def _teach_event_text(detail: Dict[str, Any]) -> Optional[str]:
+    """99 U163: the sentence for one recording report (11 S12A.12
+    teach.time_warning, or teach.expired by detail.result), None for any
+    other teach event -- those are not spoken. ASCII punctuation (CLAUDE.md 2.2)."""
+    kind = _KIND_CN.get(detail.get("session_kind"), "录制")
+    name = detail.get("name") or ""
+    mins = int(round((detail.get("duration_s") or 0) / 60.0))
+    ev = detail.get("kind")
+    if ev == "teach.time_warning":
+        left = max(1, int(-(-(detail.get("remaining_s") or 0) // 60)))  # whole minutes, rounded up
+        return "%s%s的录制还剩%d分钟, 到时会自动结束并保存" % (kind, name, left)
+    if ev != "teach.expired":
+        return None
+    result = detail.get("result")
+    if result == "saved":
+        n, length = detail.get("point_count"), detail.get("length_m")
+        tail = "共%s个点, 长%s米" % (n, int(round(length))) if isinstance(length, (int, float)) else ""
+        if detail.get("session_kind") == "fence":
+            return ("录制已到%d分钟上限, 已自动保存为围栏%s, %s. 围栏没有启用, 需要时请说启用围栏%s"
+                    % (mins, name, tail, name))
+        return "录制已到%d分钟上限, 已自动保存为路径%s, %s" % (mins, name, tail)
+    if result == "save_failed":
+        why = "名字已被占用" if detail.get("code") == E_NAME_CONFLICT else "写入失败"
+        return ("录制已到%d分钟上限, %s%s自动保存失败, %s. 录制数据还在, 请说保存为新的名字, 或者放弃录制"
+                % (mins, kind, name, why))
+    if result == "discarded":
+        return "录制已到%d分钟上限, %s%s的轨迹无效, 没有保存" % (mins, kind, name)
+    if result == "awaiting_name":
+        return "录制已到%d分钟上限, 已停止录制. 请说保存为某个名字, 或者放弃录制" % mins
+    return None
+
+
+def teach_event_frames(data: bytes, voice_turn_key: Optional[str]) -> list:
+    """99 U163: what to publish for one event/*/teach report -- the spoken
+    sentence, and a state/voice_turn record so the HMI and the cloud see it in
+    the conversation log (layer teach_result, like U162's finish result). []
+    for a report that is not ours to speak or not marked first.
+
+    The record has no ASR (asr_raw / asr_text empty: nobody spoke) and no
+    intent; it is filed under the channel that started the recording, so the
+    operator who started it from the cloud reads its end in the cloud
+    session. verdict is accepted for a warning and a save, rejected when the
+    recording was not saved (failed / discarded / waiting for a name)."""
+    ev = _json(data)
+    detail = ev.get("detail") if isinstance(ev, dict) else None
+    if not isinstance(detail, dict) or detail.get("first") is not True:
+        return []
+    text = _teach_event_text(detail)
+    if text is None:
+        return []
+    out = [_speak(text, _RTK_SOURCE)]  # a local announcement
+    if voice_turn_key:
+        issuer = str(detail.get("channel") or "")
+        channel = next((c for p, c in _TEACH_CHANNEL if issuer.startswith(p)), "mic_local")
+        ok = detail.get("kind") == "teach.time_warning" or detail.get("result") == "saved"
+        out.append((voice_turn_key, encode_turn({
+            "turn_id": new_turn_id(), "session": SESSION_OF_CHANNEL[channel],
+            "channel": channel, "asr_raw": "", "asr_text": "", "corrections": [],
+            "bypass": None, "intent": None, "slots": {}, "auth_level": None,
+            "verdict": "accepted" if ok else "rejected",
+            "reject_code": None if ok else (detail.get("code") or E_TEACH_STATE),
+            "reply_text": text, "reply_kind": "stream",
+            "layer": TEACH_RESULT_LAYER, "ts_mono": time.monotonic()})))
+    return out
 
 
 def teach_result_turn(turn: Dict[str, Any], ack: Dict[str, Any], text: str,

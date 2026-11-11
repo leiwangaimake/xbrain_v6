@@ -512,3 +512,71 @@ def test_result_record_once_and_only_for_our_commands():
     assert _turns(sp.on_ack_frames(_b(_SAVED)))  # first: published
     assert sp.on_ack_frames(_b(_SAVED)) == []  # again: already answered
     assert sp.on_ack_frames(_b({**_SAVED, "cmd_id": "other"})) == []  # not ours
+
+
+# -- 99 U163: recording reports with no command behind them -----------------------------
+def _teach(result, first=True, **detail):  # one P3 recording report
+    """event/{sev}/teach bytes (11 S12A.12): "warning" -> teach.time_warning,
+    anything else -> teach.expired with that detail.result."""
+    ev = ({"kind": "teach.time_warning"} if result == "warning"
+          else {"kind": "teach.expired", "result": result})
+    return _b({"sev": "warn", "cat": "teach", "detail": dict(detail, first=first, **ev)})
+
+
+_BRIEF = {"name": "1号路径", "session_kind": "route", "channel": "local_voice", "duration_s": 10800}
+
+
+@pytest.mark.parametrize("kind,detail,text", [
+    ("warning", {"remaining_s": 600}, "路径1号路径的录制还剩10分钟, 到时会自动结束并保存"),
+    ("warning", {"remaining_s": 59.5}, "路径1号路径的录制还剩1分钟, 到时会自动结束并保存"),
+    ("saved", {"point_count": 10800, "length_m": 5400.4},
+     "录制已到180分钟上限, 已自动保存为路径1号路径, 共10800个点, 长5400米"),
+    ("save_failed", {"code": "E_NAME_CONFLICT"},
+     "录制已到180分钟上限, 路径1号路径自动保存失败, 名字已被占用. 录制数据还在, 请说保存为新的名字, 或者放弃录制"),
+    ("discarded", {}, "录制已到180分钟上限, 路径1号路径的轨迹无效, 没有保存"),
+    ("awaiting_name", {}, "录制已到180分钟上限, 已停止录制. 请说保存为某个名字, 或者放弃录制"),
+])
+def test_each_recording_report_is_spoken(kind, detail, text):
+    """99 U163. MUTATION: drop a result from _teach_event_text -> no speech -> red."""
+    from xbrain.p4_agent.runtime.ack_speech import teach_event_frames
+    out = teach_event_frames(_teach(kind, **dict(_BRIEF, **detail)), None)
+    assert len(out) == 1 and _said(out[0]) == ("cmd/audio/speak", text, "tts_local")
+
+
+def test_a_fence_save_says_it_is_not_enabled():
+    from xbrain.p4_agent.runtime.ack_speech import teach_event_frames
+    out = teach_event_frames(_teach("saved", **dict(
+        _BRIEF, session_kind="fence", name="仓库", point_count=40, length_m=120.0)), None)
+    assert "围栏没有启用, 需要时请说启用围栏仓库" in _said(out[0])[1]
+
+
+def test_a_recording_report_goes_on_voice_turn_under_its_channel():
+    """The record the HMI and the cloud read: no ASR, layer teach_result, filed
+    under the channel that started the recording, verdict by outcome.
+    MUTATION: hard-code mic_local -> the cloud row -> red; verdict accepted on
+    a failure -> red; first=False still spoken -> red."""
+    from xbrain.p4_agent.runtime.ack_speech import teach_event_frames
+    key = "xbrain/gj-001/state/voice_turn"
+    out = teach_event_frames(_teach("saved", **dict(
+        _BRIEF, channel="cloud_voice", point_count=10, length_m=5.0)), key)
+    assert [k for k, _ in out] == ["cmd/audio/speak", key]
+    rec = json.loads(out[1][1])
+    assert (rec["channel"], rec["session"], rec["layer"], rec["verdict"]) == (
+        "cloud", "cloud", "teach_result", "accepted")
+    assert rec["asr_raw"] == "" and rec["reply_text"].startswith("录制已到180分钟上限")
+    bad = teach_event_frames(_teach("save_failed", **dict(
+        _BRIEF, code="E_NAME_CONFLICT")), key)
+    rec2 = json.loads(bad[1][1])
+    assert rec2["verdict"] == "rejected" and rec2["reject_code"] == "E_NAME_CONFLICT"
+    assert rec2["channel"] == "mic_local"
+    assert teach_event_frames(_teach("saved", first=False, **_BRIEF), key) == []
+
+
+def test_other_teach_events_are_not_spoken():
+    """Only teach.time_warning and teach.expired are spoken; the rest of the
+    11 S12A.12 rows (an operator's own start / save) are answered by their ack.
+    MUTATION: speak any teach event -> red."""
+    from xbrain.p4_agent.runtime.ack_speech import teach_event_frames
+    for kind in ("teach.started", "teach.saved", "teach.discarded"):
+        ev = _b({"sev": "info", "cat": "teach", "detail": dict(_BRIEF, kind=kind, first=True)})
+        assert teach_event_frames(ev, "k") == []

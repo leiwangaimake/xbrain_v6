@@ -183,10 +183,11 @@ def test_repeat(text, loops, rt):  # B04
     assert got.loops == loops and got.round_trip is rt  # as said
 
 
-@pytest.mark.parametrize("text", ["再来一次", "再走一趟", "来回巡逻", "来回走三次", "再巡一百圈"])
+@pytest.mark.parametrize("text", ["再来一次", "再走一趟", "来回巡逻", "来回走三次", "再巡零圈"])
 def test_not_a_repeat(text):  # U131 boundaries
     """再来一次 repeats anything; 再走一趟 goes somewhere; 来回巡逻 with no
-    count asks which route; 来回走 alone is not patrol; 一百 is not a count.
+    count asks which route; 来回走 alone is not patrol; 零 is not a count
+    (~~一百 is not a count~~ -- the 99 cap went 2026-11-11, 99 U163).
     MUTATION: let 来 / 走 take any unit, or 来回走 stand alone -> red."""
     got = parse_ptp(text)  # one parse
     assert got is None or got.kind != "repeat"  # not B04 by rule
@@ -256,3 +257,26 @@ def test_membership_questions_need_a_name(text):
     """Unnamed forms stay with the keyword layer (G21 / G22) or are a different
     question. MUTATION: take 这里 or nothing as the object -> red."""
     assert parse_ptp(text) is None  # not ours
+
+
+
+@pytest.mark.parametrize("text,loops", [
+    ("再巡一百圈", 100), ("再巡逻两百圈", 200), ("沿1号路径巡逻一百零五圈", 105),
+    ("沿1号路径巡逻三千圈", 3000), ("沿1号路径巡逻150圈", 150), ("再来一万二千圈", 12000)])
+def test_large_lap_counts_are_counts(text, loops):  # 99 U163
+    """User ruling 2026-11-11: no limit on a navigation task. The spoken count
+    is no longer capped at 99 and the numeral reader handles 百 / 千 / 万.
+    MUTATION: put the 1..99 cap back -> every row None -> red; drop 百 from
+    the regex or the reader -> the CJK rows fail -> red."""
+    got = parse_ptp(text)
+    assert got is not None and got.loops == loops
+
+
+@pytest.mark.parametrize("n,v", [("三", 3), ("十", 10), ("十二", 12), ("二十三", 23),
+                                 ("一百零五", 105), ("两百", 200), ("三千零一", 3001),
+                                 ("一万二千", 12000), ("零", 0), ("abc", None)])
+def test_cn_int(n, v):
+    """MUTATION: a unit with no digit before it counts zero -> 十 / 十二 -> red."""
+    from xbrain.p4_agent.slots.ptp_slots import _cn_int
+    assert _cn_int(n) == v
+
