@@ -99,20 +99,33 @@ body { margin: 0; overflow: hidden; background: var(--bg); color: var(--ink);
    limit, so no warning colour is invented for it). The fill width is the
    level; its colour is the user's rule: >= 50 green (the same emerald as the
    unlocked button), 20-49 yellow, < 20 red, also while the temperature is
-   showing. Absent = grey stripes, unknown = plain grey; neither draws a fill. */
+   showing. Absent = grey stripes, unknown = plain grey; neither draws a fill.
+   Shape (user 2026-11-11): a battery -- a body with a narrower terminal nub on
+   the right. Two clipped layers draw it: .battery-bar is the outline colour
+   cut to the battery shape, .battery-inner sits 2px inside it with the same
+   shape (nub band 34%-66% of its height so the nub keeps a ~2px outline). The
+   fill is a percentage of the WHOLE inner width, nub included, and is clipped
+   by the same shape -- so the nub fills last, only above ~93%, as on a real
+   battery icon. The text is centred over the body, not the nub. */
 .battery-box { display: flex; align-items: center; gap: 10px; margin-left: 12px;
   color: #fff; font-weight: 700; font-size: 22px; }
 .battery-cell { display: flex; align-items: center; gap: 6px; }
 .battery-label { color: #fff; font-weight: 700; font-size: 22px; letter-spacing: 1px; }
-.battery-bar { position: relative; display: inline-block; width: 140px; height: 44px;
-  border: 2px solid #9aa4b2; border-radius: 5px; background: #1b2230; overflow: hidden; }
+.battery-bar { position: relative; display: inline-block; width: 150px; height: 44px;
+  background: #9aa4b2;
+  clip-path: polygon(0 0, calc(100% - 10px) 0, calc(100% - 10px) 30%, 100% 30%,
+    100% 70%, calc(100% - 10px) 70%, calc(100% - 10px) 100%, 0 100%); }
+.battery-inner { position: absolute; left: 2px; top: 2px; right: 2px; bottom: 2px;
+  background: #1b2230;
+  clip-path: polygon(0 0, calc(100% - 10px) 0, calc(100% - 10px) 34%, 100% 34%,
+    100% 66%, calc(100% - 10px) 66%, calc(100% - 10px) 100%, 0 100%); }
 .battery-fill { position: absolute; left: 0; top: 0; bottom: 0; width: 0; }
-.battery-text { position: relative; display: block; text-align: center; line-height: 40px;
-  text-shadow: 0 1px 2px rgba(0,0,0,.8); }
+.battery-text { position: absolute; left: 0; top: 0; bottom: 0; right: 10px;
+  text-align: center; line-height: 40px; text-shadow: 0 1px 2px rgba(0,0,0,.8); }
 .battery-cell.ok   .battery-fill { background: #10a83c; }
 .battery-cell.warn .battery-fill { background: #e6b800; }
 .battery-cell.low  .battery-fill { background: #d01818; }
-.battery-cell.absent .battery-bar { background: repeating-linear-gradient(45deg,
+.battery-cell.absent .battery-inner { background: repeating-linear-gradient(45deg,
   #3a4150 0 8px, #2a303c 8px 16px); }
 .battery-cell.absent .battery-text,
 .battery-cell.unknown .battery-text { color: #c8ccd4; }
