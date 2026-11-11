@@ -1821,42 +1821,52 @@
   // -- battery gauges (99 U160) ------------------------------------------
   // Slot 0 = A, slot 1 = B (user ruling), from snapshot.battery, which P5
   // builds from state/power.list[] and greys out when state/power is stale.
-  // Colour rule (user 2026-11-11): >= 50 green, 20-49 yellow, < 20 red. An
-  // empty slot says 未插入 (the chassis reports it as 0% / -273 C, which P5
-  // already dropped); unknown says 未知. Temperature is shown as a plain
-  // number: the contract defines no battery temperature limit, so the HMI
-  // does not invent a warning colour for it.
+  // Colour rule (user 2026-11-11): >= 50 green, 20-49 yellow, < 20 red. Inside
+  // the bar a present pack ALTERNATES percentage (BATTERY_PCT_MS) and
+  // temperature (BATTERY_TEMP_MS) -- user 2026-11-11 -- with the fill keeping
+  // the level colour in both phases. A pack with no temperature reading keeps
+  // the percentage through the temperature phase rather than blank the bar.
+  // An empty slot always says 未插入 (the chassis reports it as 0% / -273 C,
+  // which P5 already dropped); unknown always says 未知. The temperature gets
+  // no colour: the contract defines no battery temperature limit.
   // <battery-view>
-  function batteryCellView(pack) {
+  const BATTERY_PCT_MS = 5000;
+  const BATTERY_TEMP_MS = 2000;
+  function batteryCellView(pack, phaseMs) {
     const p = pack || {};
     if (p.state === "absent") {
-      return { cls: "absent", text: "未插入", width: 0, temp: "--" };
+      return { cls: "absent", text: "未插入", width: 0 };
     }
     if (p.state !== "present" || typeof p.level_pct !== "number") {
-      return { cls: "unknown", text: "未知", width: 0, temp: "--" };
+      return { cls: "unknown", text: "未知", width: 0 };
     }
     const lv = Math.max(0, Math.min(100, p.level_pct));
     const cls = lv >= 50 ? "ok" : (lv >= 20 ? "warn" : "low");
-    const temp = typeof p.temp_c === "number" ? p.temp_c.toFixed(1) + "℃" : "--";
-    return { cls: cls, text: (p.charging ? "⚡" : "") + Math.round(lv) + "%",
-             width: lv, temp: temp };
+    const t = ((phaseMs || 0) % (BATTERY_PCT_MS + BATTERY_TEMP_MS) +
+               (BATTERY_PCT_MS + BATTERY_TEMP_MS)) % (BATTERY_PCT_MS + BATTERY_TEMP_MS);
+    const showTemp = t >= BATTERY_PCT_MS && typeof p.temp_c === "number";
+    const text = showTemp ? p.temp_c.toFixed(1) + "℃"
+                          : (p.charging ? "⚡" : "") + Math.round(lv) + "%";
+    return { cls: cls, text: text, width: lv };
   }
   // </battery-view>
+  let lastBattery = {};                  // last snapshot.battery
   function renderBattery(bat) {
-    const packs = (bat && bat.packs) || [];
+    if (bat !== undefined) lastBattery = bat || {};
+    const packs = (lastBattery && lastBattery.packs) || [];
+    const phase = performance.now();
     for (const [id, label] of [["batteryA", "A"], ["batteryB", "B"]]) {
       const el = $(id); if (!el) continue;
       const pack = packs.find((x) => x && x.label === label) || {};
-      const v = batteryCellView(pack);
+      const v = batteryCellView(pack, phase);
       el.className = "battery-cell " + v.cls;
       el.querySelector(".battery-fill").style.width = v.width + "%";
       el.querySelector(".battery-text").textContent = v.text;
-      el.querySelector(".battery-temp").textContent = v.temp;
+      const fmt = (x, d, u) => (typeof x === "number" ? x.toFixed(d) + u : "--");
       el.title = "电池 " + label + (v.cls === "absent" ? ": 槽位无电池"
         : v.cls === "unknown" ? ": 未收到电量数据"
-        : ": " + v.text + "  " + v.temp +
-          (typeof pack.voltage_v === "number" ? "  " + pack.voltage_v.toFixed(1) + "V" : "") +
-          (pack.charging ? "  充电中" : ""));
+        : ": " + fmt(pack.level_pct, 0, "%") + "  " + fmt(pack.temp_c, 1, "℃") +
+          "  " + fmt(pack.voltage_v, 1, "V") + (pack.charging ? "  充电中" : ""));
     }
   }
 
@@ -1907,6 +1917,9 @@
     wireInteraction(); applyView(); buildDialFace(); wireHistoryFolding();
     const clb = $("chassisLockBtn");
     if (clb) clb.addEventListener("click", onChassisLockClick);
+    // The battery text alternates on a clock of its own: WS deltas only carry
+    // the battery group when its numbers change, which can be minutes apart.
+    setInterval(() => renderBattery(), 250);
     $("mapSvg").addEventListener("click", onMapClick);
     const gs = $("gotoSend");
     if (gs) gs.addEventListener("click", sendGoto);

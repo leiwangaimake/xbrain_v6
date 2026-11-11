@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>XBRAIN_V6 GPS 网格地图 HMI</title>
-<link rel="stylesheet" href="hmi.css?v=batt-1">
+<link rel="stylesheet" href="hmi.css?v=batt-2">
 </head>
 <body>
 <main class="hmi">
@@ -26,19 +26,17 @@
               title="底盘状态未知" disabled>底盘状态未知</button>
       <!-- Battery gauges (99 U160): slot 0 = A, slot 1 = B, from state/power
            list[] (hmi.js renderBattery). Fill colour by level: >= 50 green,
-           20-49 yellow, < 20 red. An empty slot reads 未插入, missing or stale
-           data reads 未知 -- never a fabricated 0%. -->
+           20-49 yellow, < 20 red. Inside the bar a present pack alternates
+           percentage (5 s) and temperature (2 s); an empty slot reads 未插入,
+           missing or stale data reads 未知 -- never a fabricated 0%. -->
       <div class="battery-box" id="batteryBox" title="电池电量">
-        <span class="battery-title">电池</span>
         <div class="battery-cell unknown" id="batteryA">
           <span class="battery-label">A</span>
           <span class="battery-bar"><i class="battery-fill"></i><b class="battery-text">未知</b></span>
-          <span class="battery-temp">--</span>
         </div>
         <div class="battery-cell unknown" id="batteryB">
           <span class="battery-label">B</span>
           <span class="battery-bar"><i class="battery-fill"></i><b class="battery-text">未知</b></span>
-          <span class="battery-temp">--</span>
         </div>
       </div>
       <div class="zoom-group">
@@ -165,6 +163,6 @@
     </footer>
   </section>
 </main>
-<script src="hmi.js?v=batt-1"></script>
+<script src="hmi.js?v=batt-2"></script>
 </body>
 </html>
