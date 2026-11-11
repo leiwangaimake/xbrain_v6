@@ -226,3 +226,53 @@ def test_bare_enable_fence_is_not_ours():  # no name
     from xbrain.p4_agent.slots.ptp_slots import parse_ptp  # the rule layer
     assert parse_ptp("启用围栏") is None  # left to the keyword layer
 
+
+
+# -- 99 U162: named exit / cancel ----------------------------------------------
+@pytest.mark.parametrize("text,kind,name,rtype", [
+    ("1号路径录制完成", "exit", "1号路径", "route"),  # the user's phrasing
+    ("东门围栏录制完成", "exit", "东门围栏", "fence"),
+    ("退出1号路径录制", "exit", "1号路径", "route"),
+    ("结束东门围栏录制", "exit", "东门围栏", "fence"),
+    ("1号路径录完了", "exit", "1号路径", "route"),
+    ("取消1号路径录制", "cancel", "1号路径", "route"),
+    ("放弃东门围栏录制", "cancel", "东门围栏", "fence"),
+    ("路径录制完成", "exit", "", None),  # the bare type word stays unnamed
+])
+def test_named_exit_and_cancel_parse(text, kind, name, rtype):  # U162 parser
+    """MUTATION: drop the named regexes -> parse_record returns None -> red."""
+    rp = parse_record(text)
+    assert rp is not None and (rp.kind, rp.name, rp.rtype) == (kind, name, rtype)
+
+
+@pytest.mark.parametrize("teach,text,fid,action", [
+    (_RECORDING, "2号路径录制完成", "F02", "finish"),
+    (_RECORDING, "退出2号路径录制", "F02", "finish"),
+    ({**_RECORDING, "session": {**_RECORDING["session"], "kind": "fence",
+                                "name": "西门围栏"}}, "西门围栏录制完成", "F08", "finish"),
+    (_RECORDING, "取消2号路径录制", "F04", "discard"),
+])
+def test_named_exit_or_cancel_of_the_current_recording_is_sent(teach, text, fid, action):
+    """99 U162: naming the recording in progress ends / discards it.
+    MUTATION: route a named exit to the keyword layer -> no session id -> red."""
+    d, frames = _turn(text, teach)
+    cmd = _teach(frames)
+    assert d.intent_id == fid and cmd["action"] == action and cmd["session_id"] == "ts-1"
+
+
+@pytest.mark.parametrize("text,said", [
+    ("1号路径录制完成", "正在录制的是2号路径, 不是1号路径. 要结束请说: 2号路径录制完成"),
+    ("取消1号路径录制", "正在录制的是2号路径, 不是1号路径. 要取消请说: 取消2号路径录制"),
+])
+def test_a_named_exit_or_cancel_of_another_recording_is_refused(text, said):
+    """99 U162: ending or discarding the WRONG recording is not recoverable, so
+    a name that is not the one recording is refused and nothing is sent.
+    MUTATION: skip the name check -> finish / discard sent -> red."""
+    d, frames = _turn(text, _RECORDING)
+    assert not frames and d.tts_text == said
+
+
+@pytest.mark.parametrize("text", ["1号路径录制完成", "取消1号路径录制"])
+def test_named_exit_or_cancel_without_a_recording(text):  # idle
+    d, frames = _turn(text)
+    assert not frames and d.tts_text == "现在没有在录制"

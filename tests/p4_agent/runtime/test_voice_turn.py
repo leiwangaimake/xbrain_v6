@@ -267,3 +267,19 @@ def test_a_microphone_turn_that_fails_inside_is_recorded_not_silent():
     assert (rec["verdict"], rec["reject_code"], rec["channel"]) == (
         "rejected", "E_INTERNAL", "mic_local")
     assert [k for k, _ in pairs] == [_KEY]  # no action frame went out
+
+
+def test_the_cloud_runner_hands_on_turn_its_voice_turn_record():
+    """99 U162: the ack speaker publishes a recording's save / cancel result
+    as a second voice_turn built from the turn's own record, so on_turn must
+    receive that record. MUTATION: call on_turn with res.publishes only (the
+    old order, before the record was built) -> no voice_turn pair -> red."""
+    seen = []  # every on_turn call's pairs
+    orch, reg = _parts()  # the real orchestrator and registry
+    runner = CloudTurnRunner(orch, KeywordMatcher(reg), lambda k, d: None,
+                             lambda pcm: "", lambda: 1000, lambda: None,
+                             OrchestratorSession(), voice_turn_key=_KEY,
+                             on_turn=seen.append)  # the hook the ack speaker uses
+    runner.run_text({"cmd_id": "c-1", "channel": "cloud", "text": "现在电量多少",  # any turn
+                     "require_tts_reply": False})  # silent: the record is all there is
+    assert seen and any(k == _KEY for k, _ in seen[-1])  # the record is in on_turn's pairs

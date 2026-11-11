@@ -253,6 +253,10 @@ _REC_CN = {
     "ack_cancel": "好的,取消录制{name}",  # 99 U137: no confirmation
     "not_recording": "现在没有在录制",
     "status": "正在录制{name}, 已经录了{count}个点, 长{length}米",
+    # 99 U162: a named exit / cancel that names another recording is refused
+    # (ending or discarding the wrong one is not recoverable).
+    "exit_other": "正在录制的是{name}, 不是{said}. 要结束请说: {name}录制完成",
+    "cancel_other": "正在录制的是{name}, 不是{said}. 要取消请说: 取消{name}录制",
 }
 #: The F intents still accepted while recording (99 U133): exit, cancel, mark.
 _REC_ALLOWED = frozenset({"record_route_stop", "record_fence_stop",
@@ -1011,12 +1015,20 @@ class TurnOrchestrator:
             # 99 U137: discard at once, no "确认吗" (F04 is L1a now)
             if rec is None:
                 return self._rec_reply("F04", "not_recording", "record_rule")
+            if rp.name and canonical_name(rp.name) != canonical_name(rec["name"]):
+                # 99 U162: "取消2号路径录制" while 1号路径 records
+                return self._rec_reply("F04", "cancel_other", "record_rule",
+                                       name=rec["name"], said=rp.name)
             self._turn_ptp_ack = _REC_CN["ack_cancel"].format(name=rec["name"])
             return self._route_entry(self._registry.by_id("F04"), text,
                                      session, now_mono_ms, layer="record_rule")
         if rp.kind == "exit":
             if rec is None:
                 return self._rec_reply("F02", "not_recording", "record_rule")
+            if rp.name and canonical_name(rp.name) != canonical_name(rec["name"]):
+                # 99 U162: "2号路径录制完成" while 1号路径 records
+                return self._rec_reply("F02", "exit_other", "record_rule",
+                                       name=rec["name"], said=rp.name)
             intent_id = "F08" if rec["kind"] == "fence" else "F02"
             self._turn_ptp_ack = _REC_CN["ack_exit"].format(name=rec["name"])
             return self._route_entry(self._registry.by_id(intent_id), text,

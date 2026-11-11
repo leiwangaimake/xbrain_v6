@@ -23,6 +23,11 @@ same way. This module turns those sentences into one of four results:
                  / "结束(路径|围栏)录制" / "录完了" / "围栏录完了" / "结束围栏"
   cancel         "取消录制" / "放弃录制" / "取消路径(围栏)录制" -- discard at once,
                  no confirmation (99 U137)
+  named exit     "1号路径录制完成" / "退出东门围栏录制" / "结束1号路径录制" /
+                 "1号路径录完了" -> {kind: exit, name, rtype} (99 U162)
+  named cancel   "取消1号路径录制" / "放弃东门围栏录制" -> {kind: cancel, name,
+                 rtype} (99 U162). A named exit / cancel only counts when the
+                 name is a FULL name; the caller checks it is the one recording.
   status         "录制状态" / "录了多少" / "录了几个点" / "正在录制吗"
 
 A FULL name is the whole object and ends with its type word: 路径 / 路线 /
@@ -70,6 +75,15 @@ _EXIT = re.compile(
     r"|(?:围栏)?录完了|结束围栏)(?:了|吧|啦)*$")  # no 停 anywhere (bypass)
 #: 99 U137: cancel = discard at once (no confirmation) -- explicit phrases only.
 _CANCEL = re.compile(r"^(?:取消|放弃)(?:路径|路线|围栏)?(?:录制|记录)(?:吧|了|啦)*$")  # discard
+#: 99 U162 (user ruling 2026-11-11): exit / cancel sentences that NAME the
+#: recording ("1号路径录制完成", "取消东门围栏录制"). The named part must be a
+#: full name (_rtype), checked after the match. Tried after the unnamed forms,
+#: so "路径录制完成" (the bare type word) stays the unnamed exit.
+_EXIT_NAMED = re.compile(
+    r"^(?:(?:退出|结束)(?P<a>.+?)(?:录制|记录)(?:模式)?"
+    r"|(?P<b>.+?)(?:录制|记录)(?:完成|完毕|结束|好了)"
+    r"|(?P<c>.+?)录完了)(?:了|吧|啦)*$")  # no 停 anywhere (bypass)
+_CANCEL_NAMED = re.compile(r"^(?:取消|放弃)(?P<a>.+?)(?:录制|记录)(?:吧|了|啦)*$")
 #: Status questions about the running recording.
 _STATUS = re.compile(r"^(?:录制状态|录制进度|录了多少(?:米|个点)?|录了几个点|录到哪了"
                      r"|正在录制吗|还在录制吗|在录制吗)(?:了|呢|啊)*$")  # questions
@@ -84,10 +98,10 @@ _NAMED_AS = ("命名为", "名字叫", "名为", "叫做", "叫")  # take what f
 @dataclass(frozen=True)  # immutable result
 class RecordParse:  # one parsed recording sentence
     """kind is start / start_noname / exit / cancel / status; name and rtype are set
-    for start only (rtype route | fence)."""
-    kind: str  # start / start_noname / exit / status
-    name: str = ""  # the full name as said (start only)
-    rtype: Optional[str] = None  # route / fence (start only)
+    for start, and for a NAMED exit / cancel (99 U162; "" / None = unnamed)."""
+    kind: str  # start / start_noname / exit / cancel / status
+    name: str = ""  # the full name as said (start, named exit / cancel)
+    rtype: Optional[str] = None  # route / fence (start, named exit / cancel)
 
 
 def _strip_lead(t: str) -> str:
@@ -143,6 +157,13 @@ def parse_record(text: str) -> Optional[RecordParse]:
         return RecordParse("cancel")  # discard, no confirmation
     if _STATUS.match(t):  # "录了几个点"
         return RecordParse("status")  # answered from state/teach
+    for rx, kind in ((_EXIT_NAMED, "exit"), (_CANCEL_NAMED, "cancel")):  # 99 U162
+        mn = rx.match(t)  # "1号路径录制完成" / "取消东门围栏录制"
+        if mn:  # the shape fits; is the named part a full name?
+            nm = next(g for g in mn.groups() if g)  # whichever branch matched
+            rt = _rtype(nm)  # route / fence / not a full name
+            if rt is not None:  # a full name: a named exit / cancel
+                return RecordParse(kind, name=nm, rtype=rt)
     m = _START.match(t)  # "开始录制X" / "记录X"
     if not m:  # no recording verb at the front
         return None  # not ours

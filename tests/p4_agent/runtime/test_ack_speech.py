@@ -403,3 +403,112 @@ def test_an_unfiltered_clear_stays_silent():  # only the scheduled sweep is coun
     sp.note_turn(_sent("cmd/task", {"cmd_id": "c-2", "action": "clear_queue"}))  # no filter
     assert sp.on_ack(_b({"cmd_id": "c-2", "result": "accepted", "code": "OK",
                          "detail": {"cleared_ids": ["t-1"]}})) is None  # the turn said it
+
+
+# -- 99 U162: a recording's result as a second state/voice_turn ----------------
+# The exit / cancel turn itself only says "the command went out" (its verdict is
+# accepted as soon as cmd/teach is published). Whether the recording was SAVED
+# arrives later, on cmd/teach/ack. Before U162 that result reached only the
+# speaker and cmd/teach/ack, so the cloud -- which reads state/voice_turn --
+# never learned it. These tests pin the second record that now carries it.
+_VT_KEY = "xbrain/gj-001/state/voice_turn"  # the full key, as the wiring publishes it
+
+
+def _rec_turn(action="finish", cmd_id="c-f", spoke=True, intent="record_route_stop"):
+    """The frames of an exit / cancel turn: cmd/teach, (speech), voice_turn.
+
+    spoke=False is a turn under require_tts_reply=false: no cmd/audio/speak,
+    but the voice_turn record is still published -- note_turn must pair the
+    result with it all the same.
+    """
+    pairs = [("cmd/teach", _b({"cmd_id": cmd_id, "action": action,  # finish | discard
+                               "session_id": "ts-1"}))]  # a session_id, as a voice exit sends
+    if spoke:  # the turn's own reply ("going to save") -- not the result
+        pairs.append(("cmd/audio/speak", _b({"schema": "p4_speak_v1",  # the turn's own reply
+                                             "text": "好的,退出录制, 正在保存1号路径",
+                                             "source": "tts_cloud"})))
+    pairs.append((_VT_KEY, _b({"turn_id": "vt-1", "session": "cloud", "channel": "cloud",  # the turn's record
+                               "asr_raw": "1号路径录制完成", "asr_text": "1号路径录制完成",  # an utterance with a name
+                               "corrections": [], "bypass": None, "intent": intent,  # slots stay empty for record turns
+                               "slots": {}, "auth_level": "L1a", "verdict": "accepted",  # accepted = sent, not saved
+                               "reject_code": None,
+                               "reply_text": "好的,退出录制, 正在保存1号路径",
+                               "reply_kind": "stream", "layer": "record_rule",  # the rule layer made it
+                               "ts_mono": 1.0,  # copied fields come from here
+                               "latency_ms": {"llm": 5}})))  # must NOT be copied
+    return pairs  # in publish order
+
+
+# P3's ack for a named finish that saved (11 S12A.4 detail.applied).
+_SAVED = {"cmd_id": "c-f", "result": "accepted", "code": "OK",  # P3 answered OK
+          "detail": {"saved": True, "session_id": "ts-1", "kind": "route",  # saved, as a route
+                     "applied": {"name": "1号路径", "point_count": 64,  # what the sentence reads back
+                                 "total_len_m": 320.4}}}
+
+
+def _turns(out):
+    """The decoded voice_turn records among on_ack_frames' (key, data) pairs."""
+    return [json.loads(d) for k, d in out if k == _VT_KEY]  # (key, json) -> dict
+
+
+def test_a_saved_recording_is_published_as_a_second_voice_turn():
+    """MUTATION: publish only the speech -> no voice_turn result -> red."""
+    sp = AckSpeaker()  # a fresh speaker per test
+    sp.note_turn(_rec_turn())  # the turn is noted first
+    out = sp.on_ack_frames(_b(_SAVED))  # then P3's ack arrives
+    assert [k for k, _ in out] == ["cmd/audio/speak", _VT_KEY]  # speech, then record
+    (rec,) = _turns(out)  # exactly one result record
+    # accepted = saved; layer tells it apart from the turn's own record
+    assert rec["verdict"] == "accepted" and rec["layer"] == "teach_result"
+    # the reply is the RESULT sentence (what was saved), not "going to save"
+    assert rec["reply_text"].startswith("已保存1号路径") and "64" in rec["reply_text"]
+    # a record of its own (new turn_id) about the same utterance (same text)
+    assert rec["turn_id"] != "vt-1" and rec["asr_text"] == "1号路径录制完成"
+    assert rec["channel"] == "cloud" and rec["intent"] == "record_route_stop"  # copied
+    # spoken -> stream; the turn's latency belongs to that turn, not this one
+    assert rec["reply_kind"] == "stream" and "latency_ms" not in rec
+
+
+def test_a_silent_turn_still_gets_its_result_on_voice_turn():
+    """require_tts_reply=false: nothing is spoken, but voice_turn is then the
+    ONLY place the result goes. MUTATION: remember only turns that spoke -> red."""
+    sp = AckSpeaker()  # same as above, silent
+    sp.note_turn(_rec_turn(spoke=False))  # no cmd/audio/speak in the turn
+    out = sp.on_ack_frames(_b(_SAVED))  # the same saved ack
+    assert [k for k, _ in out] == [_VT_KEY]  # no speech, the record only
+    (rec,) = _turns(out)
+    assert rec["verdict"] == "accepted" and rec["reply_kind"] == "none"  # not spoken
+
+
+def test_a_recording_not_saved_is_published_as_rejected():
+    """MUTATION: always verdict accepted -> red."""
+    sp = AckSpeaker()  # the exit turn
+    sp.note_turn(_rec_turn())  # registers c-f
+    out = sp.on_ack_frames(_b({"cmd_id": "c-f", "result": "rejected",  # geometry failed
+                               "code": "E_TEACH_GEOMETRY",
+                               "detail": {"saved": False, "close_reason": "invalid_geometry",
+                                          "name": "1号路径", "issues": []}}))
+    (rec,) = _turns(out)  # one record even when not saved
+    # the cloud must be able to tell "not saved" from "saved" without parsing text
+    assert rec["verdict"] == "rejected" and rec["reject_code"] == "E_TEACH_GEOMETRY"
+    assert "1号路径" in rec["reply_text"]  # the sentence names what was not saved
+
+
+def test_a_discard_result_is_published_too():
+    """A cancel ("取消1号路径录制") is a result as well: the points are gone."""
+    sp = AckSpeaker()  # the cancel turn
+    sp.note_turn(_rec_turn(action="discard", intent="record_route_cancel"))  # the cancel intent is copied
+    out = sp.on_ack_frames(_b({"cmd_id": "c-f", "result": "accepted", "code": "OK",  # accepted = discarded
+                               "detail": {"name": "1号路径", "discarded_points": 12}}))
+    (rec,) = _turns(out)  # one record
+    assert rec["verdict"] == "accepted" and "12" in rec["reply_text"]  # N points dropped
+
+
+def test_result_record_once_and_only_for_our_commands():
+    """One result per command: a repeated ack (zenoh may redeliver) is not a
+    second result, and an ack for a cmd_id this P4 did not send is not ours."""
+    sp = AckSpeaker()  # the same exit turn
+    sp.note_turn(_rec_turn())  # c-f is ours now
+    assert _turns(sp.on_ack_frames(_b(_SAVED)))  # first: published
+    assert sp.on_ack_frames(_b(_SAVED)) == []  # again: already answered
+    assert sp.on_ack_frames(_b({**_SAVED, "cmd_id": "other"})) == []  # not ours

@@ -581,8 +581,7 @@ class CloudTurnRunner:
         """
         for key, data in res.publishes:  # in the order the turn built them
             self._publish(key, data)  # main_wiring's cached GEN publisher
-        if self._on_turn is not None:
-            self._on_turn(res.publishes)  # after they went out
+        vt_pairs: List[Tuple[str, bytes]] = []  # this turn's state/voice_turn
         try:
             # Built from what was actually published, after it went out.
             record = build_voice_turn(
@@ -595,8 +594,14 @@ class CloudTurnRunner:
             # A closed-set bug costs the record; the turn already happened.
             _logger.warning("voice_turn not built: %s", exc)
         else:
-            for key, data in voice_turn_pair(self._voice_turn_key, record):
+            vt_pairs = list(voice_turn_pair(self._voice_turn_key, record))
+            for key, data in vt_pairs:
                 self._publish(key, data)  # the audit record, last
+        if self._on_turn is not None:
+            # After they went out, WITH the voice_turn record: the ack speaker
+            # reuses it to publish a recording's save / cancel result as a
+            # second voice_turn (99 U162). It used to see the frames only.
+            self._on_turn(list(res.publishes) + vt_pairs)
         d = res.decision  # None when the channel gate refused the turn
         _logger.info(
             "%s turn channel=%s ref=%s text=%r denied=%s code=%s kind=%s "

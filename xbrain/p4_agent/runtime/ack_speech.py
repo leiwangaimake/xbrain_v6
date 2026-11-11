@@ -86,6 +86,18 @@ from xbrain.p4_agent.runtime.intent_dispatch import (  # the command keys
     CMD_TASK,
     CMD_TEACH,
 )
+from xbrain.p4_agent.runtime.voice_turn import encode as encode_turn  # 11 S8.7.6
+from xbrain.p4_agent.runtime.voice_turn import new_turn_id  # result record id
+
+#: 99 U162: the recording actions whose RESULT also goes out as a second
+#: state/voice_turn record -- the turn's own record only says "正在保存 X"
+#: (it is built before P3 answers), and a cloud client reads voice_turn, not
+#: the speaker. Published even for a silent (require_tts_reply=false) turn:
+#: then voice_turn is the ONLY place the result goes.
+_RESULT_TO_TURN = frozenset({"finish", "discard"})  # saved / dropped: a result
+#: The layer value of such a record (the user-ruled extra field of 11 S8.7.6):
+#: tells "the result of an earlier turn" apart from a turn of its own.
+TEACH_RESULT_LAYER = "teach_result"  # voice_turn.layer of the result record
 
 #: The answer keys this speaker subscribes, one per command key (11 S2.2.4).
 ACK_KEYS = tuple(k + "/ack" for k in (CMD_TEACH, CMD_TASK, CMD_GEO,
@@ -252,6 +264,9 @@ class AckSpeaker:  # one per process
         self._pending: "OrderedDict[str, Tuple[str, Dict[str, Any], str]]" = OrderedDict()
         # task_id -> (spoken task name, speak source) of accepted submits (FS-1).
         self._tasks: "OrderedDict[str, Tuple[str, str]]" = OrderedDict()
+        # 99 U162: cmd_id -> (command, voice_turn key, that turn's record) for
+        # a recording finish / discard, kept whether or not the turn spoke.
+        self._results: "OrderedDict[str, Tuple[Dict[str, Any], str, Dict[str, Any]]]" = OrderedDict()
 
     def note_turn(self, pairs: Iterable[Tuple[str, bytes]]) -> None:  # a turn's frames
         """Remember the command frames among one turn's published frames.
@@ -260,6 +275,7 @@ class AckSpeaker:  # one per process
         same TTS source the turn's own reply used.
         """
         pairs = list(pairs)  # walked twice
+        self._note_results(pairs)  # 99 U162: silent turns included
         source = None  # the turn's reply source, if it spoke
         for key, data in pairs:  # find the reply
             if key == CMD_AUDIO_SPEAK:
@@ -281,6 +297,44 @@ class AckSpeaker:  # one per process
             self._pending[cmd["cmd_id"]] = (key, cmd, source)  # newest last
             while len(self._pending) > _PENDING_MAX:  # bounded
                 self._pending.popitem(last=False)  # drop the oldest
+
+    def _note_results(self, pairs: Iterable[Tuple[str, bytes]]) -> None:
+        """99 U162: remember a recording finish / discard with the turn's own
+        voice_turn record, so its result can be published as a second record."""
+        pairs = list(pairs)  # walked twice
+        turn = next(((k, _json(d)) for k, d in pairs
+                     if k.endswith("/state/voice_turn")), None)  # the record
+        if turn is None or not isinstance(turn[1], dict):
+            return  # no record to answer under (no robot id)
+        for key, data in pairs:  # the teach commands of the turn
+            if key != CMD_TEACH:  # only recording commands have a result
+                continue  # task / geo acks are spoken, not recorded
+            cmd = _body(_json(data))  # the command body
+            if (isinstance(cmd, dict) and isinstance(cmd.get("cmd_id"), str)
+                    and cmd.get("action") in _RESULT_TO_TURN):
+                self._results[cmd["cmd_id"]] = (cmd, turn[0], turn[1])
+                while len(self._results) > _PENDING_MAX:  # bounded
+                    self._results.popitem(last=False)  # drop the oldest
+
+    def on_ack_frames(self, data: bytes) -> "list":
+        """Every (key, frame) to publish for one ack: the spoken answer (as
+        on_ack), and for a recording finish / discard the result as a second
+        state/voice_turn record (99 U162). [] when there is nothing new."""
+        ack = _body(_json(data))  # S7.7 Ack shape
+        if not isinstance(ack, dict) or ack.get("result") == "duplicate":
+            return []  # nothing new
+        out = []  # in publish order: speech, then the record
+        spoken = self.on_ack(data)  # the existing spoken answer, or None
+        if spoken is not None:  # nothing spoken when the turn was silent
+            out.append(spoken)  # speech first, as before U162
+        hit = self._results.pop(ack.get("cmd_id"), None)  # a recording result?
+        if hit is not None:
+            cmd, vt_key, turn = hit
+            text = _sentence(CMD_TEACH, cmd, ack)  # the same sentence
+            if text is not None:
+                out.append((vt_key, encode_turn(
+                    teach_result_turn(turn, ack, text, spoken is not None))))
+        return out  # [] when the ack is neither spoken nor a result
 
     def on_ack(self, data: bytes) -> Optional[Tuple[str, bytes]]:
         """The (key, frame) to publish for one ack, or None."""
@@ -361,6 +415,29 @@ def low_battery_speech(data: bytes) -> Optional[Tuple[str, bytes]]:  # P3 marks 
     soc_txt = "%d" % int(round(soc)) if isinstance(soc, (int, float)) and not isinstance(soc, bool) else "不足"  # whole percent
     text = template.format(soc=soc_txt, target=detail.get("target_name") or "充电点")  # the sentence
     return _speak(text, _RTK_SOURCE)  # a local alarm voice
+
+
+def teach_result_turn(turn: Dict[str, Any], ack: Dict[str, Any], text: str,
+                      spoken: bool) -> Dict[str, Any]:
+    """The second state/voice_turn record of a recording finish / discard
+    (99 U162): the turn's own record with a new turn_id and the RESULT in it.
+
+    Kept from the turn: channel, session, asr_raw / asr_text (what the
+    operator sent -- the only way a cloud client can tie it to its request,
+    11 S8.7.6 has no request id), intent, auth_level. Replaced: verdict
+    (accepted = saved / discarded, rejected = not saved), reject_code,
+    reply_text (the result sentence, e.g. "已保存1号路径, 共64个点, 长320米"),
+    reply_kind, layer = teach_result, ts_mono. Measured latencies are the
+    turn's and are not copied.
+    """
+    rec = {k: v for k, v in turn.items() if k != "latency_ms"}  # the turn's fields
+    accepted = ack.get("result") == "accepted"  # saved / discarded
+    rec.update({"turn_id": new_turn_id(), "bypass": None, "corrections": [],
+                "verdict": "accepted" if accepted else "rejected",
+                "reject_code": None if accepted else ack.get("code"),
+                "reply_text": text, "reply_kind": "stream" if spoken else "none",
+                "layer": TEACH_RESULT_LAYER, "ts_mono": time.monotonic()})
+    return rec
 
 
 def _speak(text: str, source: str) -> Tuple[str, bytes]:
