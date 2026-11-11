@@ -1059,7 +1059,7 @@
     if (!b) return;
     if (lastDownlinkMs == null) b.textContent = "正在连接机器人 ...";
     else if (!fresh) b.textContent = "与机器人链路中断 -- 画面停在最后一帧, 操作控件已停用";
-    else b.textContent = "实时链路已断开, 正在重连 -- 任务/导航/喊话控件已停用";
+    else b.textContent = "实时链路已断开, 正在重连 -- 任务/导航控件已停用";
     b.hidden = !offline;
   }
   function setDot(el, cls) { el.className = "dot" + (cls ? " " + cls : ""); }
