@@ -1905,6 +1905,19 @@ dead-man 会在「按住不动」的过程中触发一次 `Stop`** —— ★ �
 | 实时性 | 任何来源的解锁（commx「解锁」、云端、HMI）都经同一读回反映，下一个推送周期即变翠绿。★ `accepted` ≠ 已解锁（BOOT-L3）：回执受理后 3 s 内读回仍为锁定 ⇒ 顶部失败横幅；`hes_lock` 时提示先松开硬件急停（E-2） |
 | 实现 | `hmi.js` `chassisLockView` / `renderChassisLock`；`data_readers.chassis_lock_group`；`uplink.build_chassis_enable_command`；P5 `_send_uplink` 包 §3.0 信封（E-3）。断言：`tests/p5_gateway/hmi/test_chassis_lock_w9.py`、`test_chassis_lock_view_js.py` |
 
+#### 6.10.1B ★★★ 电池电量与温度（2026-11-11 · `99` U160）
+
+| 项 | 规则 |
+|---|---|
+| 位置 | 顶部工具栏，紧跟底盘锁按钮：`急停 | 底盘锁 | 电池 A ▮▮▮▯ 90% 33.2℃  B ▮▯▯▯ 40% 31.7℃ | 缩放`。★ 理由：常驻可见、不挡地图；与急停、底盘锁同属「能不能安全地动」一组 |
+| 数据来源 | `state/power.list[]`（`11` §4.2，1 Hz）。★★ **槽位 0 = A，槽位 1 = B**（用户 2026-11-11 现场确认）；底盘仍报 `battery_mapping: "unknown"`（`13` BAT-1~4 / V-55），本映射以用户确认为准，🚫 不据此声称左 / 右。按 `index` 对应，不按列表顺序 |
+| 电量颜色 | ★ 用户规则：**≥ 50 % 翠绿**（`#10a83c`，与底盘已解锁同色）· **20 %–49 % 黄** · **＜ 20 % 红**；边界 50 算绿、20 算黄。条宽 = 电量；充电中数字前加 ⚡ |
+| 温度 | 每块电池在条右侧显示 `temp_c`（一位小数，℃），★ **中性白字、不着色** —— 契约与配置里**没有电池温度阈值**，🚫 前端不自造告警线；若要温度告警须先定阈值 |
+| 槽位无电池 | ★★ 显示 **「未插入」**（灰色斜纹、无填充、温度 `--`）。🚫 不显示 NaN / unknown（非现场用语），🚫 不显示 0 % —— **底盘对空槽报 `level_pct 0`、`voltage_v 0`、`temp_c -273`**（2026-11-11 实测），照抄会出现红色「0 %」与不可能的温度。判据只认 `present` |
+| 数据缺失 | `state/power` 超过 3 s 未更新（`POWER_STALE_AFTER_MS`，三个周期）、或该槽缺条目 / `present` 非布尔 ⇒ **「未知」**（灰、无填充）。🚫 不保留旧数字 |
+| 悬停 | 显示电量、温度、电压与是否充电 |
+| 实现 | `data_readers.battery_group`（快照顶层 `battery`）· P5 `_power_if_fresh` · `hmi.js` `batteryCellView` / `renderBattery`。断言：`tests/p5_gateway/hmi/test_battery_group.py`、`test_battery_view_js.py` |
+
 #### 6.10.2 ★★★ 配置化需求（用户 2026-08-12）—— `hmi.web.*` 键
 
 | # | 需求 | config 键（`hmi.web.*`） | 默认 |
