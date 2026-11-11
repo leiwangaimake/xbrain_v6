@@ -2623,7 +2623,7 @@ GBNF **没有「拒绝」这个动作**。它只有「不接受下一个字符�
 |---|---|---|---|---|
 | `distance_m` | 20 | 0.1–50 | 「一百米」→ **10 米**，通过校验 | 0.1–999.9 |
 | `angle_deg` | 360 | 1–360 | 「七百二十度」→ **72°** | 0–9999 |
-| `loops` | 20 | 1–20 | 「五十圈」→ **5 圈** | 1–999 |
+| `loops` | ~~20~~ 无（`99` U163） | 1–20 | 「五十圈」→ **5 圈** | 1–999 |
 | `delay_s` | 86400 | 1–86400 | 「四十八小时后」→ **4.8 小时后** | 1–999999 |
 | `day_offset` | 7 | 0–7 | 「十天后」→ **明天** | 0–99 |
 | `pct` 音量 | 100 | 0–100 | 「调到 120」→ **12** | 0–9999 |
@@ -2738,7 +2738,7 @@ route-kv    ::= "\"route\":" ws route
 # ★★ 闭集由启动/变更时从 SQLite 生成；★ 本轮候选为空时该产生式【整条不并入】（R4）
 waypoint    ::= "\"w-gate_post\"" | "\"w-east_park\"" | "null"        # ★ R1：必带 null 备选
 route       ::= "\"r-east\"" | "\"r-north\"" | "null"                 # ★ 形态恒为 r-<slug>
-loops-kv    ::= "\"loops\":"   ws width_int(3)      # ★ I4：业务上界 20 → 语法 1–999
+loops-kv    ::= "\"loops\":"   ws width_int(3)      # ★ I4：~~业务上界 20~~ (99 U163 无上界) → 语法 1–999
 delay-kv    ::= "\"delay_s\":" ws width_int(6)      # ★ I4：业务上界 86400 → 语法 1–999999
 at-kv       ::= "\"at_local\":"   ws "\"" hh ":" mm "\""
 dayoff-kv   ::= "\"day_offset\":" ws width_int(2)   # ★ I4：业务上界 7 → 语法 0–99
@@ -2923,7 +2923,7 @@ detail      ::= "\"reference_unresolved\"" | "\"text_ambiguous\""  # ★ 本 sli
 | `route` | geo_id \| null | ★ `r-<slug>`，同上 | 同上 | M3 M7 |
 | `fence` | geo_id \| null | ★ `f-<slug>`，同上 | 同上 | M7 · ★★ **G42 走 fastpath**（v0.9） |
 | `dock` | geo_id \| null | ★ `d-<slug>`，同上 | 同上 | （B09 走 fastpath） |
-| `loops` | int | ★ **唯一缺省值 = 1**（M3 规则 2） | `1–999`（业务上界 20） | M3 |
+| `loops` | int | ★ **唯一缺省值 = 1**（M3 规则 2） | `1–999`（~~业务上界 20~~ 无业务上界，`99` U163：巡逻圈数不设上限；快路「巡逻N圈 / 再巡N圈」的中文数字支持百 / 千 / 万） | M3 |
 | `delay_s` | int | 秒；★ 与 `at_local` 互斥 | `1–999999`（业务上界 86400） | M3 |
 | `at_local` | string | `"HH:MM"`（24 小时制） | 定长 | M3 |
 | `day_offset` | int | 今天 0 / 明天 1 | `0–99`（业务上界 7） | M3 |
@@ -3506,6 +3506,7 @@ set_time_sync:                             # H03 / H03f —— 18 §10.2 / §10.
 | FS-5 | ★ 定时任务同样适用（受理时记下、到点执行失败时播）；P4 重启后表清空，之前提交的任务失败不再播（如实，不补） |
 | FS-6 | ★ **定位失效（`99` U142，`11` §3.3.4 RL-3 语音）**：订阅 `event/*/rtk`（P3 发），**不论任务由谁发起**都以 `tts_local` 播。`rtk_lost` 播「定位失效, 已停车」，`action_taken = stop_and_suspend` 时加「, 任务已暂停」；`heading_recovered` 播「定位已恢复」，带 `task_id` 时加「, 要接着执行任务请说继续」（RL-7：不自动续跑）。`heading_degraded` 不播。★ 失效期间被拒的 submit（`E_DEGRADED`）播「定位失效, 现在不接受新任务」 |
 | FS-7 | ★ **低电（`99` U146）**：订阅 `event/*/charging`（P3 发），只播 `detail.first = true` 的那条，以 `tts_local` 播放：`low_battery`「电量剩余N%, 正在返回X」；`low_battery_unreachable` 句尾加「, 剩余电量可能不够走到」；`low_battery_no_target`「…没有定义充电桩和返航终点站, 无法自动返回」；`low_battery_stop`「电量剩余N%, 已停车趴下」。每 2 s 一条的重复上报只给云端，不播报；`low_battery_cleared` / `return_target_missing` 不播；★ `battery_charging` / `charge_interrupted`（`99` U157）`detail.first` 恒为 false，不播。★ 同一次低电里重新进入低电阶段（充电中拔掉后电量又低于 20 %）或 P3 重启后重派回充任务，P3 会再发一条 `first = true`，P4 照常再播一次（`99` U157 2026-11-11 用户裁决）。★ 5 % 后被拒的 submit（`E_LOW_BATTERY`）播「电量过低, 现在不接受新任务」。★ 录充电点被拒（`E_GEO_INVALID`）播「X没有记录, 充电桩和充电站必须在某条路径5米以内」 |
+| ★ FS-7a | ★ **录制提醒与超时收尾（`99` U163）**：订阅 `event/*/teach`（P3 发，`11` §12A.12），只播 `detail.first = true` 的 `teach.time_warning` 与 `teach.expired`，其余 teach 事件不播（操作员自己的开始 / 保存由 ack 播报）。以 `tts_local` 播放：提醒「路径X的录制还剩N分钟, 到时会自动结束并保存」；`result=saved`「录制已到180分钟上限, 已自动保存为路径X, 共N个点, 长M米」（围栏加「围栏没有启用, 需要时请说启用围栏X」）；`save_failed`「…X自动保存失败, 名字已被占用 / 写入失败. 录制数据还在, 请说保存为新的名字, 或者放弃录制」；`discarded`「…X的轨迹无效, 没有保存」；`awaiting_name`「…已停止录制. 请说保存为某个名字, 或者放弃录制」。同时发一条 `state/voice_turn`（`layer = teach_result`，`asr_raw` 空，`intent` 空；`channel` 按发起者 `issuer.channel` 前缀归档：local→mic_local / cloud→cloud / hmi→hmi / wecom→wecom；`verdict`：提醒与已保存为 accepted，其余 rejected，`reject_code` 取 `detail.code` 或 `E_TEACH_STATE`）。实现 `runtime/ack_speech.py` `teach_event_frames` |
 
 > ★★ **2026-11-06 · `99` U144 · 定时任务的语音取消与同一时间唯一（P4 侧）**：
 > - ★ **说法**：「取消 / 删除 [所有] [<时间>的] 定时任务」「把<时间>的定时任务删掉」「取消<时间>的任务」。由 PTP 规则在删除规则之前解析，否则「删除定时任务」会被当成删除名为「定时任务」的航点。
