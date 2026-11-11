@@ -142,6 +142,26 @@ async def test_unsavable_geometry_closes_the_session_and_says_why(rt):  # no fin
 
 
 @pytest.mark.asyncio  # async case
+async def test_a_finish_that_cannot_write_reports_its_own_code_and_keeps_the_data(rt):
+    """99 U165: the name taken WHILE recording makes the write fail; the data
+    stays (U163 retained) and the ack carries the real code, not the geometry
+    code of a closed, invalid track. MUTATION: ack every unsaved finish
+    E_TEACH_GEOMETRY again -> red."""
+    ack = await _start(rt, "5号路径")  # named start, name free
+    await _drive(rt, 2.0, 3)  # a valid track
+    await rt._geo_conn.execute(
+        "INSERT INTO routes (geo_id, name, path_points, loop_mode, direction, total_len_m, rev,"
+        " content_hash, updated_ms) VALUES ('r-9', '5号路径', '[]', 'oneway', 'forward', 1.0, 1,"
+        " 'h', 0)")  # taken meanwhile by someone else
+    await rt._geo_conn.commit()  # visible
+    fin = await rt.handle(_cmd("c-fin", "finish", session_id=ack["detail"]["session_id"]),
+                          now_mono_s=110.0, now_ms=2000)  # exit
+    assert fin["result"] == "rejected" and fin["code"] == E_NAME_CONFLICT  # the real reason
+    assert fin["detail"]["retained"] is True  # the data is still there
+    assert rt.teach_state_payload(111.0)["session"]["state"] == "finalizing"  # save or discard next
+
+
+@pytest.mark.asyncio  # async case
 async def test_a_taken_name_is_refused_at_start(rt):  # bound at start
     """MUTATION: drop the start-time name check -> the session arms -> red."""
     await rt._geo_conn.execute(

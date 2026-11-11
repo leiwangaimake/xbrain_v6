@@ -44,6 +44,7 @@ from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 from xbrain.common.errors import (
     E_GEO_INVALID,  # 99 U146 dock off every route
+    E_INTERNAL,  # 99 U165 a write failure that names no code
     E_NAME_CONFLICT,
     E_TEACH_GEOMETRY,
     E_TEACH_QUALITY,
@@ -546,6 +547,13 @@ class TeachRuntime:
         detail = await self.save_named(now_ms)
         if detail.get("saved"):
             return teach_ack(cmd.cmd_id, "accepted", "OK", detail)
+        if detail.get("retained"):
+            # 99 U165: a write that failed with the data kept (U163) is not a
+            # geometry failure. Until 2026-11-11 it was acked E_TEACH_GEOMETRY
+            # like an invalid track, so a client could not tell "closed, gone"
+            # from "still here, save it under another name" by the code.
+            return teach_ack(cmd.cmd_id, "rejected",
+                             detail.get("code") or E_INTERNAL, detail)
         return teach_ack(cmd.cmd_id, "rejected", E_TEACH_GEOMETRY, detail)
 
     async def save_named(self, now_ms: int) -> Dict[str, Any]:
