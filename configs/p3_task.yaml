@@ -58,6 +58,10 @@ teach:
   #   键名不能用 session_timeout_s / max_duration_s (10 S5.4.5 别名黑名单).
   #   缺失 / null / <= 0 时 p3 拒绝启动 (EX_CONFIG 78).
   record_duration_s: ${common.recording.session_timeout_s}
+  #   99 U163 (用户 2026-11-11): 到时前多少秒语音提醒剩余时间 (录制中或暂停中,
+  #   每次录制每档只提醒一次), 同时发 event/info/teach 上云. 每个值须 > 0 且
+  #   < record_duration_s; 缺失 / 空 / 越界时 p3 拒绝启动 (EX_CONFIG 78).
+  record_warn_before_s: [600, 60]
 
 # -- 路径推送 (取值, 非定义) ------------------------------------------------
 #   示教录制的路径是模式 B 密集折线, 没有逐点到点半径; 15 S2.4.3 规定取
