@@ -1331,6 +1331,9 @@ async def _amain(stop_flag: dict, heartbeat_period_s: float,
                     d = _lb_detail("low_battery_cleared", power)
                     d["cause"] = cause  # 11 S9.11.2: charge_full | battery_swap
                     d["auto_resume"] = auto
+                    # 99 U157 cold swap: judged from the first reading after a
+                    # restart, not from a slot seen empty
+                    d["cold_swap"] = cause == "battery_swap" and lb_monitor.last_cold_swap
                     d["held"] = sorted(lb_ctx["held"])
                     d["parked"] = parked
                     _emit_charging("info", "low battery alarm closed by %s" % cause, d)
@@ -1741,7 +1744,11 @@ async def _amain(stop_flag: dict, heartbeat_period_s: float,
                                 # due on the system clock P4 scheduled them on.
                                 now_wall_s=_now_wall_ms() / 1000.0,
                                 # 99 U157: tasks a low-battery episode holds.
-                                held=frozenset(lb_ctx["held"]))
+                                held=frozenset(lb_ctx["held"]),
+                                # 99 U157 second layer, off the chassis: charging
+                                # below full -> no preempted task resumes itself.
+                                resume_blocked=(low_battery is not None and lb.charging_below_full(
+                                    state_cache.get("power"), low_battery["charge_full_soc_pct"])))
                             # EX-2 RP-1 (15 S2.4.1): every ready -> running
                             # this tick made gets its geometry pushed. Driven
                             # off the tick's RETURN VALUE rather than from

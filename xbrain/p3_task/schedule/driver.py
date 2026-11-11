@@ -116,7 +116,8 @@ async def scheduler_tick(conn, dao, *, now_mono_ms: int,
                          boot_id: str = "",
                          list_route_ids=None,
                          now_wall_s: Optional[float] = None,
-                         held: AbstractSet[str] = frozenset()
+                         held: AbstractSet[str] = frozenset(),
+                         resume_blocked: bool = False
                          ) -> List[Tuple[str, str, str]]:
     """One scheduler pass. Returns the transitions made as
     (task_id, from_state, to_state). See module docstring.
@@ -133,7 +134,13 @@ async def scheduler_tick(conn, dao, *, now_mono_ms: int,
     injected return task, and a held task a person resumed (the wiring drops
     it from the set) are not in it. The default (empty) is what every test of
     the plain scheduler means; the one production caller, runtime/main_wiring,
-    always passes the episode's set."""
+    always passes the episode's set.
+
+    resume_blocked (99 U157, the chassis-side restart protection) stops the
+    yielding scan from resuming ANY preempted task this tick: the wiring sets
+    it while the chassis reports charging below charge_full_soc_pct, episode
+    record or not. Queued tasks are not affected by it (they are held only
+    through `held`). Default False for the plain-scheduler tests, as above."""
     made: List[Tuple[str, str, str]] = []
 
     # -- phase 1: validate every pending task --
@@ -207,7 +214,9 @@ async def scheduler_tick(conn, dao, *, now_mono_ms: int,
         # tasks 表没有这一列. 用"没有 running"近似是保守的 -- 它只会推迟
         # 恢复(还有别的任务在跑时不恢复), 不会提前恢复.
         busy = any(st == "running" for _i, _p, _s, st in rows_y)
-        if not busy:
+        # 99 U157: charging below full -> nothing resumes by itself, whatever
+        # the held set says (it may be empty after a lost episode record).
+        if not busy and not resume_blocked:
             for task_id, _p, _sq, reason in yielding:
                 if reason != "preempted":
                     continue

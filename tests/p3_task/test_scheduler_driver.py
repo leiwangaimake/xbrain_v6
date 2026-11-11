@@ -232,3 +232,38 @@ async def test_a_held_ready_task_neither_dispatches_nor_preempts(dao_conn):
     await scheduler_tick(conn, dao, now_mono_ms=3, on_transition=_noop_t, held=held)
     assert (await dao.fetch_by_id("t-n")).state == "running"  # t-h (90 > 10) did not preempt
     assert (await dao.fetch_by_id("t-h")).state == "ready"
+
+
+@pytest.mark.asyncio
+async def test_a_held_timed_task_comes_due_but_waits(dao_conn):
+    """U157 ruling 3 covers timed tasks too: a scheduled task that comes due
+    during the episode goes ready (so it runs the moment the hold lifts) but
+    does not dispatch. MUTATION: drop the held filter -> it dispatches at its
+    time -> red."""
+    dao, conn = dao_conn
+    await dao.insert(_pending("t-time", seq=1, mission='{"not_before_ts": 1000.0}'))
+    await conn.commit()
+    await scheduler_tick(conn, dao, now_mono_ms=1, on_transition=_noop_t,
+                         now_wall_s=500.0, held=frozenset({"t-time"}))
+    assert (await dao.fetch_by_id("t-time")).state == "scheduled"  # not yet due
+    await scheduler_tick(conn, dao, now_mono_ms=2, on_transition=_noop_t,
+                         now_wall_s=1001.0, held=frozenset({"t-time"}))
+    assert (await dao.fetch_by_id("t-time")).state == "ready"  # due, held
+    await scheduler_tick(conn, dao, now_mono_ms=3, on_transition=_noop_t, now_wall_s=1002.0)
+    assert (await dao.fetch_by_id("t-time")).state == "running"  # hold lifted
+
+
+@pytest.mark.asyncio
+async def test_resume_blocked_stops_every_auto_resume_but_not_dispatch(dao_conn):
+    """U157 chassis guard: while charging below full no preempted task resumes
+    itself even with an empty held set; a queued task is not affected.
+    MUTATION: ignore resume_blocked -> t-p resumes -> red."""
+    dao, conn = dao_conn
+    await dao.insert(_pending("t-p", priority=60, seq=1))
+    await conn.execute("UPDATE tasks SET state='suspended', suspend_kind='yielding', "
+                       "suspend_reason='preempted' WHERE task_id='t-p'")
+    await dao.insert(_pending("t-q", priority=10, seq=2))
+    await conn.commit()
+    await scheduler_tick(conn, dao, now_mono_ms=1, on_transition=_noop_t, resume_blocked=True)
+    assert (await dao.fetch_by_id("t-p")).state == "suspended"  # not resumed
+    assert (await dao.fetch_by_id("t-q")).state == "running"  # the queue still runs

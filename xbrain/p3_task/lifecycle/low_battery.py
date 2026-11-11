@@ -31,6 +31,12 @@ U146), replacing 15 S8.2 / S8.2A's 30 % CHG-10/11 trigger and its
   * unplugged before full: below the trigger -> back to the low phase (a new
     return task is injected); otherwise the interrupted phase, alarmed every
     2 s, until charging resumes, a swap, or full (U157 ruling 2);
+  * restart protection, two layers: the episode record in task.db memory, and
+    charging_below_full() read straight off the chassis -- while charging below
+    full no preempted task resumes by itself, episode or not;
+  * a cold swap (2026-11-11 ruling): restored in the low phase, the first soc
+    reading is at / above the trigger and not charging -> treated as a swap,
+    same 80 % split;
   * if remain_mile_km cannot cover the drive to the target -> the alarm says
     unreachable (still driving toward it);
   * at or below stop_soc_pct (5) -> stop and lie down;
@@ -118,6 +124,20 @@ PHASE_IDLE, PHASE_LOW, PHASE_CHARGING, PHASE_INTERRUPTED = "idle", "low", "charg
 _PHASES = (PHASE_IDLE, PHASE_LOW, PHASE_CHARGING, PHASE_INTERRUPTED)  # closed set
 
 
+def charging_below_full(power: Optional[Mapping[str, Any]], charge_full_soc_pct: float) -> bool:
+    """The chassis-side resume guard (99 U157, the plan's restart protection):
+    True while the chassis reports charging and soc_pct is below the full
+    threshold (or unknown). While True the scheduler resumes no preempted task
+    by itself -- whatever the episode record says. It is the layer that does
+    not depend on P3 memory: a charge started by hand (no episode), or a
+    record lost before it was written, still keeps a charging robot on the
+    dock. No frame -> False (nothing is known to be charging)."""
+    if not isinstance(power, Mapping) or not is_charging(power):
+        return False
+    soc = _num(power.get("soc_pct"))
+    return soc is None or soc < float(charge_full_soc_pct)
+
+
 class LowBatteryMonitor:  # the episode state machine
     """One low-battery episode at a time, in phases (99 U157):
 
@@ -168,6 +188,8 @@ class LowBatteryMonitor:  # the episode state machine
         self._last_alarm: Optional[float] = None  # when the last alarm went out
         self._absent_seen: Set[int] = set()  # pack slots seen empty during this episode
         self._swapped_in = False  # one of those slots has been seen filled again
+        self._restored = False  # the episode came back from memory; first soc not judged yet
+        self.last_cold_swap = False  # the last swap end was judged cold (detail.cold_swap)
 
     @property
     def low(self) -> bool:
@@ -183,6 +205,7 @@ class LowBatteryMonitor:  # the episode state machine
         self.phase = phase
         self.stopped, self._last_alarm = False, None
         self._absent_seen, self._swapped_in = set(), False
+        self._restored = True  # the first frame with a soc is judged for a cold swap
 
     def _enter(self, phase: str) -> None:  # a phase change inside an episode
         """Switch phase; the next alarm goes out at once, worded for it."""
@@ -194,6 +217,7 @@ class LowBatteryMonitor:  # the episode state machine
         """Reset every per-episode fact."""
         self.phase, self.stopped, self._last_alarm = PHASE_IDLE, False, None
         self._absent_seen, self._swapped_in = set(), False  # presence history belongs to one episode
+        self._restored = False
 
     def _track_presence(self, power: Mapping[str, Any]) -> None:  # 99 U154 swap evidence
         """Record empty slots, and a slot that was empty and is filled again.
@@ -220,8 +244,20 @@ class LowBatteryMonitor:  # the episode state machine
             out.append("low")
         else:
             self._track_presence(power)
-            if self._swapped_in and soc is not None and soc >= self._trigger:  # a swap (99 U154)
+            cold = False
+            if self._restored and soc is not None:
+                # 99 U157 cold swap (user ruling 2026-11-11): restored in the
+                # low phase, the first reading is at / above the trigger and
+                # not charging. soc cannot climb that far on its own, so the
+                # pack was swapped (or charged) while P3 was down -- the hot
+                # swap rule never saw the slot empty. Same buckets as a swap.
+                # Found live 2026-11-11: 8 % at power-off, 69 % single pack at
+                # boot, and the restored episode kept alarming "low battery".
+                self._restored = False  # judged once, on the first soc
+                cold = self.phase == PHASE_LOW and not charging and soc >= self._trigger
+            if (self._swapped_in or cold) and soc is not None and soc >= self._trigger:  # a swap (99 U154)
                 full = soc >= self._swap_resume  # U157: high enough to resume at once
+                self.last_cold_swap = cold and not self._swapped_in  # for the cleared report
                 self._end_episode()
                 return ["swapped" if full else "swapped_partial"]
             if soc is not None and soc >= self._full and self.phase in (
@@ -426,9 +462,12 @@ async def suspend_running_for_low_battery(dao, conn, now_mono_ms: int  # ES-2 sh
     return task_id, to_state, LB_SUSPEND_REASON  # for the publish
 
 
-async def close_low_battery_task(dao, conn, task_id: Optional[str], now_mono_ms: int  # charging ends it
+async def close_low_battery_task(dao, conn, task_id: Optional[str], now_mono_ms: int  # the return task's end
                                  ) -> Optional[Tuple[str, str, str]]:
-    """Charging started: the low-battery task has done its job -> cancelled.
+    """The injected return task has done its job -> cancelled. Called when the
+    charging phase starts, and again at the episode's end (full / swap) in case
+    it is still live (99 U157; until 2026-11-10 only on charging, which then
+    also ended the episode).
 
     Left alone it stays suspended (the 5 % stop suspends it) or running, and a
     later "继续" would resume the latest suspended task -- this one -- and
@@ -461,4 +500,4 @@ __all__ = ["LowBatteryMonitor", "close_low_battery_task", "LowBatteryConfigError
            "unreachable", "build_low_battery_row", "suspend_running_for_low_battery",
            "is_charging", "on_route", "list_role_points", "LB_PRIORITY", "check_thresholds",
            "EPISODE_MEMORY_KEY", "encode_episode", "decode_episode", "live_task_ids",
-           "park_held_for_manual", "PHASE_IDLE", "PHASE_LOW", "PHASE_CHARGING", "PHASE_INTERRUPTED"]
+           "park_held_for_manual", "charging_below_full", "PHASE_IDLE", "PHASE_LOW", "PHASE_CHARGING", "PHASE_INTERRUPTED"]

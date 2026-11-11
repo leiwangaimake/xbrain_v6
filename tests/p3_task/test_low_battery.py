@@ -235,6 +235,113 @@ def test_equal_swap_resume_and_full_is_allowed():  # the '<=' ends of the order
     lb.LowBatteryMonitor(20.0, 5.0, 2.0, 100.0, 100.0)
 
 
+# -- restart protection, second layer + cold swap (U157, 2026-11-11) --------------------
+@pytest.mark.parametrize("body,want", [
+    (None, False), (_power(50.0), False), (_power(50.0, charging=True), True),
+    (_power(99.0, charge="charging"), True), (_power(100.0, charging=True), False),
+    ({"soc_pct": None, "charge": "charging", "list": []}, True)])
+def test_charging_below_full_reads_the_chassis(body, want):
+    """MUTATION: '<=' for '<' -> 100 still blocks -> red; unknown soc while
+    charging treated as full -> red; ignore the six-state field -> red."""
+    assert lb.charging_below_full(body, 100.0) is want
+
+
+@pytest.mark.parametrize("soc,want,cold", [(69.0, ["swapped_partial"], True),
+                                           (85.0, ["swapped"], True),
+                                           (15.0, None, False)])
+def test_a_cold_swap_is_judged_on_the_first_reading_after_a_restore(soc, want, cold):
+    """Found live 2026-11-11: 8 % at power-off, a 69 % pack at boot, and the
+    restored low phase kept alarming. Restored low + first reading >= the
+    trigger, not charging -> a swap, same 80 % split. MUTATION: no cold rule
+    -> still low -> red; judge it on any later frame -> the wobble case below
+    closes -> red."""
+    m = _mon()
+    m.restore(lb.PHASE_LOW)
+    got = m.update(_power(soc), 0.0)
+    if want is None:
+        assert m.low and not {"swapped", "swapped_partial"} & set(got)
+        assert m.update(_power(69.0), 3.0) == ["alarm"]  # only the first reading counts
+    else:
+        assert got == want and not m.low and m.last_cold_swap is cold
+
+
+def test_no_cold_swap_while_charging_or_outside_the_low_phase():
+    """Charging at boot is the charging phase, and a restored charging phase
+    unplugged above the trigger is interrupted -- neither is a cold swap.
+    MUTATION: drop the `not charging` / phase condition -> red."""
+    m = _mon()
+    m.restore(lb.PHASE_LOW)
+    assert m.update(_power(69.0, charging=True), 0.0) == ["charging", "alarm"]
+    m2 = _mon()
+    m2.restore(lb.PHASE_CHARGING)
+    assert m2.update(_power(69.0), 0.0) == ["interrupted", "alarm"]
+
+
+def test_a_hot_swap_is_not_reported_cold():
+    """MUTATION: report every swap as cold -> red."""
+    m = _mon()
+    m.update(_packs(18.0, (True, 18.0)), 0.0)
+    m.update(_packs(None, (False, 0.0)), 1.0)
+    assert m.update(_packs(90.0, (True, 90.0)), 2.0) == ["swapped"] and not m.last_cold_swap
+
+
+@pytest.mark.asyncio
+async def test_charging_holds_a_preempted_task_without_any_episode(tmp_path, monkeypatch):
+    """The second layer on its own: no memory row, no episode, a preempted
+    task and a chassis charging at 50 % -> it stays suspended; at 100 % it
+    resumes. MUTATION: drop resume_blocked from the wiring -> it resumes at
+    50 % -> red."""
+    h, stop, loop, task_db = await start_p3(
+        tmp_path, monkeypatch,
+        rows=[goto_row("t-run", "suspended", 1, suspend_kind="yielding",
+                       suspend_reason="preempted")],
+        geo_sql=[ROUTE_SQL, DOCK_ON, HOME], route_membership_m=5.0, low_battery=LB)
+    try:
+        await _feed(h, _power(50.0, charging=True), 2.0)
+        assert (await task_state(task_db, "t-run"))[0] == "suspended"
+        await _feed(h, _power(100.0, charging=True), 1.0)
+        assert await _poll_state(task_db, "t-run", "running", n=300)
+    finally:
+        await stop_p3(stop, loop)
+
+
+@pytest.mark.asyncio
+async def test_a_cold_swap_ends_a_restored_episode_end_to_end(tmp_path, monkeypatch):
+    """Restored low phase, first reading 69 % single pack not charging ->
+    cleared (battery_swap, cold_swap, auto_resume false), the preempted task
+    parked for a person, the memory row idle. MUTATION: no cold rule -> no
+    cleared -> red."""
+    from xbrain.p3_task.dao.simple_daos import MemoryDAO
+    from xbrain.p3_task.dao.tasks_dao import TasksDAO
+    from xbrain.p3_task.persistence.schema_task import ALL_DDL_STATEMENTS
+    task_db = str(tmp_path / "task.db")
+    async with aiosqlite.connect(task_db) as t:  # what the previous P3 left behind
+        for stmt in ALL_DDL_STATEMENTS:
+            await t.execute(stmt)
+        await TasksDAO(t).insert(goto_row("t-run", "suspended", 1,
+                                          suspend_kind="yielding", suspend_reason="preempted"))
+        await MemoryDAO(t).put(lb.EPISODE_MEMORY_KEY,
+                               lb.encode_episode(lb.PHASE_LOW, {"t-run"}, None), 0)
+        await t.commit()
+    h, stop, loop, task_db = await start_p3(
+        tmp_path, monkeypatch, geo_sql=[ROUTE_SQL, DOCK_ON, HOME],
+        route_membership_m=5.0, low_battery=LB)
+    try:
+        await _feed(h, _packs(69.0, (False, 0.0), (True, 69.0)), 2.0)
+        cleared = [e for e in h.frames("event/info/charging")
+                   if e["detail"]["type"] == "low_battery_cleared"]
+        assert len(cleared) == 1
+        d = cleared[0]["detail"]
+        assert (d["cause"], d["cold_swap"], d["auto_resume"], d["parked"]) == (
+            "battery_swap", True, False, ["t-run"])
+        assert (await task_state(task_db, "t-run")) == ("suspended", "passive", "low_battery")
+        async with aiosqlite.connect(task_db) as t:
+            raw = await MemoryDAO(t).get(lb.EPISODE_MEMORY_KEY)
+        assert lb.decode_episode(raw) is None  # the record is idle
+    finally:
+        await stop_p3(stop, loop)
+
+
 # -- __main__ (U157 keys) ---------------------------------------------------------------
 _FULL_LB = {"trigger_soc_pct": 20.0, "stop_soc_pct": 5.0, "cloud_alarm_period_s": 2.0,
             "charge_full_soc_pct": 100.0, "swap_resume_soc_pct": 80.0}
