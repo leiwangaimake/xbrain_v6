@@ -194,11 +194,12 @@
   //    edge (1 px in, 1 px out). An SVG stroke is painted ON the circle's edge, so
   //    fill and ring touch with no gap, and both are drawn opaque (.keypoint-dot).
   //  * robot: the arrow is bright red; 3x the old half-length 9 px (27 px), then
-  //    halved the same day -> 13.5 px on screen, constant over zoom like before.
+  //    halved (13.5 px), then a third larger, all the same day -> 18 px on screen,
+  //    constant over zoom like before.
   const KEYPOINT_DOT_PX_FALLBACK = 11.0;    // circle radius, screen px (ring centre)
   const KEYPOINT_RING_PX_FALLBACK = 2.0;    // ring width, screen px
   const MARK_RED_FALLBACK = "#ff1f1f";      // bright red
-  const ROBOT_ARROW_PX_FALLBACK = 13.5;     // arrow half-length, screen px (old 9)
+  const ROBOT_ARROW_PX_FALLBACK = 18;       // arrow half-length, screen px (old 9)
   const GRID_LINE_COLOR_FALLBACK = "#2a2a2a";  // grid line, half the old #555555
 
   // The marks' look from ui_config. A missing or non-positive size falls back

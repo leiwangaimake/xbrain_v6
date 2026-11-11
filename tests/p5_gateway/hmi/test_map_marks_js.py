@@ -11,7 +11,8 @@ Pins the user's display rules (2026-11-11, two rounds the same day):
     gap between them; 1.5x the old size, then twice that. The old mark's
     outer radius was 4.0 px (r 3.5 + half of a 1 px stroke); the new one is
     radius_px + ring_px / 2 = 12.0 px.
-  * robot: bright red; 3x the old size, then halved (half-length 9 -> 13.5 px).
+  * robot: bright red; 3x the old size, then halved, then a third larger
+    (half-length 9 -> 27 -> 13.5 -> 18 px).
   * grid lines one step darker: #555555 -> #2a2a2a (half the brightness).
 The values live in configs/p5_gateway.yaml hmi.web.waypoint / robot (17
 S6.10.2 U6 / U9) and reach the browser through ui_config; hmi.js markStyle
@@ -67,7 +68,7 @@ def _web() -> dict:
 
 
 def test_the_configured_marks_are_the_users_sizes_and_colours():
-    """MUTATION: radius 11.0 -> 5.0 (first round) -> red; robot 13.5 -> 27 ->
+    """MUTATION: radius 11.0 -> 5.0 (first round) -> red; robot 18 -> 13.5 ->
     red; ring colour not red / fill not white -> red; grid back to #555555 ->
     red."""
     web = _web()
@@ -75,7 +76,7 @@ def test_the_configured_marks_are_the_users_sizes_and_colours():
     assert w["radius_px"] + w["ring_px"] / 2 == pytest.approx(1.5 * 2 * _OLD_OUTER_PX)
     assert w["ring_px"] > 0 and w["fill_color"].lower() == "#ffffff"
     assert w["ring_color"].lower() == "#ff1f1f" and r["color"].lower() == "#ff1f1f"
-    assert r["size_px"] == pytest.approx(3 * _OLD_ARROW_PX * 0.5)
+    assert r["size_px"] == pytest.approx(3 * _OLD_ARROW_PX * 0.5 * 4 / 3)
     assert web["map"]["grid"]["line_color"].lower() == "#2a2a2a"
 
 
@@ -96,9 +97,9 @@ def test_mark_style_reads_the_config_and_falls_back_to_the_same_look():
     assert got[0] == {"kpRadiusPx": 7, "kpRingPx": 3, "kpFill": "#fefefe",
                       "kpRing": "#ee0000", "robotPx": 30, "robotColor": "#dd0000"}
     fallback = {"kpRadiusPx": 11, "kpRingPx": 2, "kpFill": "#ffffff",
-                "kpRing": "#ff1f1f", "robotPx": 13.5, "robotColor": "#ff1f1f"}
+                "kpRing": "#ff1f1f", "robotPx": 18, "robotColor": "#ff1f1f"}
     assert got[1] == fallback
-    assert (got[2]["kpRadiusPx"], got[2]["robotPx"]) == (11, 13.5)
+    assert (got[2]["kpRadiusPx"], got[2]["robotPx"]) == (11, 18)
 
 
 def test_the_arrow_scales_with_its_size_and_turns_with_the_heading():
