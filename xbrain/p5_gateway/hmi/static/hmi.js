@@ -181,6 +181,48 @@
   const GRID_LINE_PX_FALLBACK = 2;
   const DOT_PX = 3.5;
 
+  // <map-marks>
+  // Map marks, user 2026-11-11. Pure (no DOM): the tests run this block under node.
+  // Values come from ui_config (configs/p5_gateway.yaml hmi.web.waypoint / robot,
+  // 17 S6.10.2 U6 / U9); the constants below are presentation fallbacks only (UI
+  // values, not safety values -- 17 S6.10.2 allows defaults for these).
+  //  * keypoint (位置点): a true circle filled bright white with a bright red ring
+  //    and NO gap between them. Old mark: r 3.5 px plus a 1 px semi-transparent
+  //    white stroke centred on the edge -> outer radius 4.0 px, and the translucent
+  //    ring read as a hollow. The user asked for 1.5x (outer 6 px) and then, the
+  //    same day, twice that: outer 12.0 px = r 11.0 + a 2 px ring centred on the
+  //    edge (1 px in, 1 px out). An SVG stroke is painted ON the circle's edge, so
+  //    fill and ring touch with no gap, and both are drawn opaque (.keypoint-dot).
+  //  * robot: the arrow is bright red; 3x the old half-length 9 px (27 px), then
+  //    halved the same day -> 13.5 px on screen, constant over zoom like before.
+  const KEYPOINT_DOT_PX_FALLBACK = 11.0;    // circle radius, screen px (ring centre)
+  const KEYPOINT_RING_PX_FALLBACK = 2.0;    // ring width, screen px
+  const MARK_RED_FALLBACK = "#ff1f1f";      // bright red
+  const ROBOT_ARROW_PX_FALLBACK = 13.5;     // arrow half-length, screen px (old 9)
+  const GRID_LINE_COLOR_FALLBACK = "#2a2a2a";  // grid line, half the old #555555
+
+  // The marks' look from ui_config. A missing or non-positive size falls back
+  // (a zero radius would hide every keypoint without a word).
+  function markStyle(c) {
+    const w = (c && c.waypoint) || {}, r = (c && c.robot) || {};
+    const pos = (v, fb) => (typeof v === "number" && v > 0 ? v : fb);
+    return { kpRadiusPx: pos(w.radius_px, KEYPOINT_DOT_PX_FALLBACK),
+             kpRingPx: pos(w.ring_px, KEYPOINT_RING_PX_FALLBACK),
+             kpFill: w.fill_color || "#ffffff",
+             kpRing: w.ring_color || MARK_RED_FALLBACK,
+             robotPx: pos(r.size_px, ROBOT_ARROW_PX_FALLBACK),
+             robotColor: r.color || MARK_RED_FALLBACK };
+  }
+
+  // The arrow's corners in map units: (x, y) its centre, a the rotation (0 =
+  // pointing north, i.e. screen up), s the half-length in map units.
+  function robotArrowPoints(x, y, a, s) {
+    return [[0, -s], [-s * 0.7, s], [0, s * 0.4], [s * 0.7, s]].map(([px, py]) => [
+      px * Math.cos(a) - py * Math.sin(a) + x,
+      px * Math.sin(a) + py * Math.cos(a) + y]);
+  }
+  // </map-marks>
+
   // Chosen every view change (applyView) from the CURRENT metres-per-screen-px.
   // applyView keeps the viewBox at the element's aspect, so the scale is uniform
   // (x==y) and mpp is a single value.
@@ -205,11 +247,15 @@
     // rule would beat a presentation attribute.
     const linePx = grid.line_px || GRID_LINE_PX_FALLBACK;
     $("majorGridPath").style.strokeWidth = (2 * linePx * mpp).toFixed(4);
+    // 2026-11-11 (user): grid lines one step darker, colour from the yaml
+    $("majorGridPath").style.stroke = grid.line_color || GRID_LINE_COLOR_FALLBACK;
     $("gridBg").style.display = hidden ? "none" : "";
     $("scaleText").textContent = hidden ? "网格 已隐藏" : `网格 ${cell}m`;
     // non-scaling geo dots: constant screen radius regardless of zoom.
     const rr = (DOT_PX * mpp).toFixed(3);
     svg.querySelectorAll("circle.geo-dot").forEach((c) => c.setAttribute("r", rr));
+    const kr = (markStyle(cfg).kpRadiusPx * mpp).toFixed(3);  // keypoints: own size
+    svg.querySelectorAll("circle.keypoint-dot").forEach((c) => c.setAttribute("r", kr));
     sizeGotoPins();                        // W2 target dots: constant screen size
   }
 
@@ -501,11 +547,15 @@
     const wps = geo.waypoints || {};
     if (wps.available) for (const w of wps.items) {
       const xy = toXY(w.geom || w, origin); if (!xy) continue;
-      const mk = (cfg.waypoint || {})[w.recorded ? "recorded" : "unrecorded"] || {};
       // req1: keypoint = a round dot (constant screen size) + its name in bright
       // white (CSS .keypoint-label). The old ".keypoint text" selector never
       // matched a <text class="keypoint">, hence the dedicated class.
-      $("keypointLayer").appendChild(dot(xy[0], xy[1], mk.color));
+      // 2026-11-11 (user): white dot, red ring, one look for every keypoint --
+      // ~~fill = cfg.waypoint.recorded / unrecorded colour~~ superseded.
+      const ms = markStyle(cfg), kd = dot(xy[0], xy[1], null, "keypoint-dot");
+      kd.style.fill = ms.kpFill; kd.style.stroke = ms.kpRing;   // hmi.web.waypoint
+      kd.style.strokeWidth = ms.kpRingPx + "px";  // non-scaling (hmi.css)
+      $("keypointLayer").appendChild(kd);
       if (w.name) {
         $("keypointLayer").appendChild(
           label(xy[0], xy[1] - 2, "keypoint-label", w.name));
@@ -543,16 +593,16 @@
     // RTK heading. s in ENU metres, so the arrow is small on a wide (5km) fit.
     const svg = $("mapSvg"), cw = svg.clientWidth || 1;
     const mpp = (parseFloat((svg.getAttribute("viewBox") || "").split(/\s+/)[2]) || baseVB[2]) / cw;
-    const a = pose.heading_valid ? (Math.PI / 2 - (pose.heading_rad || 0)) : 0, s = 9 * mpp;
+    // 2026-11-11 (user): 3x the old size (hmi.web.robot.size_px, was 9) and red.
+    const ms = markStyle(cfg);
+    const a = pose.heading_valid ? (Math.PI / 2 - (pose.heading_rad || 0)) : 0;
+    const s = ms.robotPx * mpp;
     const el = document.createElementNS(SVGNS, "polygon");
     // simple arrow along heading
-    const pts = [[0, -s], [-s * 0.7, s], [0, s * 0.4], [s * 0.7, s]]
-      .map(([px, py]) => {
-        const rx = px * Math.cos(a) - py * Math.sin(a) + xy[0];
-        const ry = px * Math.sin(a) + py * Math.cos(a) + xy[1];
-        return `${rx},${ry}`;
-      }).join(" ");
+    const pts = robotArrowPoints(xy[0], xy[1], a, s)
+      .map(([rx, ry]) => `${rx},${ry}`).join(" ");
     el.setAttribute("points", pts); el.setAttribute("class", "robot-arrow");
+    el.style.fill = ms.robotColor;                // hmi.web.robot.color
     $("robotLayer").appendChild(el);
   }
 

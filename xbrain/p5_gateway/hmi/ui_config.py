@@ -93,6 +93,9 @@ def build_ui_config(hmi_web: Mapping[str, Any], *,
         # (it keeps its own presentation fallbacks, 17 S6.10.2), and a missing
         # group must not refuse the whole page the way a missing map group does.
         "goto": dict(hmi_web.get("goto") or {}),
+        # U9 robot mark (colour, size; user 2026-11-11). Optional like goto:
+        # hmi.js markStyle keeps presentation fallbacks.
+        "robot": dict(hmi_web.get("robot") or {}),
         # Site display timezone for the footer clock (common.timezone). null ->
         # frontend uses the browser zone.
         "timezone": site_timezone,
