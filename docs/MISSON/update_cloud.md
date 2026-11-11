@@ -647,7 +647,7 @@ v2.0 §9.5 要求可靠事件断线后在原 key 上补发、复用 `eid`。**�
 | D-12 | 信封层错误的 `detail.code` 一律为 `E_SCHEMA`；云台与任务两个 key 的 `detail.code` 口径不一致 | 低 | §6.7 |
 | D-13 | `voice_turn`：判不出时为 `rejected` 且 `reply_text` 为空；多数拒绝无 `reject_code`；L3 的 `pending_confirm` 没有真正上报 | 低 | §8.2、§8.3 |
 | D-14 | 云端键盘遥控不校验 `client_id` / `client_seq`；参考客户端 README 的安全说明已过时 | 低 | §2 |
-| D-16 | 语音文本开始录制被拒（定位、电量、健康度等）时，`voice_turn` 仍为 `accepted`、只出声报原因，云端看不到拒绝 | 中 | §3.1 |
+| ~~D-16~~ | ~~语音文本开始录制被拒（定位、电量、健康度等）时，`voice_turn` 仍为 `accepted`、只出声报原因，云端看不到拒绝~~ ✅ **已修（U165，2026-11-11，0aceb41）**：开始的结果另发一条 `layer="teach_result"` 的 voice_turn，被拒为 `rejected` 加原因码；规则层的录制拒绝也改为 `rejected`。gj-001 实测通过 | ~~中~~ | §3.1 |
 | D-15 | 机器人通用面 router（7447）没有访问控制，连上的客户端可以发布机器人内部 key | 部署安全 | 请只发本文与基线文档列出的 key |
 
 ---
