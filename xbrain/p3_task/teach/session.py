@@ -139,6 +139,9 @@ class TeachSession:
     dropped_by_quality: int = 0
     length_m: float = 0.0
     warn: List[str] = field(default_factory=list)
+    # 99 U163: the time-left warnings already given (seconds before the
+    # deadline), so each one is spoken once per session
+    warned: List[float] = field(default_factory=list)
     close_reason: str = ""
     recovered: bool = False
 

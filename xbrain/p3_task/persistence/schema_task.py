@@ -381,6 +381,9 @@ CREATE TABLE IF NOT EXISTS memory (
 # (20 RNS-N-1)". xbrain/p1_motion/nav/route_intake.py already implements the
 # 1-point floor and its tests are green, so a `>= 2` here would refuse to
 # snapshot exactly the case P1 accepts: a one-waypoint goto.
+#
+# *** No ceiling: ~~point_count <= 5000 (11 S3.5A RG-2)~~ removed 2026-11-11
+# (99 U163); an existing table is rebuilt by ensure_task_route_snapshot_uncapped.
 DDL_TASK_ROUTE_SNAPSHOT = """
 CREATE TABLE IF NOT EXISTS task_route_snapshot (
   task_id      TEXT    PRIMARY KEY REFERENCES tasks(task_id),
@@ -393,7 +396,7 @@ CREATE TABLE IF NOT EXISTS task_route_snapshot (
   arclen_json  TEXT    NOT NULL,
   created_at   TEXT    NOT NULL,
   CHECK (loop_mode IN ('oneway','pingpong','closed')),
-  CHECK (point_count >= 1 AND point_count <= 5000),
+  CHECK (point_count >= 1),
   CHECK (total_len_m > 0.0)
 );
 """.strip()
@@ -434,6 +437,47 @@ async def ensure_task_route_snapshot_shape(conn) -> bool:
             "suspended task's snapshot. Columns found: %s." % (n_rows, cols))
     await conn.execute("DROP TABLE task_route_snapshot")
     await conn.commit()
+    return True
+
+
+#: The CHECK clause of the capped table (before 2026-11-11, 99 U163).
+_SNAPSHOT_CAP_CLAUSE = "point_count <= 5000"
+
+
+async def ensure_task_route_snapshot_uncapped(conn) -> bool:
+    """Rebuild a task_route_snapshot that still carries the 5000-point CHECK
+    (~~11 S3.5A RG-2~~, removed 2026-11-11, 99 U163: no point limit on a
+    route). Returns True if it rebuilt. MUST run BEFORE the DDL burst: the DDL
+    is CREATE ... IF NOT EXISTS and would leave the old CHECK in place, and
+    SQLite cannot drop a CHECK in place -- so the insert of the first snapshot
+    of a 10800-point recording would fail on the robot's existing task.db.
+
+    Unlike the shape migrations above, rows are KEPT (copied across): the
+    columns are unchanged, only the CHECK goes, and SN-3 forbids losing a
+    suspended task's snapshot. One transaction, so a failure leaves the old
+    table as it was. The indexes go with the old table and the DDL burst that
+    follows recreates them."""
+    cur = await conn.execute(
+        "SELECT sql FROM sqlite_master WHERE type='table' AND name='task_route_snapshot'")
+    row = await cur.fetchone()
+    if row is None or _SNAPSHOT_CAP_CLAUSE not in (row[0] or ""):
+        return False
+    tmp_ddl = DDL_TASK_ROUTE_SNAPSHOT.replace(
+        "CREATE TABLE IF NOT EXISTS task_route_snapshot",
+        "CREATE TABLE task_route_snapshot__u163", 1)
+    cols = ("task_id, route_id, rev, loop_mode, point_count, total_len_m, "
+            "points_json, arclen_json, created_at")
+    await conn.execute("BEGIN IMMEDIATE")
+    try:
+        await conn.execute(tmp_ddl)
+        await conn.execute("INSERT INTO task_route_snapshot__u163 (%s) "
+                           "SELECT %s FROM task_route_snapshot" % (cols, cols))
+        await conn.execute("DROP TABLE task_route_snapshot")
+        await conn.execute("ALTER TABLE task_route_snapshot__u163 RENAME TO task_route_snapshot")
+        await conn.commit()
+    except Exception:
+        await conn.rollback()
+        raise
     return True
 
 

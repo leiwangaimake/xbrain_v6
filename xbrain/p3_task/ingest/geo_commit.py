@@ -51,10 +51,12 @@ from xbrain.common.fence.roles import carries_speed_limit, hard_enforce_for_role
 from xbrain.p3_task.fence.geom import validate_polygon
 from xbrain.p3_task.state.geo_rev import content_hash
 
-# A route needs at least two points to be a path. The upper bound is the 11 S7.8.3
-# RouteGeometry cap (<= 5000 vertices); the old 16 was the retired assoc trigger.
+# A route needs at least two points to be a path. There is no upper bound:
+# ~~the 11 S7.8.3 RouteGeometry cap (<= 5000 vertices)~~ was removed 2026-11-11
+# (99 U163). Until then a 180 min recording (~10800 points) failed HERE at save
+# time, and the auto-save at the time limit left the session stuck in
+# finalizing; the old 16 was the retired assoc trigger.
 _MIN_ROUTE_POINTS = 2
-_MAX_PATH_POINTS = 5000
 
 def enu_rad_to_compass_deg(heading_rad: float) -> float:
     """An 11 S3.3 ENU heading (rad, east 0, counter-clockwise) as the 15 S9.3
@@ -134,9 +136,6 @@ async def commit_route(conn, *, route_id: str, name: str,
             if n < _MIN_ROUTE_POINTS:
                 raise GeoCommitError(
                     f"route needs >= {_MIN_ROUTE_POINTS} points, got {n}")
-            if n > _MAX_PATH_POINTS:
-                raise GeoCommitError(
-                    f"route has {n} points, exceeds the cap {_MAX_PATH_POINTS}")
             total = _polyline_len_m(pts)
             if total <= 0.0:                      # keep the routes CHECK from aborting cryptically
                 raise GeoCommitError("route has zero length (all points coincide)")

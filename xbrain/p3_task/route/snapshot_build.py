@@ -53,7 +53,7 @@ import math
 from dataclasses import dataclass
 from typing import Any, Dict, List, Optional, Sequence, Tuple
 
-from xbrain.p3_task.route.push import MAX_POINTS, RoutePoint
+from xbrain.p3_task.route.push import RoutePoint
 
 #: Same constant and same model as ingest/geo_commit.py. Duplicated as a
 #: value rather than imported to avoid a route -> ingest dependency, but it
@@ -200,10 +200,6 @@ def build_snapshot(*, task_id: str, route_id: str, rev: int, loop_mode: str,
 
     if not points:
         raise SnapshotBuildError("route %r resolved to zero points" % route_id)
-    if len(points) > MAX_POINTS:
-        raise SnapshotBuildError(
-            "route %r has %d points, over the 11 S3.5A RG-2 cap of %d"
-            % (route_id, len(points), MAX_POINTS))
     arclen = cumulative_arclen(points)
     length = float(total_len_m) if total_len_m else arclen[-1]
     if length <= 0.0:
@@ -282,10 +278,6 @@ def build_composite_snapshot(*, task_id: str, route_id: str, rev: int,
                 for la, lo in points)  # robot position first
     if len(pts) < 2:
         raise SnapshotBuildError("composite %r needs at least two points" % route_id)
-    if len(pts) > MAX_POINTS:
-        raise SnapshotBuildError(
-            "composite %r has %d points, over the 11 S3.5A RG-2 cap of %d"
-            % (route_id, len(pts), MAX_POINTS))
     arclen = cumulative_arclen(pts)
     if arclen[-1] <= 0.0:
         raise SnapshotBuildError("composite %r has zero length" % route_id)

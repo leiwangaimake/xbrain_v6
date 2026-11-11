@@ -40,7 +40,7 @@ from __future__ import annotations
 import json
 import logging
 import re
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 from xbrain.common.errors import (
     E_GEO_INVALID,  # 99 U146 dock off every route
@@ -106,7 +106,8 @@ class TeachRuntime:
                  min_dist_m: Optional[float],
                  snap_max_age_ms: Optional[int] = None,
                  route_membership_m: Optional[float] = None,
-                 record_duration_s: Optional[float] = None) -> None:
+                 record_duration_s: Optional[float] = None,
+                 record_warn_before_s: Optional[Sequence[float]] = None) -> None:
         self._task_conn = task_conn
         # 99 U146: a 充电桩 / 充电站 point must lie within this of a route
         # (common.geo.route_membership_m); None = tests of the teach path alone.
@@ -120,6 +121,13 @@ class TeachRuntime:
         # teach.record_duration_s = common.recording.session_timeout_s). The
         # ONLY recording limit; no default -- None refuses every start by key.
         self._record_duration_s = record_duration_s
+        # 99 U163: seconds before the deadline at which the operator is told
+        # how long is left (p3_task.yaml teach.record_warn_before_s, e.g.
+        # 600 and 60). Validated by __main__; None (tests of the teach path
+        # alone) gives no warnings. Largest first, so the 10 min one precedes
+        # the 1 min one when both are due on the same pass.
+        self._warn_before_s = tuple(sorted((float(w) for w in record_warn_before_s or ()),
+                                           reverse=True))
         # 18 PS-6 teach.snap_max_age_ms (p3_task.yaml, 15 S12): the oldest a
         # mark_once pose_snap may be. None = not configured, and every capture
         # that carries a snapshot is then refused by name -- never defaulted.
@@ -560,9 +568,23 @@ class TeachRuntime:
             self._session = None
             self._recorder = None
             return detail
-        detail = await self._commit(session, session.name, overwrite=False,
-                                    activate=False, validation=validation,
-                                    now_ms=now_ms)
+        try:
+            detail = await self._commit(session, session.name, overwrite=False,
+                                        activate=False, validation=validation,
+                                        now_ms=now_ms)
+        except Exception as exc:      # noqa: BLE001 -- reported, never swallowed
+            # 99 U163: a geometry that validated but could not be written (the
+            # name was taken meanwhile, a database error, ...). The session
+            # STAYS in finalizing with its buffer, so the operator can still
+            # save it under another name or discard it; the caller reports it.
+            # Until 2026-11-11 the exception escaped to the loop's generic
+            # handler, was logged, and the session sat in finalizing with
+            # nothing said -- for every 180 min recording, because the 5000
+            # point cap refused it here.
+            code = getattr(exc, "code", None)
+            return {"saved": False, "retained": True, "session_id": session.session_id,
+                    "state": session.state, "name": session.name, "kind": session.kind,
+                    "code": code, "reason": str(exc)}
         detail["saved"] = True
         detail["kind"] = session.kind
         return detail
@@ -833,11 +855,50 @@ class TeachRuntime:
     def expire(self, now_mono_s: float) -> Optional[str]:
         """Auto-finish a session past its deadline (S12A.3). Returns the reason
         when it fired. Called every loop pass; the deadline is monotonic, so a
-        wall-clock step at RTK lock cannot end a recording early."""
-        if self._session is None or not self._session.is_sampling():
+        wall-clock step at RTK lock cannot end a recording early.
+
+        A PAUSED session expires too (99 U163, 2026-11-11): until then only
+        `recording` did, so a recording paused past 180 min never ended and
+        was not saved until someone resumed it. paused -> finish is a legal
+        transition (S12A.3), and the buffer is the same."""
+        if self._session is None or self._session.state not in ("recording", "paused"):
             return None
         if now_mono_s < self._session.deadline_mono_s:
             return None
         self._session.apply("finish")
         self._session.warn.append("max_duration")
         return "max_duration"
+
+    def due_warnings(self, now_mono_s: float) -> List[Tuple[float, float]]:
+        """The time-left warnings due now (99 U163): [(warn_before_s,
+        remaining_s), ...], each given once per session, only while recording
+        or paused and before the deadline. A threshold at or above the whole
+        duration never fires (it would warn at the start)."""
+        s = self._session
+        if s is None or s.state not in ("recording", "paused"):
+            return []
+        remaining = s.deadline_mono_s - now_mono_s
+        if remaining <= 0.0:
+            return []
+        duration = s.deadline_mono_s - s.started_mono_s
+        out = []
+        for w in self._warn_before_s:
+            if w < duration and w not in s.warned and remaining <= w:
+                s.warned.append(w)
+                out.append((w, remaining))
+        return out
+
+    def session_brief(self) -> Dict[str, Any]:
+        """The facts every recording report carries (99 U163), read BEFORE a
+        save closes the session: id, name, route/fence, issuer channel, points,
+        length, elapsed. {} when there is no session. The route/fence goes
+        in session_kind: detail.kind is the event's own name (11 S12A.12)."""
+        s = self._session
+        if s is None:
+            return {}
+        rec = self._recorder
+        return {"session_id": s.session_id, "name": s.name, "session_kind": s.kind,
+                "channel": s.issuer_channel,
+                "point_count": rec.point_count if rec is not None else s.point_count,
+                "length_m": round(rec.length_m if rec is not None else s.length_m, 1),
+                "duration_s": round(s.deadline_mono_s - s.started_mono_s)}

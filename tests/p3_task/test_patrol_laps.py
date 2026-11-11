@@ -71,7 +71,7 @@ def test_lap_spec_defaults_and_reads_the_slots():  # 16 S6.7.3 [3]
 
 
 @pytest.mark.parametrize("slots", [  # every value admission must refuse
-    {"loops": "3"}, {"loops": True}, {"loops": -1}, {"loops": 100},  # not a count
+    {"loops": "3"}, {"loops": True}, {"loops": -1},  # not a count
     {"round_trip": "yes"}, {"round_trip": 1},  # not a bool
 ])
 def test_bad_lap_slots_are_refused_at_admission(slots):  # V-8a
@@ -81,6 +81,16 @@ def test_bad_lap_slots_are_refused_at_admission(slots):  # V-8a
     with pytest.raises(TaskCommandError) as ei:  # refused
         parse_task_command(payload)  # admission
     assert ei.value.code == E_SCHEMA  # V-8a code
+
+
+@pytest.mark.parametrize("loops", [100, 1000, 100000])
+def test_any_lap_count_is_accepted(loops):  # 99 U163
+    """User ruling 2026-11-11: no limit on a navigation task -- the 99-lap cap
+    is gone. MUTATION: put any upper bound back -> 100 refused -> red."""
+    assert lap_spec_from_params({"slots": {"loops": loops}}) == LapSpec(loops, False)
+    parse_task_command({"cmd_id": "c1", "action": "submit", "source": "voice",
+                        "task": {"type": "patrol", "route_id": "r-a",
+                                 "params": {"slots": {"loops": loops}}}})  # admitted
 
 
 def test_only_patrol_repeat_may_omit_the_route():  # 11 S7.2 exception

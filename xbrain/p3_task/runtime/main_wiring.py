@@ -143,6 +143,7 @@ def run_voice_loop_wiring(stop_flag: dict,
                           teach_sample_hz: Optional[float] = None,
                           teach_min_dist_m: Optional[float] = None,
                           teach_record_duration_s: Optional[float] = None,
+                          teach_record_warn_before_s: Optional[list] = None,
                           rtk_lost_sustain_s: Optional[float] = None,
                           rtk_recover_sustain_s: Optional[float] = None,
                           low_battery: Optional[Dict[str, float]] = None) -> int:
@@ -171,7 +172,9 @@ def run_voice_loop_wiring(stop_flag: dict,
     pair. None (tests) refuses every recording start by key name; the
     production __main__ refuses to start without them. teach_record_duration_s
     is teach.record_duration_s (= common.recording.session_timeout_s, 99 U162),
-    the recording's only limit, handled the same way.
+    the recording's only limit, handled the same way. teach_record_warn_before_s
+    is teach.record_warn_before_s (99 U163): the time-left warnings, None in
+    tests (no warnings).
 
     rtk_lost_sustain_s / rtk_recover_sustain_s are p3_task.yaml rtk_loss.*
     (11 S3.3.3, 99 U142): how long single / no_fix must last before the task
@@ -191,6 +194,7 @@ def run_voice_loop_wiring(stop_flag: dict,
                teach_sample_hz=teach_sample_hz,
                teach_min_dist_m=teach_min_dist_m,
                teach_record_duration_s=teach_record_duration_s,
+               teach_record_warn_before_s=teach_record_warn_before_s,
                rtk_lost_sustain_s=rtk_lost_sustain_s,
                rtk_recover_sustain_s=rtk_recover_sustain_s,
                low_battery=low_battery))
@@ -206,6 +210,7 @@ async def _amain(stop_flag: dict, heartbeat_period_s: float,
                  teach_sample_hz: Optional[float] = None,
                  teach_min_dist_m: Optional[float] = None,
                  teach_record_duration_s: Optional[float] = None,
+                 teach_record_warn_before_s: Optional[list] = None,
                  rtk_lost_sustain_s: Optional[float] = None,
                  rtk_recover_sustain_s: Optional[float] = None,
                  low_battery: Optional[Dict[str, float]] = None) -> int:
@@ -734,6 +739,7 @@ async def _amain(stop_flag: dict, heartbeat_period_s: float,
                                  sample_hz=teach_sample_hz,
                                  min_dist_m=teach_min_dist_m,
                                  record_duration_s=teach_record_duration_s,
+                                 record_warn_before_s=teach_record_warn_before_s,  # 99 U163
                                  snap_max_age_ms=teach_snap_max_age_ms,
                                  route_membership_m=route_membership_m)  # 99 U146
             if teach_snap_max_age_ms is None:
@@ -1253,6 +1259,24 @@ async def _amain(stop_flag: dict, heartbeat_period_s: float,
                     "src": "p3_task", "ts": time.time(),
                 }, ensure_ascii=False).encode("utf-8"))
 
+            _teach_evt_n = [0]
+
+            def _emit_teach(sev: str, title: str, detail: dict) -> None:
+                """event/{sev}/teach (11 S6.2 category teach; 99 U163). The
+                recording reports with no command behind them -- the time-left
+                warnings and the auto-finish at the time limit -- so they have
+                no cmd/teach/ack to ride (an ack answers a cmd_id, 11 S7.7).
+                As an Event they are stored, sent to the cloud and replayed
+                after a reconnect by the P5 pipeline, and P4 speaks the ones
+                marked first and records them on state/voice_turn."""
+                _teach_evt_n[0] += 1
+                gen.put("event/%s/teach" % sev, json.dumps({
+                    "eid": "teach-%s-%d" % (_BOOT_ID, _teach_evt_n[0]), "sev": sev,
+                    "cat": "teach", "title": title, "detail": dict(detail, first=True),
+                    # WALL-CLOCK-OK(record): 11 S6.1 Event.ts of this report.
+                    "src": "p3_task", "ts": time.time(),
+                }, ensure_ascii=False).encode("utf-8"))
+
             def _publish_prone() -> None:
                 """cmd/chassis/ctrl {action: prone} (11 S9.3.4) in a full S3.0
                 envelope -- quadruped refuses a bare body (S9.3.4 E-3, the P4
@@ -1658,16 +1682,49 @@ async def _amain(stop_flag: dict, heartbeat_period_s: float,
                             teach.update_teleop(_body)
                     try:
                         await teach.offer_pose(now_mono_s, _now_wall_ms())
+                        # 99 U163: the time-left warnings (10 min, 1 min);
+                        # teach.time_warning, a row 99 U163 adds to 11 S12A.12
+                        for _wb, _left in teach.due_warnings(now_mono_s):
+                            _emit_teach("info", "recording time running out", dict(
+                                teach.session_brief(), kind="teach.time_warning",
+                                warn_before_s=_wb, remaining_s=round(_left)))
+                        _brief = teach.session_brief()  # read before a save closes it
                         expired = teach.expire(now_mono_s)
                         if expired:
                             _logger.warning("p3 teach session auto-finished: %s",
                                             expired)
                             # 99 U133: a named session is saved at once, as
-                            # an operator's finish would be
+                            # an operator's finish would be. 99 U163: and said
+                            # out loud + reported to the cloud, whatever the
+                            # outcome -- it never fails silently any more.
+                            # One teach.expired (11 S12A.12, warn) whose
+                            # detail.result says how it ended.
                             _auto = await teach.save_named(_now_wall_ms())
                             if _auto.get("reason") != "no_named_session":
                                 last_teach = 0.0
                                 last_geo = last_fence = 0.0
+                            _base = dict(_brief, kind="teach.expired", cause=expired)
+                            if _auto.get("saved"):
+                                _ap = _auto.get("applied") or {}
+                                _emit_teach("warn", "recording saved at the time limit", dict(
+                                    _base, result="saved", saved=True, retained=False,
+                                    geo_id=_ap.get("geo_id"),
+                                    point_count=_ap.get("point_count", _brief.get("point_count")),
+                                    length_m=_ap.get("total_len_m", _brief.get("length_m"))))
+                            elif _auto.get("reason") == "no_named_session":
+                                # an unnamed recording waits in finalizing for
+                                # "保存为X" (S12A.7); its buffer is kept
+                                _emit_teach("warn", "recording stopped at the time limit, needs a name", dict(
+                                    _base, result="awaiting_name", saved=False, retained=True))
+                            elif _auto.get("retained"):
+                                _emit_teach("warn", "recording NOT saved at the time limit", dict(
+                                    _base, result="save_failed", saved=False, retained=True,
+                                    code=_auto.get("code"), reason=_auto.get("reason")))
+                            else:
+                                _emit_teach("warn", "recording discarded at the time limit", dict(
+                                    _base, result="discarded", saved=False, retained=False,
+                                    reason=_auto.get("close_reason") or _auto.get("reason"),
+                                    issues=_auto.get("issues")))
                     except Exception as exc:      # noqa: BLE001
                         _logger.error("p3 teach sampling failed: %s", exc)
                     if rtk_monitor is not None:

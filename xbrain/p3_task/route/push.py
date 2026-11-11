@@ -59,11 +59,6 @@ from dataclasses import dataclass
 from enum import Enum
 from typing import Any, Dict, List, Optional, Sequence, Tuple
 
-# CLAUDE.md 3.5: an E_* value is imported from the shared exporter, never
-# spelled as a literal -- a hand-typed code drifts in case or prefix and the
-# mismatch only shows up in integration.
-from xbrain.common.errors import E_GEO_TOO_LARGE
-
 #: 15 S2.4.2 / 11 S3.5A `chunk` row: split above 1000 points. NOT 32 -- see
 #: the header. 15 TC-36 pins the consequence: 2400 points must become 3
 #: frames, and it fails at any other value.
@@ -73,10 +68,10 @@ CHUNK_POINTS = 1000
 #: long floats, so the point count alone does not bound the frame size.
 CHUNK_BYTES = 256 * 1024
 
-#: 11 S3.5A RG-2 / 14.2. Above this the task is refused at the precondition
-#: (E_GEO_TOO_LARGE) and NOTHING is pushed -- P1 preallocates and refuses
-#: rather than growing.
-MAX_POINTS = 5000
+#: ~~RG-2 point cap (5000)~~ -- removed 2026-11-11 (99 U163, user ruling: "PTP and route navigation must have no point or length limit"). A 180 min recording at 1 Hz reaches about 10800 points (7 km at
+#: 0.5 m/s); with the cap it could be recorded but never driven. There is no
+#: point-count ceiling on a push any more; the size of one frame is still
+#: bounded by CHUNK_POINTS / CHUNK_BYTES, so a long route is simply more chunks.
 
 #: 11 S3.5A: the only frame value. P1 projects to site metres itself
 #: (nav/route_intake.py), so P3 must not pre-project.
@@ -193,14 +188,6 @@ def build_route_frames(*, route_id: str, route_rev: int, loop_mode: str,
     """
     if not points:
         raise RoutePushError("refusing to push an empty route %r" % route_id)
-    if len(points) > MAX_POINTS:
-        # RG-2 / 15 S2.4.2: over the cap the task is failed at the
-        # precondition with E_GEO_TOO_LARGE and nothing is sent. Trimming
-        # here would push a route that stops short of where it was told to go.
-        raise RoutePushError(
-            "route %r has %d points, over the 11 S3.5A RG-2 cap of %d; the "
-            "task must fail with %s and push nothing"
-            % (route_id, len(points), MAX_POINTS, E_GEO_TOO_LARGE))
     if total_len_m <= 0.0:
         # It is S7.3A's T0. A zero divides in the remap's alpha; a null means
         # the route was committed without its length and the remap cannot run

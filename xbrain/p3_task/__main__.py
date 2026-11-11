@@ -169,6 +169,19 @@ def main(argv: Optional[list] = None) -> int:
                     "p3_task config: teach.%s=%r must be a positive number "
                     "(99 U132 / U162 recording)", _tk, _tv)
                 return 78
+        # 99 U163: the time-left warnings (seconds before the 180 min limit,
+        # e.g. [600, 60]). Required like the rest -- a list of finite positive
+        # numbers, each below record_duration_s (one at or above it would
+        # fire at the start).
+        _tw = _teach.get("record_warn_before_s")
+        if (not isinstance(_tw, list) or not _tw
+                or any(isinstance(w, bool) or not isinstance(w, (int, float))
+                       or not math.isfinite(w) or w <= 0.0
+                       or w >= float(_teach["record_duration_s"]) for w in _tw)):
+            _logger.error(
+                "p3_task config: teach.record_warn_before_s=%r must be a non-empty "
+                "list of positive seconds below teach.record_duration_s (99 U163)", _tw)
+            return 78
         # 99 U142 / 11 S3.3.3: how long single / no_fix must last before the
         # running task is suspended and the alarm raised, and how long a usable
         # fix before recovery is reported. Refused by key path: without them a
@@ -221,6 +234,7 @@ def main(argv: Optional[list] = None) -> int:
             teach_sample_hz=float(_teach["sample_hz"]),
             teach_min_dist_m=float(_teach["min_dist_m"]),
             teach_record_duration_s=float(_teach["record_duration_s"]),
+            teach_record_warn_before_s=[float(w) for w in _teach["record_warn_before_s"]],
             rtk_lost_sustain_s=float(_rtk["lost_sustain_s"]),
             rtk_recover_sustain_s=float(_rtk["recover_sustain_s"]),
             low_battery={k: float(_lb[k]) for k in _lb_keys})

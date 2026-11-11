@@ -40,15 +40,14 @@ from dataclasses import dataclass
 from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 from xbrain.common.enums import FENCE_ROLE
-from xbrain.common.errors import E_GEO_INVALID, E_GEO_TOO_LARGE
+from xbrain.common.errors import E_GEO_INVALID
 from xbrain.common.fence.roles import carries_speed_limit, hard_enforce_for_role
 from xbrain.p3_task.geo.waypoint_kind import waypoint_type_for_name  # 99 U119
 from xbrain.p3_task.ingest.geo_command import GeoCommandError
 
-# 11 S7.8.3: a route carries at most 5000 vertices; beyond that the answer is
-# E_GEO_TOO_LARGE rather than a truncated route (a silently shortened patrol
-# path would be walked to its new, wrong end).
-_MAX_PATH_POINTS = 5000
+# ~~11 S7.8.3: a route carries at most 5000 vertices (E_GEO_TOO_LARGE)~~ --
+# removed 2026-11-11 (99 U163, user ruling: no point or length limit on a
+# route). A route of any length is accepted; it is never truncated either.
 _MIN_ROUTE_POINTS = 2
 # 11 S7.8.3 / CMD-18: a polygon needs three distinct vertices to bound an area.
 _MIN_RING_POINTS = 3
@@ -195,11 +194,6 @@ def _route(obj: Dict[str, Any]) -> ParsedObject:
     if raw_points is not None:
         if not isinstance(raw_points, list):
             raise _bad("geom.points must be a list")
-        if len(raw_points) > _MAX_PATH_POINTS:
-            raise GeoCommandError(
-                E_GEO_TOO_LARGE,
-                f"route has {len(raw_points)} points, cap is "
-                f"{_MAX_PATH_POINTS} (11 S7.8.3)")
         if len(raw_points) < _MIN_ROUTE_POINTS:
             raise _bad(f"route needs >= {_MIN_ROUTE_POINTS} points")
         pts = [_latlon(p, f"geom.points[{i}]")

@@ -43,7 +43,6 @@ from xbrain.p3_task.persistence.schema_task import ALL_DDL_STATEMENTS
 from xbrain.p3_task.route.laps import LapSpec
 from xbrain.p3_task.route.push import (
     CHUNK_POINTS,
-    MAX_POINTS,
     RouteAck,
     RouteAckWindow,
     RoutePoint,
@@ -163,13 +162,16 @@ def test_every_chunk_of_one_push_shares_one_cmd_id():
     assert len({f["cmd_id"] for f in frames}) == 1
 
 
-def test_over_the_rg2_cap_refuses_rather_than_trimming():
-    """11 S3.5A RG-2 / 15 S2.4.2: over 5000 points nothing is pushed and the
-    task fails at the precondition. Trimming would push a route that stops
-    short of where it was told to go."""
-    with pytest.raises(RoutePushError, match="RG-2"):
-        build_route_frames(route_id="r", route_rev=1, loop_mode="oneway",
-                           total_len_m=100.0, points=_points(MAX_POINTS + 1))
+def test_a_long_route_is_pushed_whole_in_chunks():
+    """99 U163 (user 2026-11-11): no point limit -- ~~over 5000 points nothing
+    is pushed (RG-2)~~. 12000 points go out as 12 chunks of 1000, every point
+    once, in order. MUTATION: put a cap back -> RoutePushError -> red; trim ->
+    fewer seqs -> red."""
+    frames = build_route_frames(route_id="r", route_rev=1, loop_mode="oneway",
+                                total_len_m=100.0, points=_points(12000))
+    assert len(frames) == 12
+    seqs = [p["seq"] for f in frames for p in f["points"]]
+    assert seqs == list(range(12000))
 
 
 def test_zero_total_len_refuses():

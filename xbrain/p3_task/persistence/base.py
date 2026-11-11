@@ -112,6 +112,7 @@ async def open_configured(path: str, ddl_statements=()):
     from xbrain.p3_task.persistence.schema_task import (
         ensure_patrol_progress_shape,
         ensure_task_route_snapshot_shape,
+        ensure_task_route_snapshot_uncapped,
     )
 
     if await ensure_patrol_progress_shape(conn):
@@ -122,6 +123,10 @@ async def open_configured(path: str, ddl_statements=()):
         _logger.warning(
             "db %s: dropped the pre-2026-09-28 per-point task_route_snapshot; "
             "rebuilding at the 15 S9.3A shape", path)
+    if await ensure_task_route_snapshot_uncapped(conn):
+        _logger.warning(
+            "db %s: rebuilt task_route_snapshot without the 5000-point CHECK "
+            "(99 U163), rows kept", path)
     for stmt in ddl_statements:
         await conn.execute(stmt)
     await conn.commit()

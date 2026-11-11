@@ -48,16 +48,16 @@ from __future__ import annotations  # postponed annotations
 from dataclasses import dataclass  # an immutable value
 from typing import Any, Mapping, Optional  # plain types
 
-#: The largest lap count a task may carry -- the P4 rule layer already caps a
-#: spoken count at 99 (ptp_slots._laps); the same bound here refuses a frame
-#: from any other sender that would otherwise patrol for days.
-MAX_LOOPS = 99  # laps, not a time
+#: ~~MAX_LOOPS = 99~~ -- removed 2026-11-11 (99 U163, user ruling: a
+#: navigation task carries no count, point or length limit; a patrol of any
+#: number of laps is driven to the end, and 0 still means endless). P4's
+#: spoken-count cap went the same day.
 
 
 @dataclass(frozen=True)  # value object
 class LapSpec:  # what the task asked for
     """loops as said (0 = endless) and whether it was a "来回" request."""
-    loops: int  # 0..MAX_LOOPS; 0 = endless (LM-4)
+    loops: int  # >= 0; 0 = endless (LM-4)
     round_trip: bool  # a "来回" sentence
 
     def passes(self, loop_mode: str) -> int:  # the push count
@@ -73,7 +73,7 @@ def lap_spec_from_params(params: Optional[Mapping[str, Any]]) -> LapSpec:
 
     loops absent -> 1 (16 S6.7.3 [3], the one default the voice path has).
     Raises ValueError naming the field for anything else that is not a
-    plain int in 0..MAX_LOOPS or a plain bool -- admission turns that into
+    plain int >= 0 or a plain bool -- admission turns that into
     E_SCHEMA (15 V-8a), so a bad value never reaches dispatch.
     """
     slots = params.get("slots") if isinstance(params, Mapping) else None  # where the voice path puts them
@@ -81,9 +81,8 @@ def lap_spec_from_params(params: Optional[Mapping[str, Any]]) -> LapSpec:
     loops = slots.get("loops", 1)  # not said -> one lap (S6.7.3 [3])
     if isinstance(loops, bool) or not isinstance(loops, int):  # True is an int in Python
         raise ValueError("slots.loops must be an int, got %r" % (loops,))  # named
-    if not 0 <= loops <= MAX_LOOPS:  # V-8a: loops >= 0, and a sane cap
-        raise ValueError("slots.loops must be in 0..%d, got %d"
-                         % (MAX_LOOPS, loops))  # named
+    if loops < 0:  # V-8a: loops >= 0 (no upper bound, 99 U163)
+        raise ValueError("slots.loops must be >= 0, got %d" % loops)  # named
     rt = slots.get("round_trip", False)  # not said -> plain laps
     if not isinstance(rt, bool):  # "yes" / 1 are a sender bug
         raise ValueError("slots.round_trip must be a bool, got %r" % (rt,))  # named

@@ -104,12 +104,15 @@ async def test_commit_route_rejects_too_few_points(geo_conn):
 
 
 @pytest.mark.asyncio
-async def test_commit_route_rejects_over_cap(geo_conn):
-    """MUTATION: dropping the cap check lets a >5000-point route (11 S7.8.3
-    RouteGeometry bound) through."""
-    with pytest.raises(GeoCommitError, match="cap"):
-        await commit_route(geo_conn, route_id="r-x", name="x",
-                           path_points=_path(5001), now_ms=1)
+async def test_commit_route_saves_a_long_recording(geo_conn):
+    """99 U163 (user 2026-11-11): no point limit. A 180 min recording is
+    ~10800 points; ~~over 5000 was refused here~~ -- and that refusal is what
+    left every full-length recording unsaved and its session stuck.
+    MUTATION: put the cap back -> GeoCommitError -> red."""
+    await commit_route(geo_conn, route_id="r-x", name="x",
+                       path_points=_path(12000), now_ms=1)
+    cur = await geo_conn.execute("SELECT path_points FROM routes WHERE geo_id='r-x'")
+    assert len(json.loads((await cur.fetchone())[0])) == 12000
 
 
 @pytest.mark.asyncio
