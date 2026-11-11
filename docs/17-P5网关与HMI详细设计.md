@@ -1689,7 +1689,7 @@ dead-man 会在「按住不动」的过程中触发一次 `Stop`** —— ★ �
 | 7 | .coord 内速度 —— 「速度 0.6m/s」 | 对地速度标量，float，m/s。 | state/pose 10 Hz；WS state 5 Hz | xbrain/{rid}/state/pose → WS state.pose | speed_mps (float, m/s, ✅必填) |
 | 8 | ~~.compass —— 左上角指北针~~（★ v1.4 已废，见 §6.10.2B） | ★ **样例 item 8 已删** —— 改为**机器人航向仪表盘**（§6.10.2B）。★ 「地图北朝上」仍成立，但现由 §6.10.2C **M-1**（`toXY` 把 ENU `[e,-n]`）保证，不再靠静态指北针。 | — | —（前端本地） | — |
 
-> ★★ **v1.4 交叉引用（2026-08-18）**：<br>· **ENU E/N（item 5）与机器人位置/航向（item 1/2）**：`state/pose` **无 e_m/n_m 字段**（只 lat/lon），前端投影 lat/lon → ENU 需 `enu_origin`；现状与演示回退见 §6.10.2C **M-7**。<br>· **北朝上**：由 §6.10.2C **M-1** 统一保证（geometry 数组与 lat/lon 同朝向）。<br>· **机器人箭头（item 1/2）**：非缩放 9px；航向旋转 `a = π/2 − heading`（N 上屏下，ENU east=0/CCW+），`heading_valid=false` 时指北——见 §6.10.2C M-1 与 `renderRobot`。
+> ★★ **v1.4 交叉引用（2026-08-18）**：<br>· **ENU E/N（item 5）与机器人位置/航向（item 1/2）**：`state/pose` **无 e_m/n_m 字段**（只 lat/lon），前端投影 lat/lon → ENU 需 `enu_origin`；现状与演示回退见 §6.10.2C **M-7**。<br>· **北朝上**：由 §6.10.2C **M-1** 统一保证（geometry 数组与 lat/lon 同朝向）。<br>· **机器人箭头（item 1/2）**：非缩放 ~~9px~~ ★ 13.5 px、亮红（2026-11-11 用户，§6.10.2 U9）；航向旋转 `a = π/2 − heading`（N 上屏下，ENU east=0/CCW+），`heading_valid=false` 时指北——见 §6.10.2C M-1 与 `renderRobot`。
 
 #### 6.8.3 C · 定位质量与模式（7 项）
 
@@ -1923,13 +1923,14 @@ dead-man 会在「按住不动」的过程中触发一次 `Stop`** —— ★ �
 
 | # | 需求 | config 键（`hmi.web.*`） | 默认 |
 |---|---|---|---|
-| U1 | 地图格栅每格距离可配 | `map.grid.cell_options_m`（★ v1.4）· ★ `map.grid.line_px`（2026-11-10）· ~~`map.grid.minor_m` · `major_m`~~ | ★ **2026-11-10（`99` U155）：`cell_options_m: [1, 2, 5, 10]`**（比例尺只在 1～10 m）、**`line_px: 2`**（网格线屏幕粗细固定）。~~v1.4：`cell_options_m: [5,10,20,50,100,200,500,1000,2000,5000]`~~（被替代）。★ 旧 `minor_m: 1.0` **不再绘制**（1m 小格删）、`major_m: 5.0` 降级为遗留键 |
+| U1 | 地图格栅每格距离可配 | `map.grid.cell_options_m`（★ v1.4）· ★ `map.grid.line_px`（2026-11-10）· ★ `map.grid.line_color`（2026-11-11 用户「网格线再黑一倍」：`#2a2a2a`，原 CSS 写死 ~~`#555555`~~，亮度减半）· ~~`map.grid.minor_m` · `major_m`~~ | ★ **2026-11-10（`99` U155）：`cell_options_m: [1, 2, 5, 10]`**（比例尺只在 1～10 m）、**`line_px: 2`**（网格线屏幕粗细固定）。~~v1.4：`cell_options_m: [5,10,20,50,100,200,500,1000,2000,5000]`~~（被替代）。★ 旧 `minor_m: 1.0` **不再绘制**（1m 小格删）、`major_m: 5.0` 降级为遗留键 |
 | ★ U8 | 点击导航的界面参数（2026-11-10，`99` U155） | `goto.pin_diameter_px` · `goto.snap_px` | `20` · `14`（目标点直径 / 吸附半径，屏幕像素）。★ 到点半径 `hmi.goto.arrive_radius_m`（1.0）**不在 `hmi.web`**：它是下发给 P3 的安全相关值，代码无默认值 |
 | U2 | 地图/各信息栏/状态栏字体与字号可配 | `font.map/legend/plan/status/coord`（`family` ＋ `size_px`） | 见 yaml 骨架 |
 | U3 | 任务栏/状态栏大小可配 | `layout.plan_panel` · `layout.status_bar`（`width/height/max_*`） | 见 yaml 骨架 |
 | U4 | 滚轮上下滚动缩放 | `map.zoom.{min,max,wheel_step}` | ★ **2026-11-10（`99` U155 补）：`0.65 / 16 / 0.12`，且步进改为乘法** —— 滚轮每格 ×(1 + `wheel_step`)，按钮每次 ×1.25（前端常数）；上限 16 是为了让 1 m 网格可达（1 m 格须在屏上 ≥ 42 px）。实测从复位按 8 次放大键到 1 m。~~`0.65 / 2.8 / 0.12`（对齐母本脚本，加法步进）~~（被替代：上限 2.8 时地图最窄约 86 m，1 m 格只有约 22 px，**网格永远到不了 1 m**） |
 | U5 | 围栏/路径命名 ＋ 连线类型与颜色可配 | `fence.{active,warning,forbid,speed_limit}.line.*`（★ v1.4：四类 role，`warning` 旧名 `zone`，`11` §9A.1A）· `route.{recorded,realtime}.line.*`（`style ∈ solid/dashed/dotted`；见 §6.10.2A 样式规范） | 见 yaml；★ 命名走 F 类录制（`18` F07/F03，写路径 PB7 已建） |
-| U6 | 位置点标识符形状与颜色可配 | `waypoint.{recorded,unrecorded}.{shape,color,size_px}`（`shape ∈ circle/square/triangle/diamond`） | 见 yaml 骨架。⚠️ v1.4：前端**只画圆点**(§6.10.2C)且圆点半径由 `size_px/3` 起、再按屏幕像素定尺(非缩放)，`shape` 其余值本期不生效 |
+| U6 | 位置点标识符形状与颜色可配 | ★ **2026-11-11（用户）：`waypoint.{fill_color, ring_color, radius_px, ring_px}`** ~~`waypoint.{recorded,unrecorded}.{shape,color,size_px}`（`shape ∈ circle/square/triangle/diamond`）~~ | ★ **`#ffffff` / `#ff1f1f` / `11.0` / `2.0`**：亮白实心正圆 ＋ 亮红外框，外框画在圆周上（一半在圆内）⇒ 白点与红框之间**无镂空**；外径 12 px（用户先要旧版外径 4 px 的 1.5 倍 = 6 px，同日再要大一倍；~~`radius_px: 5.0`~~）；屏幕像素定尺、不随缩放。所有位置点统一样子，不再分已录 / 未录。实现 `hmi.js` `markStyle`（`<map-marks>` 块）。~~v1.4：前端只画圆点且圆点半径由 `size_px/3` 起、再按屏幕像素定尺，`shape` 其余值本期不生效~~ —— 被替代的表述（2026-11-11 用户要求改样式；且旧实现实际半径恒为常数 3.5 px，`size_px` 从未被读，颜色取 `recorded` / `unrecorded`）。断言 `tests/p5_gateway/hmi/test_map_marks_js.py` |
+| ★ U9 | 机器人当前位置三角的颜色与大小（2026-11-11，用户） | `robot.{color, size_px}` | ★ **`#ff1f1f` / `13.5`**：亮红，三角半长 13.5 屏幕像素（用户先要旧版 9 px 的 3 倍 = 27，同日再缩小一半；~~`27`~~），不随缩放。可选组（缺省时前端用同值兜底，UI 参数非安全参数） |
 | U7 | 对外绑定 ＋ 端口 | 见 §6.10.3 | — |
 
 ★★ **这些是 UI 呈现参数，不是安全参数** ⇒ 允许有默认值（§3.1 只管 `common.spec.*`/`common.safety.*`，UI 参数不在其列）。
