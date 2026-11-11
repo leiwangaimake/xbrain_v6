@@ -1020,19 +1020,14 @@
     btn.classList.toggle("armed", v.armed);
     btn.classList.toggle("degraded", v.btnCls === "degraded");
     btn.title = v.enabled ? "紧急停止" : v.notice;
-    let notice = v.notice, noticeCls = v.noticeCls;
-    if (estopSendFailedMs != null && now - estopSendFailedMs < ESTOP_FAIL_SHOW_MS) {
-      notice = "急停发送失败, 请使用硬件急停";
-      noticeCls = "bad";
-    }
-    const box = $("estopNotice");
-    if (box) {
-      box.textContent = notice;
-      box.className = "estop-notice" + (noticeCls ? " " + noticeCls : "");
-      box.hidden = !notice;
-    }
+    // No text beside the button any more (user 2026-11-11): it blinked and
+    // pushed the chassis-lock button and battery gauges sideways. Every
+    // sentence -- link lost, estop path down / slow, a press that did not go
+    // out -- now goes to the one amber banner (linkBannerView).
+    const sendFailed = estopSendFailedMs != null &&
+                       now - estopSendFailedMs < ESTOP_FAIL_SHOW_MS;
     setStat("linkText", v.link);
-    updateLinkUi(age);
+    updateLinkUi(age, v, sendFailed);
   }
 
   // -- link-loss banner + control lock (11 S12.3 reconnect flow, step 1) ------
@@ -1052,17 +1047,54 @@
     const age = lastDownlinkMs == null ? null : performance.now() - lastDownlinkMs;
     return !wsUp || !(age != null && age <= LINK_DEAD_MS);
   }
-  function updateLinkUi(age) {
+  // The single amber banner: ONE sentence, chosen by priority, covering both
+  // the link and the ESTOP path (user 2026-11-11 -- there used to be a second,
+  // blinking line beside the ESTOP button saying part of the same thing).
+  // Pure, so its outcomes are asserted under node (test_link_banner_view_js.py).
+  // Priority, highest first: a stop that did not go out; never connected;
+  // nothing for 2 s (picture frozen); socket down while REST still answers;
+  // ESTOP path not confirmed / down; ESTOP path slow. Every case in which the
+  // web ESTOP cannot work says "请使用硬件急停" (NAV-64 / 11 S12.3: the
+  // sentence must be SHOWN, not only implied by a grey button).
+  // <link-banner-view>
+  function linkBannerView(s) {
+    const hw = "请使用硬件急停";
+    if (s.sendFailed) return { show: true, text: "急停指令未发出 -- 请立即" + hw };
+    if (!s.everConnected) {
+      return { show: true, text: "正在连接机器人 ... 网页急停暂不可用, " + hw };
+    }
+    if (!s.fresh) {
+      return { show: true, text: "与机器人链路中断 -- 画面停在最后一帧, " +
+               "网页急停与操作按钮均不可用, " + hw };
+    }
+    if (!s.wsUp) {
+      return { show: true, text: "实时链路已断开, 正在重连 -- 任务/导航按钮暂停使用, " +
+               (s.estopEnabled ? "网页急停仍可用" : "网页急停不可用, " + hw) };
+    }
+    if (s.estopPath == null) {
+      return { show: true, text: "正在确认急停链路 -- 网页急停暂不可用, " + hw };
+    }
+    if (s.estopPath === "degraded") {
+      return { show: true, text: "急停链路延迟高 -- 网页急停仍可用, 但响应可能变慢" };
+    }
+    if (s.estopPath !== "ok") {
+      return { show: true, text: "急停链路不通 -- 网页急停不可用, " + hw };
+    }
+    return { show: false, text: "" };
+  }
+  // </link-banner-view>
+  function updateLinkUi(age, ev, sendFailed) {
     const wsUp = !!(liveWS && liveWS.readyState === 1);
     const fresh = age != null && age <= LINK_DEAD_MS;
     const offline = !wsUp || !fresh;
     document.body.classList.toggle("controls-offline", offline);
     const b = $("linkBanner");
     if (!b) return;
-    if (lastDownlinkMs == null) b.textContent = "正在连接机器人 ...";
-    else if (!fresh) b.textContent = "与机器人链路中断 -- 画面停在最后一帧, 操作控件已停用";
-    else b.textContent = "实时链路已断开, 正在重连 -- 任务/导航控件已停用";
-    b.hidden = !offline;
+    const v = linkBannerView({ sendFailed: !!sendFailed, everConnected: lastDownlinkMs != null,
+                               fresh: fresh, wsUp: wsUp, estopPath: lastEstopPath,
+                               estopEnabled: !!(ev && ev.enabled) });
+    b.textContent = v.text;
+    b.hidden = !v.show;
   }
   function setDot(el, cls) { el.className = "dot" + (cls ? " " + cls : ""); }
   function esc(s) { const d = document.createElement("div"); d.textContent = s; return d.innerHTML; }

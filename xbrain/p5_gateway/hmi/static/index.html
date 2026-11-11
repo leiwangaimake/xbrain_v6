@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>XBRAIN_V6 GPS 网格地图 HMI</title>
-<link rel="stylesheet" href="hmi.css?v=batt-6">
+<link rel="stylesheet" href="hmi.css?v=banner-1">
 </head>
 <body>
 <main class="hmi">
@@ -12,11 +12,12 @@
     <header class="map-toolbar">
       <div class="map-title">GPS 网格地图</div>
       <!-- ESTOP: 17 S6.10.1 / W1, states per 17 S6.3 (hmi.js estopView):
-           ok -> armed; degraded -> still pressable + yellow notice; down or
-           2 s without any downlink -> greyed + "use the hardware stop" notice
-           (NAV-64). Starts disabled: nothing has proved the path yet. -->
+           ok -> armed; degraded -> still pressable, yellow; down or 2 s
+           without any downlink -> greyed (NAV-64). The sentence that goes with
+           it ("use the hardware stop") is in the amber banner below the
+           toolbar, not beside the button (user 2026-11-11). Starts disabled:
+           nothing has proved the path yet. -->
       <button id="estopBtn" class="estop-btn" title="紧急停止" disabled>急停 ESTOP</button>
-      <span id="estopNotice" class="estop-notice bad" role="status">急停不可用, 请使用硬件急停</span>
       <!-- Chassis lock (99 U159): colour and label follow the state/robot
            read-back (hmi.js renderChassisLock). Locked -> deep red, a click arms
            and a second click sends W9 unlock (11 S9.3.4 enable, L2). Unlocked ->
@@ -46,10 +47,11 @@
       </div>
     </header>
 
-    <!-- Link-loss banner (11 S12.3 reconnect flow): shown while the socket is
-         down or nothing has arrived for 2 s; hmi.js updateLinkUi sets the text.
-         Visible from the start -- until the first frame nothing is known. -->
-    <div id="linkBanner" class="link-banner" role="alert">正在连接机器人 ...</div>
+    <!-- Link / ESTOP banner (11 S12.3 reconnect flow, NAV-64): the ONE place
+         for link-lost, ESTOP-path down or slow, and "the stop did not go out"
+         sentences (hmi.js linkBannerView, one sentence by priority). Visible
+         from the start -- until the first frame nothing is known. -->
+    <div id="linkBanner" class="link-banner" role="alert">正在连接机器人 ... 网页急停暂不可用, 请使用硬件急停</div>
 
     <!-- W2 goto banner (hmi.js showBanner). Four kinds: confirm (确认前往 /
          取消), info (hides itself), warn = an invalid target (知道了), fail =
@@ -163,6 +165,6 @@
     </footer>
   </section>
 </main>
-<script src="hmi.js?v=batt-6"></script>
+<script src="hmi.js?v=banner-1"></script>
 </body>
 </html>
