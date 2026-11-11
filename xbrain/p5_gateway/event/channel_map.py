@@ -27,6 +27,14 @@ Most categories are single-channel; a few are per-detail:
             (11 S6.2 estop note).
   * payload/ptz/voice  default normal, but device_offline + device_online ride
             alarm together (paired, E-1).
+  * charging  default normal (the CHG stage events), but the low-battery
+            episode ride alarm, opening and closing reports alike (paired,
+            E-1): low_battery / low_battery_unreachable / low_battery_no_target
+            / low_battery_stop / battery_charging / charge_interrupted /
+            low_battery_cleared / return_target_missing (99 U146 / U157, user
+            ruling 2026-11-11). Until then all of them rode normal while 11's
+            event/*/charging row said channel = alarm -- 11 contradicted itself
+            (S6.2 table "charging -> normal") and this map followed the table.
 
 The category->default map is asserted COMPLETE against EVENT_CATEGORY by the
 metatest: a category added to the closed set without a channel here fails the
@@ -90,6 +98,16 @@ _DETAIL_OVERRIDES: dict = {
     ("ptz", "device_online"): "alarm",
     ("voice", "device_offline"): "alarm",
     ("voice", "device_online"): "alarm",
+    # charging: default normal; the low-battery episode rides alarm, every
+    # report of it including the close (11 event/*/charging row, 99 U157).
+    ("charging", "low_battery"): "alarm",
+    ("charging", "low_battery_unreachable"): "alarm",
+    ("charging", "low_battery_no_target"): "alarm",
+    ("charging", "low_battery_stop"): "alarm",
+    ("charging", "battery_charging"): "alarm",
+    ("charging", "charge_interrupted"): "alarm",
+    ("charging", "low_battery_cleared"): "alarm",
+    ("charging", "return_target_missing"): "alarm",
 }
 
 
