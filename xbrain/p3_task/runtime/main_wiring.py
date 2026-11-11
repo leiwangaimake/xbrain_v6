@@ -1149,7 +1149,9 @@ async def _amain(stop_flag: dict, heartbeat_period_s: float,
                                                low_battery["stop_soc_pct"],
                                                low_battery["cloud_alarm_period_s"],
                                                low_battery["charge_full_soc_pct"],
-                                               low_battery["swap_resume_soc_pct"])
+                                               low_battery["swap_resume_soc_pct"],
+                                               low_battery["swap_absent_min_s"],
+                                               low_battery["cold_swap_min_rise_pct"])
                           if low_battery is not None else None)
             # The episode's facts: the target picked at "low", the task
             # injected, whether the next alarm is the first (P4 speaks once),
@@ -1157,7 +1159,7 @@ async def _amain(stop_flag: dict, heartbeat_period_s: float,
             # episode began -- the scheduler neither resumes nor dispatches
             # them until the episode ends.
             lb_ctx: dict = {"target": None, "task_id": None, "first": False, "n": 0,
-                            "held": set()}
+                            "held": set(), "soc": None}
             from xbrain.p3_task.dao.simple_daos import MemoryDAO
             lb_memory = MemoryDAO(conn)
 
@@ -1166,10 +1168,45 @@ async def _amain(stop_flag: dict, heartbeat_period_s: float,
                 mid-charge keeps holding the interrupted tasks. Idle writes an
                 idle record (decode_episode reads it as no episode)."""
                 phase = lb_monitor.phase if lb_monitor is not None else lb.PHASE_IDLE
+                _soc = (state_cache.get("power") or {}).get("soc_pct")
+                # whole percent: the cold-swap rise is measured from this, and
+                # the loop re-persists on every whole-percent change
+                lb_ctx["soc"] = round(_soc) if isinstance(_soc, (int, float)) and not isinstance(
+                    _soc, bool) and _soc == _soc else None
                 await lb_memory.put(lb.EPISODE_MEMORY_KEY,
-                                    lb.encode_episode(phase, lb_ctx["held"], lb_ctx["task_id"]),
+                                    lb.encode_episode(phase, lb_ctx["held"], lb_ctx["task_id"],
+                                                      lb_ctx["soc"]),
                                     _now_mono_ms())
                 await conn.commit()
+
+            _LIVE_RETURN = ("pending", "ready", "scheduled", "running")
+
+            async def _return_task_state() -> Optional[str]:
+                """State of the injected return task, None when there is none."""
+                if not lb_ctx["task_id"]:
+                    return None
+                row = await dao.fetch_by_id(lb_ctx["task_id"])
+                return None if row is None else row.state
+
+            async def _inject_return_task(power: dict, pose, routes, member: float) -> None:
+                """Pick the dock / home and insert the return task (99 U146).
+                Idempotent (2026-11-11 audit): a return task that is still live
+                is kept, so a "low" handler retried after a failure, or a
+                restart, never queues a second one."""
+                if await _return_task_state() in _LIVE_RETURN:
+                    return
+                tgt = await lb.pick_target(geo_conn, pose, routes, member)
+                lb_ctx.update(target=tgt, task_id=None, first=True)
+                if tgt is not None:
+                    from xbrain.p3_task.ingest.id_alloc import next_submit_seq
+                    tid = "lb-%s-%d" % (_BOOT_ID, lb_ctx["n"] + 1)
+                    lb_ctx["n"] += 1  # the id stays unique even if no alarm went out in between
+                    await dao.insert(lb.build_low_battery_row(
+                        tid, await next_submit_seq(conn), tgt,
+                        soc_pct=power.get("soc_pct"), now_mono_ms=_now_mono_ms(),
+                        created_at=_now_utc_iso()))
+                    await conn.commit()
+                    lb_ctx["task_id"] = tid
             chassis_ctrl_pub = gen.declare_publisher("cmd/chassis/ctrl")
             _ctrl_seq = [0]  # S3.0 seq per key for this process
 
@@ -1224,17 +1261,8 @@ async def _amain(stop_flag: dict, heartbeat_period_s: float,
                 routes = await load_route_geoms(geo_conn)
                 member = route_membership_m if route_membership_m is not None else 0.0
                 if ev == "low":
-                    tgt = await lb.pick_target(geo_conn, pose, routes, member)
-                    lb_ctx.update(target=tgt, task_id=None, first=True)
-                    if tgt is not None:
-                        from xbrain.p3_task.ingest.id_alloc import next_submit_seq
-                        tid = "lb-%s-%d" % (_BOOT_ID, lb_ctx["n"] + 1)
-                        await dao.insert(lb.build_low_battery_row(
-                            tid, await next_submit_seq(conn), tgt,
-                            soc_pct=power.get("soc_pct"), now_mono_ms=_now_mono_ms(),
-                            created_at=_now_utc_iso()))
-                        await conn.commit()
-                        lb_ctx["task_id"] = tid
+                    await _inject_return_task(power, pose, routes, member)
+                    tgt = lb_ctx["target"]
                     # 99 U157: hold every task live right now except the one
                     # just injected -- the running one is preempted by it next
                     # tick and must not resume when it arrives. A union: back
@@ -1348,8 +1376,8 @@ async def _amain(stop_flag: dict, heartbeat_period_s: float,
                 try:
                     _rec = lb.decode_episode(await lb_memory.get(lb.EPISODE_MEMORY_KEY))
                     if _rec is not None:
-                        lb_monitor.restore(_rec[0])
-                        lb_ctx.update(held=set(_rec[1]), task_id=_rec[2])
+                        lb_monitor.restore(_rec[0], _rec[3])
+                        lb_ctx.update(held=set(_rec[1]), task_id=_rec[2], soc=_rec[3])
                         if _rec[0] == lb.PHASE_LOW:
                             # the alarm names the target; no pose yet at boot,
                             # so the same deterministic pick as a pose-less low
@@ -1393,6 +1421,34 @@ async def _amain(stop_flag: dict, heartbeat_period_s: float,
                     # WALL-CLOCK-OK(record): 11 S6.1 Event.ts of this recovery.
                     "src": "p3_task", "ts": time.time(),
                 }, ensure_ascii=False).encode("utf-8"))
+
+            # 99 U157 (user ruling 2026-11-11): restored in the low phase but
+            # the return task is no longer live -- typically boot recovery just
+            # suspended it (it was running at the power cut), so it would wait
+            # for a person while the alarm says "returning". Cancel that one
+            # and inject a fresh return task, as a restart did before episodes
+            # were persisted. A return task that already arrived (done) is not
+            # re-sent: the robot is at the dock.
+            if lb_monitor is not None and lb_monitor.phase == lb.PHASE_LOW:
+                try:
+                    _rs = await _return_task_state()
+                    if _rs not in _LIVE_RETURN and _rs != "done":
+                        _old = lb_ctx["task_id"]
+                        _closed = await lb.close_low_battery_task(dao, conn, _old, _now_mono_ms())
+                        if _closed is not None:
+                            await _make_publish(
+                                state_pub, _emit_task_event, _publish_task_state,
+                                fetch_terminal=_fetch_terminal_facts)(
+                                    _closed[0], _closed[1], _closed[2], "low_battery_reissued")
+                        await _inject_return_task(
+                            state_cache.get("power") or {}, None,
+                            await load_route_geoms(geo_conn),
+                            route_membership_m if route_membership_m is not None else 0.0)
+                        await _lb_persist()
+                        _logger.warning("p3 boot: return task %s was %s -> reissued as %s",
+                                        _old, _rs, lb_ctx["task_id"])
+                except Exception as exc:      # noqa: BLE001
+                    _logger.error("p3 boot: low-battery return reissue failed: %s", exc)
 
             # 99 U146: at boot, no 返航终点站 (it must exist) or a 充电桩 / 充电站
             # point off every route -> one cloud report naming what is wrong.
@@ -1595,10 +1651,34 @@ async def _amain(stop_flag: dict, heartbeat_period_s: float,
                     if lb_monitor is not None:
                         # 99 U146 low battery, every pass (the 2 s alarm cadence
                         # needs the 0.5 s loop, not the 1 Hz power frame).
+                        # 2026-11-11 audit: the monitor changes phase before the
+                        # handler runs, so a handler that failed used to leave it
+                        # in the new phase with nothing done (no return task, no
+                        # held set; or held tasks never released) and nothing
+                        # retried it. A failed phase event now rolls the frame
+                        # back, so the next frame raises it again; the handlers
+                        # are idempotent. A failed alarm is only logged.
+                        _lb_snap = lb_monitor.snapshot()
                         try:
                             for _lev in lb_monitor.update(state_cache.get("power"),
                                                           now_mono_s):
-                                await _on_low_battery(_lev)
+                                try:
+                                    await _on_low_battery(_lev)
+                                except Exception as exc:      # noqa: BLE001
+                                    if _lev == "alarm":
+                                        _logger.error("p3 low-battery alarm failed: %s", exc)
+                                        continue
+                                    lb_monitor.rollback(_lb_snap)
+                                    _logger.error("p3 low-battery %s failed, retried next "
+                                                  "frame: %s", _lev, exc)
+                                    break
+                            # the cold-swap rise is measured from the record's soc:
+                            # keep it current while an episode lasts
+                            _psoc = (state_cache.get("power") or {}).get("soc_pct")
+                            if (lb_monitor.low and isinstance(_psoc, (int, float))
+                                    and not isinstance(_psoc, bool) and _psoc == _psoc
+                                    and round(_psoc) != lb_ctx["soc"]):
+                                await _lb_persist()
                         except Exception as exc:      # noqa: BLE001
                             _logger.error("p3 low-battery step failed: %s", exc)
                     while not teach_queue.empty():
@@ -1634,6 +1714,15 @@ async def _amain(stop_flag: dict, heartbeat_period_s: float,
                                 "injected return_home %s",
                                 link_holder.get("link_epoch"),
                                 link_holder.get("disconnected_s") or 0.0, rtb_id)
+                            if lb_monitor is not None and lb_monitor.low:
+                                # 99 U157 (user ruling 2026-11-11): during a
+                                # low-battery episode the link-loss return waits
+                                # in the held set like a queued task -- else it
+                                # drives a charging robot off the dock.
+                                lb_ctx["held"].add(rtb_id)
+                                await _lb_persist()
+                                _logger.warning("p3 F-5: return_home %s held until the "
+                                                "low-battery episode ends", rtb_id)
                     except Exception as exc:      # noqa: BLE001
                         _logger.error("p3 F-5 return_home inject failed: %s", exc)
                     # Drive the machine every pass: validate pending -> ready,

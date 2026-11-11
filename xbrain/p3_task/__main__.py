@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import argparse
 import logging
+import math
 import signal
 import sys
 import time
@@ -185,11 +186,14 @@ def main(argv: Optional[list] = None) -> int:
         # have no end and the interrupted tasks would never resume.
         _lb = (_cfg.get("low_battery") or {}) if hasattr(_cfg, "get") else {}
         _lb_keys = ("trigger_soc_pct", "stop_soc_pct", "cloud_alarm_period_s",
-                    "charge_full_soc_pct", "swap_resume_soc_pct")
+                    "charge_full_soc_pct", "swap_resume_soc_pct",
+                    "swap_absent_min_s", "cold_swap_min_rise_pct")
         for _lk in _lb_keys:
             _lv = _lb.get(_lk)
+            # finite too: a .nan passed `<= 0` and silenced the alarm cadence
+            # for good (2026-11-11 audit)
             if (isinstance(_lv, bool) or not isinstance(_lv, (int, float))
-                    or _lv <= 0.0):
+                    or not math.isfinite(_lv) or _lv <= 0.0):
                 _logger.error(
                     "p3_task config: low_battery.%s=%r must be a positive number "
                     "(99 U146 / U157 low-battery return)", _lk, _lv)

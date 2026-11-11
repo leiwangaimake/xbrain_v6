@@ -138,7 +138,8 @@ def test_main_refuses_without_the_pair(monkeypatch, rtk, rc):
            "low_battery": {"trigger_soc_pct": 20.0, "stop_soc_pct": 5.0,
                            "cloud_alarm_period_s": 2.0,  # 99 U146 rule
                            "charge_full_soc_pct": 100.0,  # 99 U157
-                           "swap_resume_soc_pct": 80.0}}
+                           "swap_resume_soc_pct": 80.0,
+                           "swap_absent_min_s": 5.0, "cold_swap_min_rise_pct": 10.0}}
     if rtk is not None:
         cfg["rtk_loss"] = rtk  # the case under test
     monkeypatch.setattr(resolved, "load_resolved", lambda *_a, **_k: cfg)  # no file

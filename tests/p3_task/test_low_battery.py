@@ -60,7 +60,8 @@ def _power(soc, charging=False, remain_km=5.0, charge="idle"):  # a chassis powe
 
 
 # -- the episode ----------------------------------------------------------------------
-RULE = (20.0, 5.0, 2.0, 100.0, 80.0)  # trigger, stop, period, charge_full, swap_resume (U157)
+# trigger, stop, period, charge_full, swap_resume, swap_absent_min_s, cold_swap_min_rise_pct (U157)
+RULE = (20.0, 5.0, 2.0, 100.0, 80.0, 5.0, 10.0)
 
 
 def _mon():  # the shipped rule
@@ -148,7 +149,7 @@ def test_a_swap_closes_the_episode_once_the_level_is_back():  # pulled, refilled
     m = _mon()
     assert m.update(_packs(4.0, (True, 4.0)), 0.0) == ["low", "stop", "alarm"]  # low and lying down
     assert m.update(_packs(None, (False, 0.0)), 1.0) == []  # pack out: no soc, nothing closes
-    assert m.update(_packs(90.0, (True, 90.0)), 3.0) == ["swapped"]  # a full pack in
+    assert m.update(_packs(90.0, (True, 90.0)), 7.0) == ["swapped"]  # a full pack in after 6 s
     assert not m.low and not m.stopped  # the dispatch pause is lifted with it
 
 
@@ -164,27 +165,60 @@ def test_soc_back_without_a_swap_does_not_close():  # a wobble is not a swap
                                       (79.0, "swapped_partial"), (80.0, "swapped")])
 def test_a_swap_resumes_at_swap_resume_and_parks_below(soc, want):  # U154 floor, U157 split
     """soc_pct is the minimum over present packs: swapping one of two low
-    packs leaves the other low. Below the trigger nothing ends; from the
-    trigger to swap_resume the alarm ends but the tasks wait for a person;
-    at swap_resume it ends and they resume. MUTATION: '>' for '>=' at either
+    packs leaves the other low. Below the trigger nothing ends -- and the
+    refill is used up, so a later charge to 20 % is NOT a swap (audit
+    2026-11-11: the old latch ended the charging alarm at 20 %). From the
+    trigger to swap_resume the alarm ends but the tasks wait for a person; at
+    swap_resume it ends and they resume. MUTATION: '>' for '>=' at either
     boundary -> 20 or 80 lands in the wrong bucket -> red; one threshold for
-    both -> 79 resumes -> red."""
+    both -> 79 resumes -> red; keep the refill pending -> the 20 % charge
+    below ends it -> red."""
     m = _mon()
     m.update(_packs(15.0, (True, 15.0), (True, 15.0)), 0.0)  # two low packs
     m.update(_packs(15.0, (False, 0.0), (True, 15.0)), 1.0)  # slot 0 pulled
-    got = m.update(_packs(soc, (True, 95.0), (True, soc)), 2.0)  # slot 0 refilled, slot 1 at soc
+    got = m.update(_packs(soc, (True, 95.0), (True, soc)), 8.0)  # slot 0 refilled 7 s later
     if want is None:
         assert not {"swapped", "swapped_partial"} & set(got) and m.low  # still low
+        m.update(dict(_packs(soc, (True, 95.0), (True, soc)), charge="charging"), 9.0)
+        got = m.update(dict(_packs(20.0, (True, 95.0), (True, 20.0)), charge="charging"), 12.0)
+        assert got == ["alarm"] and m.phase == lb.PHASE_CHARGING  # charging to 20 is no swap
     else:
         assert got == [want] and not m.low  # ended, in the right bucket
 
 
+def test_a_presence_glitch_is_not_a_swap():  # swap_absent_min_s
+    """Audit 2026-11-11, reproduced on the robot: one frame of present:false
+    then charging to 20 % ended the episode (two packs), and on a single-pack
+    robot charging at 85 % one glitch frame ended it as a full swap. An
+    absence shorter than swap_absent_min_s is forgotten. MUTATION: drop the
+    duration check -> either case ends -> red; '>' for '>=' -> the exact 5 s
+    swap below is missed -> red."""
+    m = _mon()  # two packs
+    m.update(_packs(15.0, (True, 15.0), (True, 15.0)), 0.0)
+    m.update(_packs(15.0, (False, 0.0), (True, 15.0)), 1.0)  # glitch
+    m.update(_packs(15.0, (True, 15.0), (True, 15.0)), 1.5)  # back after 0.5 s
+    m.update(dict(_packs(15.0, (True, 15.0), (True, 15.0)), charge="charging"), 2.0)
+    got = m.update(dict(_packs(20.0, (True, 20.0), (True, 20.0)), charge="charging"), 5.0)
+    assert got == ["alarm"] and m.phase == lb.PHASE_CHARGING
+    m2 = _mon()  # single pack, slot 0 always empty
+    m2.update(_packs(15.0, (False, 0.0), (True, 15.0)), 0.0)
+    m2.update(dict(_packs(85.0, (False, 0.0), (True, 85.0)), charge="charging"), 1.0)
+    m2.update(dict(_packs(None, (False, 0.0), (False, 0.0)), charge="charging"), 2.0)  # glitch
+    got = m2.update(dict(_packs(85.0, (False, 0.0), (True, 85.0)), charge="charging"), 2.5)
+    assert got == [] and m2.phase == lb.PHASE_CHARGING  # still charging toward 100
+    m3 = _mon()  # exactly swap_absent_min_s counts
+    m3.update(_packs(15.0, (True, 15.0)), 0.0)
+    m3.update(_packs(None, (False, 0.0)), 1.0)
+    assert m3.update(_packs(90.0, (True, 90.0)), 6.0) == ["swapped"]
+
+
 def test_a_slot_empty_when_the_episode_starts_counts():  # single_battery, the second slot filled
-    """A pack put into a slot that was already empty is a swap too. MUTATION:
-    no presence tracking on the starting frame -> never closes -> red."""
+    """A pack put into a slot that was already empty is a swap too (once it has
+    been empty for swap_absent_min_s, counted from the episode start).
+    MUTATION: no presence tracking on the starting frame -> never closes -> red."""
     m = _mon()
     m.update(_packs(18.0, (False, 0.0), (True, 18.0)), 0.0)  # starts with slot 0 empty
-    assert m.update(_packs(85.0, (True, 95.0), (True, 85.0)), 1.0) == ["swapped"]  # slot 0 filled
+    assert m.update(_packs(85.0, (True, 95.0), (True, 85.0)), 6.0) == ["swapped"]  # slot 0 filled
 
 
 def test_a_swap_during_charging_ends_it_too():  # any episode phase
@@ -193,7 +227,7 @@ def test_a_swap_during_charging_ends_it_too():  # any episode phase
     m.update(_packs(18.0, (True, 18.0)), 0.0)
     m.update(dict(_packs(30.0, (True, 30.0)), charge="charging"), 1.0)  # charging
     m.update(dict(_packs(None, (False, 0.0)), charge="charging"), 2.0)  # pulled
-    assert m.update(_packs(90.0, (True, 90.0)), 3.0) == ["swapped"]
+    assert m.update(_packs(90.0, (True, 90.0)), 9.0) == ["swapped"]
 
 
 def test_swap_history_belongs_to_one_episode():  # reset on close
@@ -202,9 +236,9 @@ def test_swap_history_belongs_to_one_episode():  # reset on close
     m = _mon()
     m.update(_packs(18.0, (True, 18.0)), 0.0)  # episode 1
     m.update(_packs(None, (False, 0.0)), 1.0)  # pulled
-    assert m.update(_packs(90.0, (True, 90.0)), 2.0) == ["swapped"]  # swapped
-    assert "low" in m.update(_packs(19.0, (True, 19.0)), 3.0)  # episode 2, no swap since
-    got = m.update(_packs(25.0, (True, 25.0)), 4.0)
+    assert m.update(_packs(90.0, (True, 90.0)), 8.0) == ["swapped"]  # swapped
+    assert "low" in m.update(_packs(19.0, (True, 19.0)), 9.0)  # episode 2, no swap since
+    got = m.update(_packs(25.0, (True, 25.0)), 10.0)
     assert not {"swapped", "swapped_partial"} & set(got) and m.low  # a wobble only
 
 
@@ -217,22 +251,48 @@ def test_stop_once_at_five_percent():  # the 5 % latch
 
 
 @pytest.mark.parametrize("args", [
-    (None, 5.0, 2.0, 100.0, 80.0), (20.0, 0.0, 2.0, 100.0, 80.0),
-    (20.0, 20.0, 2.0, 100.0, 80.0), (20.0, 5.0, 0, 100.0, 80.0),
-    (20.0, 5.0, 2.0, None, 80.0), (20.0, 5.0, 2.0, 100.0, None),
-    (20.0, 5.0, 2.0, 101.0, 80.0),   # full could never be reached
-    (20.0, 5.0, 2.0, 70.0, 80.0),    # swap_resume above full
-    (20.0, 5.0, 2.0, 100.0, 20.0)])  # swap_resume not above the trigger
+    (None, 5.0, 2.0, 100.0, 80.0, 5.0, 10.0), (20.0, 0.0, 2.0, 100.0, 80.0, 5.0, 10.0),
+    (20.0, 20.0, 2.0, 100.0, 80.0, 5.0, 10.0), (20.0, 5.0, 0, 100.0, 80.0, 5.0, 10.0),
+    (20.0, 5.0, 2.0, None, 80.0, 5.0, 10.0), (20.0, 5.0, 2.0, 100.0, None, 5.0, 10.0),
+    (20.0, 5.0, 2.0, 101.0, 80.0, 5.0, 10.0),   # full could never be reached
+    (20.0, 5.0, 2.0, 70.0, 80.0, 5.0, 10.0),    # swap_resume above full
+    (20.0, 5.0, 2.0, 100.0, 20.0, 5.0, 10.0),   # swap_resume not above the trigger
+    (20.0, 5.0, 2.0, 100.0, 80.0, None, 10.0),  # swap_absent_min_s missing
+    (20.0, 5.0, 2.0, 100.0, 80.0, 5.0, 0.0),    # cold_swap_min_rise_pct not positive
+    (20.0, 5.0, float("nan"), 100.0, 80.0, 5.0, 10.0),  # NaN period: the alarm never repeats
+    (20.0, 5.0, 2.0, 100.0, 80.0, float("inf"), 10.0)])
 def test_thresholds_are_required_and_ordered(args):  # config refusals
-    """CLAUDE.md 3.1 + U157 order stop < trigger < swap_resume <= full <= 100.
-    MUTATION: drop any one comparison in check_thresholds -> its row -> red."""
+    """CLAUDE.md 3.1 + U157 order stop < trigger < swap_resume <= full <= 100,
+    every value finite and positive (audit 2026-11-11: a NaN period passed).
+    MUTATION: drop any one comparison or the finite check -> its row -> red."""
     with pytest.raises(lb.LowBatteryConfigError):  # each bad tuple
         lb.LowBatteryMonitor(*args)  # refused
 
 
 def test_equal_swap_resume_and_full_is_allowed():  # the '<=' ends of the order
     """MUTATION: '<' for '<=' -> a legal 100/100 config refused -> red."""
-    lb.LowBatteryMonitor(20.0, 5.0, 2.0, 100.0, 100.0)
+    lb.LowBatteryMonitor(20.0, 5.0, 2.0, 100.0, 100.0, 5.0, 10.0)
+
+
+def test_a_nan_soc_is_no_reading():
+    """MUTATION: let NaN through _num -> NaN compares False everywhere and the
+    frame silently judges nothing (or worse) -> the episode below never starts
+    on the NaN frame but must start on the real one."""
+    m = _mon()
+    assert m.update(_power(float("nan")), 0.0) == []
+    assert m.update(_power(19.0), 1.0) == ["low", "alarm"]
+
+
+def test_snapshot_and_rollback_undo_a_frame():
+    """The wiring rolls a frame back when its handler failed, so the next
+    frame raises the same events again. MUTATION: rollback skips a field ->
+    the second "low" never comes -> red."""
+    m = _mon()
+    snap = m.snapshot()
+    assert m.update(_power(19.0), 0.0) == ["low", "alarm"]
+    m.rollback(snap)
+    assert m.phase == lb.PHASE_IDLE
+    assert m.update(_power(19.0), 0.5) == ["low", "alarm"]  # raised again
 
 
 # -- restart protection, second layer + cold swap (U157, 2026-11-11) --------------------
@@ -246,17 +306,23 @@ def test_charging_below_full_reads_the_chassis(body, want):
     assert lb.charging_below_full(body, 100.0) is want
 
 
-@pytest.mark.parametrize("soc,want,cold", [(69.0, ["swapped_partial"], True),
-                                           (85.0, ["swapped"], True),
-                                           (15.0, None, False)])
-def test_a_cold_swap_is_judged_on_the_first_reading_after_a_restore(soc, want, cold):
+@pytest.mark.parametrize("last,soc,want,cold", [(8.0, 69.0, ["swapped_partial"], True),
+                                                (8.0, 85.0, ["swapped"], True),
+                                                (8.0, 15.0, None, False),
+                                                (19.0, 20.0, None, False),   # wobble
+                                                (12.0, 21.9, None, False),   # 9.9 < 10
+                                                (12.0, 22.0, ["swapped_partial"], True),
+                                                (None, 69.0, None, False)])  # no soc on record
+def test_a_cold_swap_is_judged_on_the_first_reading_after_a_restore(last, soc, want, cold):
     """Found live 2026-11-11: 8 % at power-off, a 69 % pack at boot, and the
     restored low phase kept alarming. Restored low + first reading >= the
-    trigger, not charging -> a swap, same 80 % split. MUTATION: no cold rule
-    -> still low -> red; judge it on any later frame -> the wobble case below
-    closes -> red."""
+    trigger, not charging, and >= cold_swap_min_rise_pct above the record ->
+    a swap, same 80 % split; a 19 -> 20 wobble across the restart is not.
+    MUTATION: no cold rule -> red; drop the rise check -> the wobble ends ->
+    red; '>' for '>=' on the rise -> 22.0 stays -> red; judge on any later
+    frame -> the 69 % frame below closes the wobble case -> red."""
     m = _mon()
-    m.restore(lb.PHASE_LOW)
+    m.restore(lb.PHASE_LOW, last)
     got = m.update(_power(soc), 0.0)
     if want is None:
         assert m.low and not {"swapped", "swapped_partial"} & set(got)
@@ -270,10 +336,10 @@ def test_no_cold_swap_while_charging_or_outside_the_low_phase():
     unplugged above the trigger is interrupted -- neither is a cold swap.
     MUTATION: drop the `not charging` / phase condition -> red."""
     m = _mon()
-    m.restore(lb.PHASE_LOW)
+    m.restore(lb.PHASE_LOW, 8.0)
     assert m.update(_power(69.0, charging=True), 0.0) == ["charging", "alarm"]
     m2 = _mon()
-    m2.restore(lb.PHASE_CHARGING)
+    m2.restore(lb.PHASE_CHARGING, 8.0)
     assert m2.update(_power(69.0), 0.0) == ["interrupted", "alarm"]
 
 
@@ -282,7 +348,7 @@ def test_a_hot_swap_is_not_reported_cold():
     m = _mon()
     m.update(_packs(18.0, (True, 18.0)), 0.0)
     m.update(_packs(None, (False, 0.0)), 1.0)
-    assert m.update(_packs(90.0, (True, 90.0)), 2.0) == ["swapped"] and not m.last_cold_swap
+    assert m.update(_packs(90.0, (True, 90.0)), 8.0) == ["swapped"] and not m.last_cold_swap
 
 
 @pytest.mark.asyncio
@@ -321,7 +387,7 @@ async def test_a_cold_swap_ends_a_restored_episode_end_to_end(tmp_path, monkeypa
         await TasksDAO(t).insert(goto_row("t-run", "suspended", 1,
                                           suspend_kind="yielding", suspend_reason="preempted"))
         await MemoryDAO(t).put(lb.EPISODE_MEMORY_KEY,
-                               lb.encode_episode(lb.PHASE_LOW, {"t-run"}, None), 0)
+                               lb.encode_episode(lb.PHASE_LOW, {"t-run"}, None, 8.0), 0)
         await t.commit()
     h, stop, loop, task_db = await start_p3(
         tmp_path, monkeypatch, geo_sql=[ROUTE_SQL, DOCK_ON, HOME],
@@ -344,13 +410,16 @@ async def test_a_cold_swap_ends_a_restored_episode_end_to_end(tmp_path, monkeypa
 
 # -- __main__ (U157 keys) ---------------------------------------------------------------
 _FULL_LB = {"trigger_soc_pct": 20.0, "stop_soc_pct": 5.0, "cloud_alarm_period_s": 2.0,
-            "charge_full_soc_pct": 100.0, "swap_resume_soc_pct": 80.0}
+            "charge_full_soc_pct": 100.0, "swap_resume_soc_pct": 80.0,
+            "swap_absent_min_s": 5.0, "cold_swap_min_rise_pct": 10.0}
 
 
 @pytest.mark.parametrize("patch,rc", [
     ({}, 0), ({"charge_full_soc_pct": None}, 78), ({"swap_resume_soc_pct": None}, 78),
     ({"charge_full_soc_pct": 99.0, "swap_resume_soc_pct": 99.5}, 78),  # swap_resume above full
-    ({"charge_full_soc_pct": 99.0}, 0)])  # a chassis that tops out at 99 %
+    ({"charge_full_soc_pct": 99.0}, 0),  # a chassis that tops out at 99 %
+    ({"swap_absent_min_s": None}, 78), ({"cold_swap_min_rise_pct": None}, 78),
+    ({"cloud_alarm_period_s": float("nan")}, 78)])  # NaN passed `<= 0` until 2026-11-11
 def test_main_refuses_without_the_u157_keys(monkeypatch, patch, rc):
     """EX_CONFIG 78 by key path, and the five values reach the wiring.
     MUTATION: drop either new key from the __main__ check, or the order check
@@ -375,8 +444,10 @@ def test_main_refuses_without_the_u157_keys(monkeypatch, patch, rc):
 # -- the persisted episode (U157) -------------------------------------------------------
 def test_episode_record_round_trips_and_garbage_holds_nothing():
     """MUTATION: decode an idle / unreadable row as an episode -> red."""
-    raw = lb.encode_episode(lb.PHASE_CHARGING, {"t-2", "t-1"}, None)
-    assert lb.decode_episode(raw) == (lb.PHASE_CHARGING, {"t-1", "t-2"}, None)
+    raw = lb.encode_episode(lb.PHASE_CHARGING, {"t-2", "t-1"}, None, 37)
+    assert lb.decode_episode(raw) == (lb.PHASE_CHARGING, {"t-1", "t-2"}, None, 37.0)
+    old = b'{"phase":"low","held":["t-1"],"task_id":null}'  # written before soc was stored
+    assert lb.decode_episode(old) == (lb.PHASE_LOW, {"t-1"}, None, None)
     assert lb.decode_episode(lb.encode_episode(lb.PHASE_IDLE, set(), None)) is None
     assert lb.decode_episode(b"{not json") is None and lb.decode_episode(None) is None
     assert lb.decode_episode(b'{"phase":"bogus","held":[]}') is None
@@ -471,7 +542,8 @@ async def test_renaming_into_a_dock_off_every_route_is_refused(geo, lat, lon, re
 
 # -- through the real P3 loop ------------------------------------------------------------
 LB = {"trigger_soc_pct": 20.0, "stop_soc_pct": 5.0, "cloud_alarm_period_s": 2.0,  # the rule
-      "charge_full_soc_pct": 100.0, "swap_resume_soc_pct": 80.0}  # U157
+      "charge_full_soc_pct": 100.0, "swap_resume_soc_pct": 80.0,  # U157
+      "swap_absent_min_s": 5.0, "cold_swap_min_rise_pct": 10.0}  # U157, 2026-11-11
 
 
 async def _feed(h, body, seconds):  # power frames at 2 Hz
@@ -500,9 +572,12 @@ async def test_the_episode_end_to_end(tmp_path, monkeypatch):  # the whole episo
     suspended (99 U157 -- until 2026-11-10 it resumed here); 100 % -> cleared
     with cause charge_full and t-run resumes by itself.
     MUTATION: no task / no cadence / no prone / no refusal / task left
-    suspended -> red; end the episode on charging, or drop the held filter in
-    the scheduler -> t-run running while charging -> red; never end at full
-    -> no cleared / t-run never resumes -> red."""
+    suspended -> red; end the episode on charging -> t-run running while
+    charging -> red; never end at full -> no cleared / t-run never resumes ->
+    red. (Dropping only the scheduler's held filter does NOT redden this one:
+    while charging the chassis guard holds t-run too. The held filter is
+    pinned by test_a_queued_task_waits_for_the_episode_and_a_human_resume_does_not,
+    which runs with the chassis not charging -- corrected 2026-11-11 audit.)"""
     monkeypatch.setenv("XBRAIN_ROBOT_ID", "gj-test")  # the prone envelope needs a rid
     from xbrain.p3_task.runtime.main_wiring import CMD_TASK_TOPIC  # where P4 sends
     h, stop, loop, task_db = await start_p3(  # loop with the rule on
@@ -595,7 +670,7 @@ async def test_a_battery_swap_ends_the_episode_end_to_end(tmp_path, monkeypatch)
         await _feed(h, _packs(4.0, (True, 4.0)), 2.0)  # low and the last 5 % at once
         assert await wait_for(lambda: h.frames("cmd/chassis/ctrl"))  # prone sent
         tid = h.frames("event/alarm/charging")[0]["detail"]["task_id"]  # the injected task
-        await _feed(h, _packs(None, (False, 0.0)), 1.0)  # the pack pulled out
+        await _feed(h, _packs(None, (False, 0.0)), 6.0)  # pulled out, longer than swap_absent_min_s
         assert not h.frames("event/info/charging")  # an empty slot closes nothing
         await _feed(h, _packs(95.0, (True, 95.0)), 1.0)  # a full pack put in
         cleared = [e for e in h.frames("event/info/charging")
@@ -626,7 +701,7 @@ async def test_a_partial_swap_parks_the_interrupted_task_for_a_person(
     try:
         assert await wait_for(lambda: route_ops(h))  # t-run running
         await _feed(h, _packs(18.0, (True, 18.0)), 2.0)  # low: t-run preempted
-        await _feed(h, _packs(None, (False, 0.0)), 1.0)  # pulled
+        await _feed(h, _packs(None, (False, 0.0)), 6.0)  # pulled, longer than swap_absent_min_s
         await _feed(h, _packs(60.0, (True, 60.0)), 2.0)  # a 60 % pack in
         cleared = [e for e in h.frames("event/info/charging")
                    if e["detail"]["type"] == "low_battery_cleared"]
@@ -640,9 +715,12 @@ async def test_a_partial_swap_parks_the_interrupted_task_for_a_person(
 
 @pytest.mark.asyncio
 async def test_a_restart_mid_charge_keeps_holding(tmp_path, monkeypatch):  # the memory row
-    """P3 restarted while charging: the episode comes back from task.db memory,
-    the preempted task stays suspended, and full charge resumes it.
-    MUTATION: skip the restore -> nothing held -> t-run resumes at once -> red."""
+    """P3 restarted while charging: the episode comes back from task.db memory
+    (the alarm is worded battery_charging again), the preempted task stays
+    suspended, and full charge resumes it. MUTATION: skip the restore -> no
+    battery_charging alarm -> red. (t-run staying suspended here is also held
+    by the chassis guard; the restored held set alone is pinned by
+    test_a_restart_in_the_low_phase_keeps_holding -- 2026-11-11 audit.)"""
     from xbrain.p3_task.dao.simple_daos import MemoryDAO
     from xbrain.p3_task.dao.tasks_dao import TasksDAO
     from xbrain.p3_task.persistence.schema_task import ALL_DDL_STATEMENTS
@@ -681,3 +759,168 @@ async def test_boot_reports_a_missing_home(tmp_path, monkeypatch):  # the boot r
         assert d["missing"] == ["返航终点站", "充电桩/充电站"] and d["docks_off_route"] == ["2号充电站"]
     finally:
         await stop_p3(stop, loop)  # cleanup
+
+
+# -- 2026-11-11 audit: restart, retry and F-5 cases through the real loop -------------------
+async def _seed_task_db(tmp_path, rows, record=None):
+    """task.db as a previous P3 left it: rows plus an optional episode record."""
+    from xbrain.p3_task.dao.simple_daos import MemoryDAO
+    from xbrain.p3_task.dao.tasks_dao import TasksDAO
+    from xbrain.p3_task.persistence.schema_task import ALL_DDL_STATEMENTS
+    task_db = str(tmp_path / "task.db")
+    async with aiosqlite.connect(task_db) as t:
+        for stmt in ALL_DDL_STATEMENTS:
+            await t.execute(stmt)
+        for row in rows:
+            await TasksDAO(t).insert(row)
+        if record is not None:
+            await MemoryDAO(t).put(lb.EPISODE_MEMORY_KEY, record, 0)
+        await t.commit()
+    return task_db
+
+
+async def _live_states(task_db):
+    """{task_id: state} of every row (committed)."""
+    async with aiosqlite.connect(task_db) as t:
+        cur = await t.execute("SELECT task_id, state FROM tasks")
+        return dict(await cur.fetchall())
+
+
+@pytest.mark.asyncio
+async def test_a_restart_in_the_low_phase_keeps_holding(tmp_path, monkeypatch):
+    """Restored low phase, the return task already arrived (done), chassis NOT
+    charging: the preempted task stays suspended -- only the restored held set
+    can hold it (no chassis guard here), and no new return task is sent (the
+    robot is at the dock). MUTATION: skip restoring `held` -> t-run resumes ->
+    red; reissue a done return task -> a second lb- row -> red."""
+    rows = [goto_row("t-run", "suspended", 1, suspend_kind="yielding",
+                     suspend_reason="preempted"),
+            goto_row("lb-old", "done", 2, priority=95)]
+    await _seed_task_db(tmp_path, rows,
+                        lb.encode_episode(lb.PHASE_LOW, {"t-run"}, "lb-old", 15.0))
+    h, stop, loop, task_db = await start_p3(
+        tmp_path, monkeypatch, geo_sql=[ROUTE_SQL, DOCK_ON, HOME],
+        route_membership_m=5.0, low_battery=LB)
+    try:
+        await _feed(h, _power(15.0), 3.0)
+        st = await _live_states(task_db)
+        assert st["t-run"] == "suspended"
+        assert [t for t in st if t.startswith("lb-") and t != "lb-old"] == []
+    finally:
+        await stop_p3(stop, loop)
+
+
+@pytest.mark.asyncio
+async def test_a_restart_while_returning_reissues_the_return_task(tmp_path, monkeypatch):
+    """User ruling 2026-11-11: the return task was running at the power cut, so
+    boot recovery suspends it (passive, unclean_shutdown) and it would wait for
+    a person while the alarm says "returning". P3 cancels it and sends a fresh
+    one. MUTATION: drop the reissue -> no new lb- row, lb-old suspended -> red."""
+    rows = [goto_row("lb-old", "running", 1, priority=95)]
+    await _seed_task_db(tmp_path, rows,
+                        lb.encode_episode(lb.PHASE_LOW, set(), "lb-old", 15.0))
+    h, stop, loop, task_db = await start_p3(
+        tmp_path, monkeypatch, geo_sql=[ROUTE_SQL, DOCK_ON, HOME],
+        route_membership_m=5.0, low_battery=LB)
+    try:
+        await _feed(h, _power(15.0), 2.0)
+        st = await _live_states(task_db)
+        assert st["lb-old"] == "cancelled"
+        fresh = [t for t in st if t.startswith("lb-") and t != "lb-old"]
+        assert len(fresh) == 1 and st[fresh[0]] in ("pending", "ready", "running")
+    finally:
+        await stop_p3(stop, loop)
+
+
+@pytest.mark.asyncio
+async def test_a_failed_low_handler_is_retried(tmp_path, monkeypatch):
+    """Audit 2026-11-11: if the "low" handler raised (here: pick_target fails
+    once), the monitor stayed in the low phase with no return task and an
+    empty held set, and nothing retried it. Now the frame is rolled back and
+    the next frame does it. MUTATION: drop the rollback -> no lb- task, t-run
+    not preempted -> red."""
+    calls = {"n": 0}
+    real = lb.pick_target
+
+    async def flaky(*a, **k):
+        calls["n"] += 1
+        if calls["n"] == 1:
+            raise RuntimeError("geo.db busy")
+        return await real(*a, **k)
+    monkeypatch.setattr(lb, "pick_target", flaky)
+    h, stop, loop, task_db = await start_p3(
+        tmp_path, monkeypatch, rows=[goto_row("t-run", "ready", 1)],
+        geo_sql=[ROUTE_SQL, DOCK_ON, HOME], route_membership_m=5.0, low_battery=LB)
+    try:
+        assert await wait_for(lambda: route_ops(h))  # t-run running
+        await _feed(h, _power(18.0), 3.0)
+        st = await _live_states(task_db)
+        assert calls["n"] >= 2
+        assert [t for t in st if t.startswith("lb-")], st  # injected on the retry
+        assert st["t-run"] == "suspended"  # preempted by it
+    finally:
+        await stop_p3(stop, loop)
+
+
+@pytest.mark.asyncio
+async def test_a_link_loss_return_waits_for_the_episode(tmp_path, monkeypatch):
+    """User ruling 2026-11-11: an F-5 return_home injected during a low-battery
+    episode is held like a queued task, so it cannot drive the robot off the
+    dock after the return task arrives. MUTATION: do not hold it -> the rh-
+    task runs once the return task is done -> red."""
+    from xbrain.p3_task.runtime.main_wiring import STATE_LINK_TOPIC
+    h, stop, loop, task_db = await start_p3(
+        tmp_path, monkeypatch, geo_sql=[ROUTE_SQL, DOCK_ON, HOME],
+        route_membership_m=5.0, low_battery=LB)
+    try:
+        await _feed(h, _power(18.0), 2.0)  # episode: return task injected
+        tid = h.frames("event/alarm/charging")[0]["detail"]["task_id"]
+        h.send(STATE_LINK_TOPIC, {"level": 3, "gw_start_mono": 100.0, "link_epoch": 2,
+                                  "disconnected_s": 1801.0})  # cloud down past rtb_s
+        await _feed(h, _power(18.0), 2.0)
+        rh = [t for t in await _live_states(task_db) if t.startswith("rh-")]
+        assert rh, "F-5 did not inject"
+        async with aiosqlite.connect(task_db) as t:  # the return task arrives
+            await t.execute("UPDATE tasks SET state='done' WHERE task_id=?", (tid,))
+            await t.commit()
+        await _feed(h, _power(18.0), 3.0)  # ticks with nothing running
+        assert (await _live_states(task_db))[rh[0]] in ("pending", "ready")  # held
+    finally:
+        await stop_p3(stop, loop)
+
+
+@pytest.mark.asyncio
+async def test_a_retry_after_the_insert_does_not_send_a_second_return_task(
+        tmp_path, monkeypatch):
+    """The "low" handler failing AFTER the return task was inserted (here: the
+    held snapshot fails once) is rolled back and retried; the retry keeps the
+    live return task instead of inserting another, and the episode record
+    carries the current whole-percent soc (the cold-swap rise is measured from
+    it). MUTATION: drop the live-task check in _inject_return_task -> two lb-
+    rows -> red; drop the soc re-persist -> the record's soc stays None ->
+    red."""
+    calls = {"n": 0}
+    real = lb.live_task_ids
+
+    async def flaky(dao):
+        calls["n"] += 1
+        if calls["n"] == 1:
+            raise RuntimeError("task.db busy")
+        return await real(dao)
+    monkeypatch.setattr(lb, "live_task_ids", flaky)
+    h, stop, loop, task_db = await start_p3(
+        tmp_path, monkeypatch, geo_sql=[ROUTE_SQL, DOCK_ON, HOME],
+        route_membership_m=5.0, low_battery=LB)
+    try:
+        await _feed(h, _power(18.0), 3.0)
+        assert calls["n"] >= 2
+        lbs = [t for t in await _live_states(task_db) if t.startswith("lb-")]
+        assert len(lbs) == 1, lbs
+        await _feed(h, _power(16.0), 1.5)  # no phase change: only the soc moved
+        from xbrain.p3_task.dao.simple_daos import MemoryDAO
+        async with aiosqlite.connect(task_db) as t:
+            rec = lb.decode_episode(await MemoryDAO(t).get(lb.EPISODE_MEMORY_KEY))
+        assert rec is not None and rec[3] == 16.0  # re-persisted on the whole-percent change
+    finally:
+        await stop_p3(stop, loop)
+

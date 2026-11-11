@@ -24,9 +24,9 @@ U146), replacing 15 S8.2 / S8.2A's 30 % CHG-10/11 trigger and its
     "low battery", and the injected task is cancelled (it has arrived);
   * the episode ends -- and only then may the tasks it interrupted resume by
     themselves -- when soc_pct reaches charge_full_soc_pct (100) in the
-    charging phase, or on a battery swap (a pack observed absent during the
-    episode is present again) with soc_pct at or above swap_resume_soc_pct
-    (80). A swap that leaves soc_pct between trigger and swap_resume ends the
+    charging phase, or on a battery swap (a pack slot observed empty during
+    the episode for at least swap_absent_min_s is present again; judged on the
+    soc of that moment) with soc_pct at or above swap_resume_soc_pct (80). A swap that leaves soc_pct between trigger and swap_resume ends the
     alarm but the interrupted tasks wait for a person (U157 ruling 1);
   * unplugged before full: below the trigger -> back to the low phase (a new
     return task is injected); otherwise the interrupted phase, alarmed every
@@ -35,7 +35,8 @@ U146), replacing 15 S8.2 / S8.2A's 30 % CHG-10/11 trigger and its
     charging_below_full() read straight off the chassis -- while charging below
     full no preempted task resumes by itself, episode or not;
   * a cold swap (2026-11-11 ruling): restored in the low phase, the first soc
-    reading is at / above the trigger and not charging -> treated as a swap,
+    reading is at / above the trigger, not charging, and at least
+    cold_swap_min_rise_pct above the soc the record holds -> treated as a swap,
     same 80 % split;
   * if remain_mile_km cannot cover the drive to the target -> the alarm says
     unreachable (still driving toward it);
@@ -76,8 +77,9 @@ Traps:
 from __future__ import annotations  # postponed annotations
 
 import json  # mission_json
+import math  # isfinite: NaN / inf are not values
 from dataclasses import dataclass  # the picked target
-from typing import Any, List, Mapping, Optional, Sequence, Set, Tuple  # plain value types
+from typing import Any, Dict, List, Mapping, Optional, Sequence, Set, Tuple  # plain value types
 
 from xbrain.common.geo.goto_plan import RouteGeom, plan_goto  # travel distance (U127)
 from xbrain.common.geo.polyline import distance_to_route_m  # on-route test
@@ -98,9 +100,14 @@ class LowBatteryConfigError(ValueError):  # refused at construction
 
 
 def _num(v: Any) -> Optional[float]:  # tolerant numeric read
-    """A real number or None."""
+    """A finite real number or None. NaN / inf count as absent: a NaN alarm
+    period passed every `<= 0` check and then silenced the alarm for good
+    (`now - last >= nan` is never true), and a NaN soc compares False with
+    every threshold (2026-11-11 audit)."""
     if isinstance(v, bool) or not isinstance(v, (int, float)):  # bools are not numbers here
         return None  # absent / malformed
+    if not math.isfinite(float(v)):
+        return None  # NaN / inf: not a usable value
     return float(v)  # usable
 
 
@@ -167,14 +174,17 @@ class LowBatteryMonitor:  # the episode state machine
 
     def __init__(self, trigger_soc_pct: Any, stop_soc_pct: Any,
                  alarm_period_s: Any, charge_full_soc_pct: Any,
-                 swap_resume_soc_pct: Any) -> None:
+                 swap_resume_soc_pct: Any, swap_absent_min_s: Any,
+                 cold_swap_min_rise_pct: Any) -> None:
         vals = {"low_battery.trigger_soc_pct": trigger_soc_pct,  # names for the error text
                 "low_battery.stop_soc_pct": stop_soc_pct,
                 "low_battery.cloud_alarm_period_s": alarm_period_s,
                 "low_battery.charge_full_soc_pct": charge_full_soc_pct,
-                "low_battery.swap_resume_soc_pct": swap_resume_soc_pct}
-        for name, v in vals.items():  # every key required, positive (CLAUDE.md 3.1)
-            if _num(v) is None or float(v) <= 0.0:  # missing / null / <= 0
+                "low_battery.swap_resume_soc_pct": swap_resume_soc_pct,
+                "low_battery.swap_absent_min_s": swap_absent_min_s,
+                "low_battery.cold_swap_min_rise_pct": cold_swap_min_rise_pct}
+        for name, v in vals.items():  # every key required, finite and positive (CLAUDE.md 3.1)
+            if _num(v) is None or float(v) <= 0.0:  # missing / null / NaN / inf / <= 0
                 raise LowBatteryConfigError("%s must be a positive number, got %r" % (name, v))
         check_thresholds(trigger_soc_pct, stop_soc_pct, charge_full_soc_pct,
                          swap_resume_soc_pct)  # the order 5 < 20 < 80 <= 100 <= 100
@@ -183,11 +193,14 @@ class LowBatteryMonitor:  # the episode state machine
         self._period = float(alarm_period_s)  # cloud alarm cadence
         self._full = float(charge_full_soc_pct)  # the charging alarm ends here (U157)
         self._swap_resume = float(swap_resume_soc_pct)  # a swap this high resumes at once (U157)
+        self._absent_min = float(swap_absent_min_s)  # a slot empty this long, then filled = a swap
+        self._cold_rise = float(cold_swap_min_rise_pct)  # boot soc this far above the record = a cold swap
         self.phase = PHASE_IDLE  # no episode
         self.stopped = False  # the 5 % stop has been done in this low phase
         self._last_alarm: Optional[float] = None  # when the last alarm went out
-        self._absent_seen: Set[int] = set()  # pack slots seen empty during this episode
-        self._swapped_in = False  # one of those slots has been seen filled again
+        self._absent_since: Dict[int, float] = {}  # slot -> monotonic s it was first seen empty
+        self._swap_pending = False  # a slot was refilled after a real absence; judge on the next soc
+        self._restored_soc: Optional[float] = None  # the record's soc; set by restore() until judged
         self._restored = False  # the episode came back from memory; first soc not judged yet
         self.last_cold_swap = False  # the last swap end was judged cold (detail.cold_swap)
 
@@ -196,16 +209,36 @@ class LowBatteryMonitor:  # the episode state machine
         """An episode is in progress (any phase but idle)."""
         return self.phase != PHASE_IDLE
 
-    def restore(self, phase: str) -> None:
+    def restore(self, phase: str, last_soc: Optional[float] = None) -> None:
         """Re-enter a persisted phase after a P3 restart (the memory row).
         The alarm cadence starts over; the 5 % latch and the swap history do
-        not survive (a stop is re-judged on the next frame)."""
+        not survive (a stop is re-judged on the next frame). last_soc is the
+        soc the record holds -- what the cold-swap rise is measured from; None
+        (no soc in the record) means no cold swap can be judged."""
         if phase not in _PHASES:
             raise ValueError("unknown low-battery phase %r" % (phase,))
         self.phase = phase
         self.stopped, self._last_alarm = False, None
-        self._absent_seen, self._swapped_in = set(), False
+        self._absent_since, self._swap_pending = {}, False
         self._restored = True  # the first frame with a soc is judged for a cold swap
+        self._restored_soc = _num(last_soc)
+
+    def snapshot(self) -> Dict[str, Any]:
+        """Every mutable fact, so the wiring can roll a frame back when its
+        handler failed (the next frame then raises the same events again)."""
+        return {"phase": self.phase, "stopped": self.stopped, "last_alarm": self._last_alarm,
+                "absent_since": dict(self._absent_since), "swap_pending": self._swap_pending,
+                "restored": self._restored, "restored_soc": self._restored_soc,
+                "last_cold_swap": self.last_cold_swap}
+
+    def rollback(self, snap: Mapping[str, Any]) -> None:
+        """Undo update() back to a snapshot() (2026-11-11 audit: a failed "low"
+        handler left the monitor in the low phase with no return task and no
+        held set, and nothing ever retried it)."""
+        self.phase, self.stopped, self._last_alarm = snap["phase"], snap["stopped"], snap["last_alarm"]
+        self._absent_since, self._swap_pending = dict(snap["absent_since"]), snap["swap_pending"]
+        self._restored, self._restored_soc = snap["restored"], snap["restored_soc"]
+        self.last_cold_swap = snap["last_cold_swap"]
 
     def _enter(self, phase: str) -> None:  # a phase change inside an episode
         """Switch phase; the next alarm goes out at once, worded for it."""
@@ -216,18 +249,23 @@ class LowBatteryMonitor:  # the episode state machine
     def _end_episode(self) -> None:  # back to idle, ready for the next one
         """Reset every per-episode fact."""
         self.phase, self.stopped, self._last_alarm = PHASE_IDLE, False, None
-        self._absent_seen, self._swapped_in = set(), False  # presence history belongs to one episode
-        self._restored = False
+        self._absent_since, self._swap_pending = {}, False  # presence history belongs to one episode
+        self._restored, self._restored_soc = False, None
 
-    def _track_presence(self, power: Mapping[str, Any]) -> None:  # 99 U154 swap evidence
-        """Record empty slots, and a slot that was empty and is filled again.
-        A pack without a boolean `present` says nothing either way."""
+    def _track_presence(self, power: Mapping[str, Any], now_s: float) -> None:  # 99 U154 swap evidence
+        """Record when a slot went empty; a slot that is filled again after
+        being empty for at least swap_absent_min_s is a swap, judged on the
+        soc of that moment (the next frame with a soc). An absence shorter than
+        that is a presence glitch and is forgotten (2026-11-11 audit: one
+        glitch frame used to latch a swap for the rest of the episode). A pack
+        without a boolean `present` says nothing either way."""
         for pos, b in enumerate(_packs(power)):
             slot = b.get("index") if isinstance(b.get("index"), int) else pos  # 13 BAT-1 slot index
             if b.get("present") is False:
-                self._absent_seen.add(slot)  # pulled out, or the slot was empty to begin with
-            elif b.get("present") is True and slot in self._absent_seen:
-                self._swapped_in = True  # a pack went in where there was none
+                self._absent_since.setdefault(slot, now_s)  # pulled out, or empty to begin with
+            elif b.get("present") is True and slot in self._absent_since:
+                if now_s - self._absent_since.pop(slot) >= self._absent_min:
+                    self._swap_pending = True  # a pack went in where there was none, for real
 
     def update(self, power: Optional[Mapping[str, Any]], now_s: float) -> List[str]:  # one frame in, events out
         """Events for this state/power body (None: nothing received -> none)."""
@@ -240,24 +278,30 @@ class LowBatteryMonitor:  # the episode state machine
             if soc is None or soc >= self._trigger or charging:
                 return out  # no episode starts
             self.phase = PHASE_LOW  # a new episode
-            self._track_presence(power)  # a slot already empty now counts when it is filled
+            self._track_presence(power, now_s)  # a slot already empty now counts when it is filled
             out.append("low")
         else:
-            self._track_presence(power)
+            self._track_presence(power, now_s)
             cold = False
             if self._restored and soc is not None:
                 # 99 U157 cold swap (user ruling 2026-11-11): restored in the
-                # low phase, the first reading is at / above the trigger and
-                # not charging. soc cannot climb that far on its own, so the
-                # pack was swapped (or charged) while P3 was down -- the hot
-                # swap rule never saw the slot empty. Same buckets as a swap.
-                # Found live 2026-11-11: 8 % at power-off, 69 % single pack at
-                # boot, and the restored episode kept alarming "low battery".
+                # low phase, the first reading is at / above the trigger, not
+                # charging, AND at least cold_swap_min_rise_pct above the soc
+                # the record holds. The rise is what tells a pack swapped while
+                # P3 was down from a soc that wobbled 19 -> 20 across a restart
+                # (audit 2026-11-11). Found live: 8 % at power-off, 69 % single
+                # pack at boot, and the restored episode kept alarming.
                 self._restored = False  # judged once, on the first soc
-                cold = self.phase == PHASE_LOW and not charging and soc >= self._trigger
-            if (self._swapped_in or cold) and soc is not None and soc >= self._trigger:  # a swap (99 U154)
+                cold = (self.phase == PHASE_LOW and not charging and soc >= self._trigger
+                        and self._restored_soc is not None
+                        and soc - self._restored_soc >= self._cold_rise)
+            hot = False
+            if self._swap_pending and soc is not None:
+                self._swap_pending = False  # judged on the soc of the refill, once
+                hot = soc >= self._trigger
+            if hot or cold:  # a swap (99 U154 / U157)
                 full = soc >= self._swap_resume  # U157: high enough to resume at once
-                self.last_cold_swap = cold and not self._swapped_in  # for the cleared report
+                self.last_cold_swap = cold and not hot  # for the cleared report
                 self._end_episode()
                 return ["swapped" if full else "swapped_partial"]
             if soc is not None and soc >= self._full and self.phase in (
@@ -310,15 +354,19 @@ def check_thresholds(trigger: Any, stop: Any, full: Any, swap_resume: Any) -> No
 EPISODE_MEMORY_KEY = "low_battery_episode"
 
 
-def encode_episode(phase: str, held: Set[str], task_id: Optional[str]) -> bytes:
-    """The memory row value (JSON, ids sorted so equal records compare equal)."""
-    return json.dumps({"phase": phase, "held": sorted(held), "task_id": task_id},
-                      separators=(",", ":")).encode("utf-8")
+def encode_episode(phase: str, held: Set[str], task_id: Optional[str],
+                   soc: Optional[float] = None) -> bytes:
+    """The memory row value (JSON, ids sorted so equal records compare equal).
+    soc is the last whole-percent reading (the cold-swap rise is measured from
+    it); None when unknown."""
+    return json.dumps({"phase": phase, "held": sorted(held), "task_id": task_id,
+                       "soc": _num(soc)}, separators=(",", ":")).encode("utf-8")
 
 
-def decode_episode(raw: Any) -> Optional[Tuple[str, Set[str], Optional[str]]]:
-    """(phase, held, task_id) of a stored record; None for idle / absent /
-    unreadable. An unreadable row is not trusted to hold anything."""
+def decode_episode(raw: Any) -> Optional[Tuple[str, Set[str], Optional[str], Optional[float]]]:
+    """(phase, held, task_id, soc) of a stored record; None for idle / absent /
+    unreadable. An unreadable row is not trusted to hold anything. soc is None
+    for a record written before it was stored (no cold swap is judged then)."""
     if raw is None:
         return None
     try:
@@ -329,7 +377,7 @@ def decode_episode(raw: Any) -> Optional[Tuple[str, Set[str], Optional[str]]]:
         return None
     held = {str(t) for t in rec.get("held") or [] if isinstance(t, str)}
     tid = rec.get("task_id") if isinstance(rec.get("task_id"), str) else None
-    return rec["phase"], held, tid
+    return rec["phase"], held, tid, _num(rec.get("soc"))
 
 
 async def live_task_ids(dao) -> Set[str]:
