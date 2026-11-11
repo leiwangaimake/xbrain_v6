@@ -276,3 +276,28 @@ def test_a_named_exit_or_cancel_of_another_recording_is_refused(text, said):
 def test_named_exit_or_cancel_without_a_recording(text):  # idle
     d, frames = _turn(text)
     assert not frames and d.tts_text == "现在没有在录制"
+
+
+# -- 99 U165: a refusal reads "rejected" on voice_turn ---------------------------
+@pytest.mark.parametrize("text,teach", [
+    ("开始录制", None),  # no name
+    ("现在开始录制1号路径", None),  # name taken
+    ("开始录制3号路径", _RECORDING),  # already recording
+    ("1号路径录制完成", _RECORDING),  # another recording's name
+    ("退出录制", None),  # nothing to end
+    ("去1号测试点", _RECORDING),  # blocked while recording
+])
+def test_a_recording_refusal_is_denied_not_a_reply(text, teach):
+    """Until 2026-11-11 these were "reply" decisions, verdict "accepted" --
+    the same verdict and intent as a start that went out, so a client could
+    not tell them apart. MUTATION: kind "reply" again -> red."""
+    d, frames = _turn(text, teach)
+    assert not frames and d.kind == "denied" and d.tts_text  # refused, said why
+
+
+@pytest.mark.parametrize("teach", [None, _RECORDING])
+def test_the_status_answer_stays_a_reply(teach):
+    """A status question is answered, not refused -- also when idle.
+    MUTATION: refuse the idle status too -> red."""
+    d, _frames = _turn("录了几个点", teach)
+    assert d.kind == "reply"

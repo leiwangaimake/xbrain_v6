@@ -973,11 +973,18 @@ class TurnOrchestrator:
                 "kind": sess.get("kind"), "stats": stats}
 
     def _rec_reply(self, intent_id: str, key: str, layer: str,
-                   **fmt: Any) -> TurnDecision:
-        """A spoken recording reply; nothing is sent."""
+                   refused: bool = True, **fmt: Any) -> TurnDecision:
+        """A spoken recording reply; nothing is sent.
+
+        99 U165: a refusal (no name, name taken, already recording, wrong
+        name, not recording, blocked while recording) is a "denied" decision,
+        so its voice_turn verdict is "rejected". Until 2026-11-11 every one of
+        them was a "reply" and read "accepted", word for word the verdict of a
+        start that went out; only the status answer (refused=False) is a reply.
+        """
         entry = self._registry.by_id(intent_id)
         spoken = _REC_CN[key].format(**fmt)
-        return TurnDecision(kind="reply", intent_id=entry.id,
+        return TurnDecision(kind="denied" if refused else "reply", intent_id=entry.id,
                             intent_name=entry.name, route=entry.route,
                             auth=entry.auth, layer=layer,
                             reply_text=spoken, tts_text=spoken)
@@ -1004,11 +1011,12 @@ class TurnOrchestrator:
         nothing is sent; no follow-up question is ever asked (99 U133)."""
         rec = self._recording()
         if rp.kind == "status":
-            if rec is None:
-                return self._rec_reply("F02", "not_recording", "record_rule")
+            if rec is None:  # an answer to a question, not a refusal
+                return self._rec_reply("F02", "not_recording", "record_rule",
+                                       refused=False)
             stats = rec["stats"]
             return self._rec_reply(
-                "F02", "status", "record_rule", name=rec["name"],
+                "F02", "status", "record_rule", refused=False, name=rec["name"],
                 count=int(stats.get("point_count") or 0),
                 length=int(round(float(stats.get("length_m") or 0.0))))
         if rp.kind == "cancel":
@@ -1646,7 +1654,12 @@ class TurnOrchestrator:
         if is_teach_intent(entry.name) or is_geo_intent(entry.name):
             extra, failure = self._build_f_class(entry, extra, now_mono_ms)
             if failure is not None:
-                return TurnDecision(kind="reply", intent_id=entry.id,
+                # 99 U165: a refused recording start (no name, bad length, name
+                # taken) is "denied" -> verdict rejected, like every other
+                # recording refusal (_rec_reply); it read "accepted" before.
+                # The other F-class refusals keep "reply" (not in this ruling).
+                return TurnDecision(kind="denied" if entry.name in _REC_STARTS else "reply",
+                                    intent_id=entry.id,
                                     intent_name=entry.name, route=entry.route,
                                     auth=eff_auth, level=eff_auth, layer=layer,
                                     reply_text=failure, tts_text=failure,

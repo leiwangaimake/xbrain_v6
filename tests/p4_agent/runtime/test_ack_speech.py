@@ -485,12 +485,12 @@ def test_a_recording_not_saved_is_published_as_rejected():
     sp = AckSpeaker()  # the exit turn
     sp.note_turn(_rec_turn())  # registers c-f
     out = sp.on_ack_frames(_b({"cmd_id": "c-f", "result": "rejected",  # geometry failed
-                               "code": "E_TEACH_GEOMETRY",
+                               "code": "E_TEACH_GEOMETRY",  # an invalid track
                                "detail": {"saved": False, "close_reason": "invalid_geometry",
                                           "name": "1号路径", "issues": []}}))
     (rec,) = _turns(out)  # one record even when not saved
     # the cloud must be able to tell "not saved" from "saved" without parsing text
-    assert rec["verdict"] == "rejected" and rec["reject_code"] == "E_TEACH_GEOMETRY"
+    assert rec["verdict"] == "rejected" and rec["reject_code"] == "E_TEACH_GEOMETRY"  # not saved, by code
     assert "1号路径" in rec["reply_text"]  # the sentence names what was not saved
 
 
@@ -499,7 +499,7 @@ def test_a_discard_result_is_published_too():
     sp = AckSpeaker()  # the cancel turn
     sp.note_turn(_rec_turn(action="discard", intent="record_route_cancel"))  # the cancel intent is copied
     out = sp.on_ack_frames(_b({"cmd_id": "c-f", "result": "accepted", "code": "OK",  # accepted = discarded
-                               "detail": {"name": "1号路径", "discarded_points": 12}}))
+                               "detail": {"name": "1号路径", "discarded_points": 12}}))  # N points thrown away
     (rec,) = _turns(out)  # one record
     assert rec["verdict"] == "accepted" and "12" in rec["reply_text"]  # N points dropped
 
@@ -518,36 +518,36 @@ def test_result_record_once_and_only_for_our_commands():
 def _teach(result, first=True, **detail):  # one P3 recording report
     """event/{sev}/teach bytes (11 S12A.12): "warning" -> teach.time_warning,
     anything else -> teach.expired with that detail.result."""
-    ev = ({"kind": "teach.time_warning"} if result == "warning"
-          else {"kind": "teach.expired", "result": result})
-    return _b({"sev": "warn", "cat": "teach", "detail": dict(detail, first=first, **ev)})
+    ev = ({"kind": "teach.time_warning"} if result == "warning"  # the 10 / 1 min warning
+          else {"kind": "teach.expired", "result": result})  # or the auto-finish
+    return _b({"sev": "warn", "cat": "teach", "detail": dict(detail, first=first, **ev)})  # an event/*/teach body
 
 
-_BRIEF = {"name": "1号路径", "session_kind": "route", "channel": "local_voice", "duration_s": 10800}
+_BRIEF = {"name": "1号路径", "session_kind": "route", "channel": "local_voice", "duration_s": 10800}  # the common fields of a report
 
 
 @pytest.mark.parametrize("kind,detail,text", [
-    ("warning", {"remaining_s": 600}, "路径1号路径的录制还剩10分钟, 到时会自动结束并保存"),
-    ("warning", {"remaining_s": 59.5}, "路径1号路径的录制还剩1分钟, 到时会自动结束并保存"),
-    ("saved", {"point_count": 10800, "length_m": 5400.4},
+    ("warning", {"remaining_s": 600}, "路径1号路径的录制还剩10分钟, 到时会自动结束并保存"),  # 10 min left
+    ("warning", {"remaining_s": 59.5}, "路径1号路径的录制还剩1分钟, 到时会自动结束并保存"),  # rounded up to 1 min
+    ("saved", {"point_count": 10800, "length_m": 5400.4},  # a full 180 min recording
      "录制已到180分钟上限, 已自动保存为路径1号路径, 共10800个点, 长5400米"),
-    ("save_failed", {"code": "E_NAME_CONFLICT"},
+    ("save_failed", {"code": "E_NAME_CONFLICT"},  # write failed, data kept
      "录制已到180分钟上限, 路径1号路径自动保存失败, 名字已被占用. 录制数据还在, 请说保存为新的名字, 或者放弃录制"),
-    ("discarded", {}, "录制已到180分钟上限, 路径1号路径的轨迹无效, 没有保存"),
-    ("awaiting_name", {}, "录制已到180分钟上限, 已停止录制. 请说保存为某个名字, 或者放弃录制"),
+    ("discarded", {}, "录制已到180分钟上限, 路径1号路径的轨迹无效, 没有保存"),  # invalid track
+    ("awaiting_name", {}, "录制已到180分钟上限, 已停止录制. 请说保存为某个名字, 或者放弃录制"),  # unnamed session
 ])
 def test_each_recording_report_is_spoken(kind, detail, text):
     """99 U163. MUTATION: drop a result from _teach_event_text -> no speech -> red."""
     from xbrain.p4_agent.runtime.ack_speech import teach_event_frames
-    out = teach_event_frames(_teach(kind, **dict(_BRIEF, **detail)), None)
-    assert len(out) == 1 and _said(out[0]) == ("cmd/audio/speak", text, "tts_local")
+    out = teach_event_frames(_teach(kind, **dict(_BRIEF, **detail)), None)  # no record key: speech only
+    assert len(out) == 1 and _said(out[0]) == ("cmd/audio/speak", text, "tts_local")  # one sentence, local voice
 
 
 def test_a_fence_save_says_it_is_not_enabled():
     from xbrain.p4_agent.runtime.ack_speech import teach_event_frames
     out = teach_event_frames(_teach("saved", **dict(
         _BRIEF, session_kind="fence", name="仓库", point_count=40, length_m=120.0)), None)
-    assert "围栏没有启用, 需要时请说启用围栏仓库" in _said(out[0])[1]
+    assert "围栏没有启用, 需要时请说启用围栏仓库" in _said(out[0])[1]  # a draft fence is said to be off
 
 
 def test_a_recording_report_goes_on_voice_turn_under_its_channel():
@@ -556,20 +556,20 @@ def test_a_recording_report_goes_on_voice_turn_under_its_channel():
     MUTATION: hard-code mic_local -> the cloud row -> red; verdict accepted on
     a failure -> red; first=False still spoken -> red."""
     from xbrain.p4_agent.runtime.ack_speech import teach_event_frames
-    key = "xbrain/gj-001/state/voice_turn"
+    key = "xbrain/gj-001/state/voice_turn"  # the record key
     out = teach_event_frames(_teach("saved", **dict(
         _BRIEF, channel="cloud_voice", point_count=10, length_m=5.0)), key)
-    assert [k for k, _ in out] == ["cmd/audio/speak", key]
-    rec = json.loads(out[1][1])
+    assert [k for k, _ in out] == ["cmd/audio/speak", key]  # speech, then the record
+    rec = json.loads(out[1][1])  # the record
     assert (rec["channel"], rec["session"], rec["layer"], rec["verdict"]) == (
         "cloud", "cloud", "teach_result", "accepted")
-    assert rec["asr_raw"] == "" and rec["reply_text"].startswith("录制已到180分钟上限")
+    assert rec["asr_raw"] == "" and rec["reply_text"].startswith("录制已到180分钟上限")  # nobody spoke: no ASR text
     bad = teach_event_frames(_teach("save_failed", **dict(
         _BRIEF, code="E_NAME_CONFLICT")), key)
-    rec2 = json.loads(bad[1][1])
-    assert rec2["verdict"] == "rejected" and rec2["reject_code"] == "E_NAME_CONFLICT"
-    assert rec2["channel"] == "mic_local"
-    assert teach_event_frames(_teach("saved", first=False, **_BRIEF), key) == []
+    rec2 = json.loads(bad[1][1])  # the failed save
+    assert rec2["verdict"] == "rejected" and rec2["reject_code"] == "E_NAME_CONFLICT"  # rejected with the real code
+    assert rec2["channel"] == "mic_local"  # unknown channel files under the local mic
+    assert teach_event_frames(_teach("saved", first=False, **_BRIEF), key) == []  # a repeat report is not spoken again
 
 
 def test_other_teach_events_are_not_spoken():
@@ -578,5 +578,54 @@ def test_other_teach_events_are_not_spoken():
     MUTATION: speak any teach event -> red."""
     from xbrain.p4_agent.runtime.ack_speech import teach_event_frames
     for kind in ("teach.started", "teach.saved", "teach.discarded"):
-        ev = _b({"sev": "info", "cat": "teach", "detail": dict(_BRIEF, kind=kind, first=True)})
-        assert teach_event_frames(ev, "k") == []
+        ev = _b({"sev": "info", "cat": "teach", "detail": dict(_BRIEF, kind=kind, first=True)})  # a teach event outside the spoken set
+        assert teach_event_frames(ev, "k") == []  # nothing published
+
+
+# -- 99 U165: the start result, and a finish that kept its data ------------------
+def _start_turn(spoke=True):
+    """A start turn: cmd/teach start, (speech), the voice_turn record."""
+    start = ("cmd/teach", _b({"cmd_id": "c-s", "action": "start",  # the start command
+                              "start": {"kind": "route", "name": "1号路径"}}))
+    return [start] + _rec_turn(spoke=spoke, intent="record_route_start")[1:]  # speech?, record
+
+
+def test_an_accepted_start_is_published_but_not_spoken():
+    """The client opens its keyboard on this record, never on the turn's own
+    "好的,开始录制X". MUTATION: leave start out of the result set -> no record -> red."""
+    sp = AckSpeaker()  # fresh speaker
+    sp.note_turn(_start_turn())  # the start turn is noted
+    out = sp.on_ack_frames(_b({"cmd_id": "c-s", "result": "accepted", "code": "OK",  # P3 accepted
+                               "detail": {"session_id": "ts-1", "state": "recording"}}))
+    assert [k for k, _ in out] == [_VT_KEY]  # nothing spoken: the turn already said it
+    (rec,) = _turns(out)  # the start result
+    assert rec["layer"] == "teach_result" and rec["verdict"] == "accepted"  # started
+    assert rec["intent"] == "record_route_start" and rec["reply_text"] == "已开始录制1号路径"
+    assert rec["reply_kind"] == "none"  # not spoken
+
+
+def test_a_refused_start_is_published_as_rejected_with_its_reason():
+    """Measured 2026-11-11: P3 refused (no rtk_fixed) after the turn said
+    "好的,开始录制X", and only cmd/teach/ack carried it.
+    MUTATION: verdict always accepted -> red."""
+    sp = AckSpeaker()  # fresh speaker
+    sp.note_turn(_start_turn(spoke=False))  # a silent cloud text turn
+    out = sp.on_ack_frames(_b({"cmd_id": "c-s", "result": "rejected",  # P3 refused
+                               "code": "E_TEACH_QUALITY", "detail": {"fix_type": "no_fix"}}))
+    (rec,) = _turns(out)  # the only place the refusal goes
+    assert rec["verdict"] == "rejected" and rec["reject_code"] == "E_TEACH_QUALITY"  # rejected with P3's code
+    assert rec["reply_text"] == "现在不能开始录制: 定位不是RTK固定解"  # the spoken reason
+
+
+def test_a_finish_that_kept_its_data_says_so():
+    """99 U165: the write failed, the session waits in finalizing; "录制已退出"
+    would be false. MUTATION: drop the retained branch -> generic sentence -> red."""
+    sp = AckSpeaker()  # fresh speaker
+    sp.note_turn(_rec_turn())  # a finish turn
+    out = sp.on_ack_frames(_b({"cmd_id": "c-f", "result": "rejected", "code": "E_NAME_CONFLICT",  # write failed
+                               "detail": {"saved": False, "retained": True, "name": "1号路径",
+                                          "state": "finalizing"}}))
+    (rec,) = _turns(out)  # one record
+    assert rec["verdict"] == "rejected" and rec["reject_code"] == "E_NAME_CONFLICT"  # the real code, not E_TEACH_GEOMETRY
+    assert rec["reply_text"] == ("1号路径没有保存: 名字已被占用. 录制数据还在, "
+                                 "请说保存为新的名字, 或者放弃录制")

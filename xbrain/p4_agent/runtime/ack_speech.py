@@ -95,7 +95,11 @@ from xbrain.p4_agent.runtime.voice_turn import SESSION_OF_CHANNEL  # channel -> 
 #: (it is built before P3 answers), and a cloud client reads voice_turn, not
 #: the speaker. Published even for a silent (require_tts_reply=false) turn:
 #: then voice_turn is the ONLY place the result goes.
-_RESULT_TO_TURN = frozenset({"finish", "discard"})  # saved / dropped: a result
+#: 99 U165: + start. The start turn says "好的,开始录制X" before P3 has run its
+#: arming checks; measured 2026-11-11 indoors, P3 then refused (no rtk_fixed)
+#: and nothing but cmd/teach/ack carried it, so a cloud client opened its
+#: keyboard on a recording that never started.
+_RESULT_TO_TURN = frozenset({"start", "finish", "discard"})  # started / saved / dropped
 #: The layer value of such a record (the user-ruled extra field of 11 S8.7.6):
 #: tells "the result of an earlier turn" apart from a turn of its own.
 TEACH_RESULT_LAYER = "teach_result"  # voice_turn.layer of the result record
@@ -186,6 +190,12 @@ _REC_ISSUE = {  # S12A.7 blocking issue codes, in words
     "area_too_small": "围栏面积太小",
 }
 _REC_FINISH_OTHER = "录制没有正确结束"  # any other refusal
+#: 99 U165: a finish whose write failed with the data kept (U163 retained):
+#: the session waits in finalizing, so "录制已退出" would be false.
+_REC_RETAINED = "{name}没有保存: {why}. 录制数据还在, 请说保存为新的名字, 或者放弃录制"
+#: 99 U165: the start result record of an accepted start (not spoken: the turn
+#: already said "好的,开始录制X"; this is what a client waits for).
+_REC_STARTED = "已开始录制{name}"
 _REC_DISCARDED = "已取消录制{name}, 录到的{count}个点已丢弃"  # 99 U137 discard
 #: 99 U147 race fix: "取消所有定时任务" -- the count P3 actually cleared, never
 #: the one P4's (possibly stale) state/task snapshot showed at the turn.
@@ -308,7 +318,7 @@ class AckSpeaker:  # one per process
                 self._pending.popitem(last=False)  # drop the oldest
 
     def _note_results(self, pairs: Iterable[Tuple[str, bytes]]) -> None:
-        """99 U162: remember a recording finish / discard with the turn's own
+        """99 U162 / U165: remember a recording start / finish / discard with the turn's own
         voice_turn record, so its result can be published as a second record."""
         pairs = list(pairs)  # walked twice
         turn = next(((k, _json(d)) for k, d in pairs
@@ -321,14 +331,15 @@ class AckSpeaker:  # one per process
             cmd = _body(_json(data))  # the command body
             if (isinstance(cmd, dict) and isinstance(cmd.get("cmd_id"), str)
                     and cmd.get("action") in _RESULT_TO_TURN):
-                self._results[cmd["cmd_id"]] = (cmd, turn[0], turn[1])
+                self._results[cmd["cmd_id"]] = (cmd, turn[0], turn[1])  # keyed by cmd_id, the ack's only link
                 while len(self._results) > _PENDING_MAX:  # bounded
                     self._results.popitem(last=False)  # drop the oldest
 
     def on_ack_frames(self, data: bytes) -> "list":
         """Every (key, frame) to publish for one ack: the spoken answer (as
-        on_ack), and for a recording finish / discard the result as a second
-        state/voice_turn record (99 U162). [] when there is nothing new."""
+        on_ack), and for a recording start / finish / discard the result as a
+        second state/voice_turn record (99 U162 / U165). [] when there is
+        nothing new."""
         ack = _body(_json(data))  # S7.7 Ack shape
         if not isinstance(ack, dict) or ack.get("result") == "duplicate":
             return []  # nothing new
@@ -338,9 +349,9 @@ class AckSpeaker:  # one per process
             out.append(spoken)  # speech first, as before U162
         hit = self._results.pop(ack.get("cmd_id"), None)  # a recording result?
         if hit is not None:
-            cmd, vt_key, turn = hit
-            text = _sentence(CMD_TEACH, cmd, ack)  # the same sentence
-            if text is not None:
+            cmd, vt_key, turn = hit  # the command, its record key, the record
+            text = _result_text(cmd, ack)  # the spoken sentence, or the started one
+            if text is not None:  # None: nothing to put in a record
                 out.append((vt_key, encode_turn(
                     teach_result_turn(turn, ack, text, spoken is not None))))
         return out  # [] when the ack is neither spoken nor a result
@@ -430,32 +441,32 @@ def _teach_event_text(detail: Dict[str, Any]) -> Optional[str]:
     """99 U163: the sentence for one recording report (11 S12A.12
     teach.time_warning, or teach.expired by detail.result), None for any
     other teach event -- those are not spoken. ASCII punctuation (CLAUDE.md 2.2)."""
-    kind = _KIND_CN.get(detail.get("session_kind"), "录制")
-    name = detail.get("name") or ""
-    mins = int(round((detail.get("duration_s") or 0) / 60.0))
-    ev = detail.get("kind")
-    if ev == "teach.time_warning":
+    kind = _KIND_CN.get(detail.get("session_kind"), "录制")  # 路径 / 围栏, as the operator calls it
+    name = detail.get("name") or ""  # the name bound at start
+    mins = int(round((detail.get("duration_s") or 0) / 60.0))  # the configured duration, in minutes
+    ev = detail.get("kind")  # time_warning or expired
+    if ev == "teach.time_warning":  # the 10 / 1 min warnings (U163)
         left = max(1, int(-(-(detail.get("remaining_s") or 0) // 60)))  # whole minutes, rounded up
         return "%s%s的录制还剩%d分钟, 到时会自动结束并保存" % (kind, name, left)
-    if ev != "teach.expired":
+    if ev != "teach.expired":  # other teach events are not spoken
         return None
-    result = detail.get("result")
-    if result == "saved":
+    result = detail.get("result")  # saved / save_failed / discarded / awaiting_name
+    if result == "saved":  # auto-saved under the start name
         n, length = detail.get("point_count"), detail.get("length_m")
         tail = "共%s个点, 长%s米" % (n, int(round(length))) if isinstance(length, (int, float)) else ""
-        if detail.get("session_kind") == "fence":
+        if detail.get("session_kind") == "fence":  # a fence is saved as a draft
             return ("录制已到%d分钟上限, 已自动保存为围栏%s, %s. 围栏没有启用, 需要时请说启用围栏%s"
                     % (mins, name, tail, name))
         return "录制已到%d分钟上限, 已自动保存为路径%s, %s" % (mins, name, tail)
-    if result == "save_failed":
+    if result == "save_failed":  # write failed, data kept (retained)
         why = "名字已被占用" if detail.get("code") == E_NAME_CONFLICT else "写入失败"
         return ("录制已到%d分钟上限, %s%s自动保存失败, %s. 录制数据还在, 请说保存为新的名字, 或者放弃录制"
                 % (mins, kind, name, why))
-    if result == "discarded":
+    if result == "discarded":  # the track did not validate
         return "录制已到%d分钟上限, %s%s的轨迹无效, 没有保存" % (mins, kind, name)
-    if result == "awaiting_name":
+    if result == "awaiting_name":  # an unnamed session: it cannot save itself
         return "录制已到%d分钟上限, 已停止录制. 请说保存为某个名字, 或者放弃录制" % mins
-    return None
+    return None  # an unknown result: said nothing, not guessed
 
 
 def teach_event_frames(data: bytes, voice_turn_key: Optional[str]) -> list:
@@ -469,18 +480,18 @@ def teach_event_frames(data: bytes, voice_turn_key: Optional[str]) -> list:
     operator who started it from the cloud reads its end in the cloud
     session. verdict is accepted for a warning and a save, rejected when the
     recording was not saved (failed / discarded / waiting for a name)."""
-    ev = _json(data)
+    ev = _json(data)  # the event envelope
     detail = ev.get("detail") if isinstance(ev, dict) else None
-    if not isinstance(detail, dict) or detail.get("first") is not True:
+    if not isinstance(detail, dict) or detail.get("first") is not True:  # only the first report of an episode
         return []
-    text = _teach_event_text(detail)
+    text = _teach_event_text(detail)  # None for a report not ours
     if text is None:
         return []
     out = [_speak(text, _RTK_SOURCE)]  # a local announcement
-    if voice_turn_key:
-        issuer = str(detail.get("channel") or "")
-        channel = next((c for p, c in _TEACH_CHANNEL if issuer.startswith(p)), "mic_local")
-        ok = detail.get("kind") == "teach.time_warning" or detail.get("result") == "saved"
+    if voice_turn_key:  # no robot id, no record
+        issuer = str(detail.get("channel") or "")  # the channel that started the recording
+        channel = next((c for p, c in _TEACH_CHANNEL if issuer.startswith(p)), "mic_local")  # mapped onto the voice_turn closed set
+        ok = detail.get("kind") == "teach.time_warning" or detail.get("result") == "saved"  # accepted = a warning or a save
         out.append((voice_turn_key, encode_turn({
             "turn_id": new_turn_id(), "session": SESSION_OF_CHANNEL[channel],
             "channel": channel, "asr_raw": "", "asr_text": "", "corrections": [],
@@ -492,10 +503,19 @@ def teach_event_frames(data: bytes, voice_turn_key: Optional[str]) -> list:
     return out
 
 
+def _result_text(cmd: Dict[str, Any], ack: Dict[str, Any]) -> Optional[str]:
+    """The reply_text of a recording result record (99 U165): the spoken
+    sentence, except an accepted start, which is silent (the turn already said
+    "开始录制 X") and gets "已开始录制 X" so the record always has a text."""
+    if cmd.get("action") == "start" and ack.get("result") == "accepted":  # an accepted start says nothing aloud
+        return _REC_STARTED.format(name=(cmd.get("start") or {}).get("name") or "")  # but its record needs a text
+    return _sentence(CMD_TEACH, cmd, ack)  # the same sentence as spoken
+
+
 def teach_result_turn(turn: Dict[str, Any], ack: Dict[str, Any], text: str,
                       spoken: bool) -> Dict[str, Any]:
-    """The second state/voice_turn record of a recording finish / discard
-    (99 U162): the turn's own record with a new turn_id and the RESULT in it.
+    """The second state/voice_turn record of a recording start / finish /
+    discard (99 U162 / U165): the turn's own record with a new turn_id and the RESULT in it.
 
     Kept from the turn: channel, session, asr_raw / asr_text (what the
     operator sent -- the only way a cloud client can tie it to its request,
@@ -507,12 +527,12 @@ def teach_result_turn(turn: Dict[str, Any], ack: Dict[str, Any], text: str,
     """
     rec = {k: v for k, v in turn.items() if k != "latency_ms"}  # the turn's fields
     accepted = ack.get("result") == "accepted"  # saved / discarded
-    rec.update({"turn_id": new_turn_id(), "bypass": None, "corrections": [],
+    rec.update({"turn_id": new_turn_id(), "bypass": None, "corrections": [],  # a record of its own
                 "verdict": "accepted" if accepted else "rejected",
                 "reject_code": None if accepted else ack.get("code"),
                 "reply_text": text, "reply_kind": "stream" if spoken else "none",
                 "layer": TEACH_RESULT_LAYER, "ts_mono": time.monotonic()})
-    return rec
+    return rec  # the result record
 
 
 def _speak(text: str, source: str) -> Tuple[str, bytes]:
@@ -621,6 +641,9 @@ def _finish_sentence(detail: Dict[str, Any], accepted: bool, code: Any) -> Optio
                           length=int(round(float(applied.get("total_len_m") or 0.0))))
     if accepted:  # an unnamed session waiting for save (HMI path)
         return None  # nothing to say here
+    if detail.get("retained"):  # 99 U165: write failed, data kept in finalizing
+        why = "名字已被占用" if code == E_NAME_CONFLICT else "写入失败"  # as U163 says it
+        return _REC_RETAINED.format(name=detail.get("name") or "", why=why)  # data kept: save under a new name or discard
     if code == E_TEACH_GEOMETRY and detail.get("close_reason") == "invalid_geometry":
         issues = detail.get("issues") or []  # blocking issues
         why = next((_REC_ISSUE[i.get("code")] for i in issues
