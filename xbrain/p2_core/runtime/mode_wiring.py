@@ -101,7 +101,7 @@ def exit_reason_for(cmd: Dict[str, Any]) -> str:
     * 带 stream_id 的 exit_broadcast 只可能来自甲方 AUDIO_CONTROL(v2.0 S2.5
       的退出协议), 是会话发起方自己收的尾 -> requested.
     * 不带 stream_id: 云端文本 C04 -> manual_cloud, 微信 -> manual_wecom;
-      HMI W3 强制退出与本地语音都是现场人员 -> requested.
+      本地语音是现场人员 -> requested.
     """
     if cmd.get("stream_id"):
         return "requested"
@@ -380,7 +380,7 @@ class ModeFace:
         p2 的 _handle_exit_broadcast 不看这个字段 -- 一条晚到的旧会话退出请求
         会把新开的会话关掉. 对不上 -> E_NOT_FOUND(11 S13.7 "引用的对象不存在"),
         detail 回显请求的 stream_id.
-        不带 stream_id 的退出(HMI W3 强制退出 / 云端文本 C04 / 微信)不核:
+        不带 stream_id 的退出(本地语音 / 云端文本 C04 / 微信)不核:
         它们按定义就是"不管哪一路, 都给我停", 正是 VOI-26 兜底路径的语义.
         """
         sid = cmd.get("stream_id")

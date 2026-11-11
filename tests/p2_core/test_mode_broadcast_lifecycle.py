@@ -188,8 +188,7 @@ def test_late_exit_for_the_session_that_already_ended_is_accepted(rig):
 
 
 def test_exit_without_stream_id_is_a_forced_exit(rig):
-    """Voice / cloud text C04 carry no stream_id: they stop whatever is on.
-    (The HMI W3 button that also sent one was removed, 99 U158.)"""
+    """Voice / cloud text C04 carry no stream_id: they stop whatever is on."""
     rig.start()  # enter B (audio-gj001-0001)
     ack = rig.send(cmd_id="c-voice", action="exit_broadcast", source="voice_local")  # C04 voice
     assert ack["result"] == "accepted"  # accepted
@@ -222,7 +221,7 @@ def test_state_mode_carries_source_and_entered_ts(rig):
     ({"stream_id": "audio-gj001-0001", "source": "cloud"}, "requested"),  # AUDIO_CONTROL
     ({"source": "cloud"}, "manual_cloud"),          # C04 typed in the cloud
     ({"source": "wecom"}, "manual_wecom"),  # WeCom
-    ({"source": "hmi"}, "requested"),               # W3 force-exit button
+    ({"source": "voice_local"}, "requested"),       # C04 spoken on site
 ])  # end of table
 def test_exit_reason_names_who_ended_it(rig, exit_body, reason):
     """MUTATION: a constant exit_reason -> at least one row fails."""
@@ -282,7 +281,7 @@ def test_state_mode_carries_the_motion_behavior_p3_yields_on():
                       now_mono_ms=1000)  # enter B
     assert sent[-1]["motion_behavior"] == "hold"  # P3 yields
     face.handle_frame(json.dumps({"cmd_id": "c-2", "action": "exit_broadcast",
-                                  "source": "hmi"}).encode(), now_mono_ms=2000)
+                                  "source": "voice_local"}).encode(), now_mono_ms=2000)
     assert sent[-1]["motion_behavior"] == "normal"  # P3 resumes
 
 
