@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>XBRAIN_V6 GPS 网格地图 HMI</title>
-<link rel="stylesheet" href="hmi.css?v=chlock-1">
+<link rel="stylesheet" href="hmi.css?v=chlock-2">
 </head>
 <body>
 <main class="hmi">
@@ -20,7 +20,7 @@
       <!-- Chassis lock (99 U159): colour and label follow the state/robot
            read-back (hmi.js renderChassisLock). Locked -> deep red, a click arms
            and a second click sends W9 unlock (11 S9.3.4 enable, L2). Unlocked ->
-           teal, clicks do nothing (the system has no lock command). Starts grey
+           green, clicks do nothing (the system has no lock command). Starts grey
            and disabled: nothing is known until the first snapshot. -->
       <button type="button" id="chassisLockBtn" class="chassis-lock-btn unknown"
               title="底盘状态未知" disabled>底盘状态未知</button>

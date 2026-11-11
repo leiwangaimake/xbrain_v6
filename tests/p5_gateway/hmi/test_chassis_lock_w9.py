@@ -95,7 +95,7 @@ def test_built_body_passes_p2s_boot_l1_gate():
 ])
 def test_locked_is_either_tier1_lock(hes_lock, timeout_lock, locked):
     # RED MUTANT: locked = timeout_lock only -> a pressed hardware stop shows
-    # teal "unlocked".
+    # green "unlocked".
     g = data_readers.chassis_lock_group(
         {"hes_lock": hes_lock, "timeout_lock": timeout_lock, "hes": hes_lock})
     assert g["available"] is True and g["locked"] is locked
@@ -117,7 +117,7 @@ def test_derived_locked_field_is_not_trusted():
 ])
 def test_missing_read_back_is_unknown_not_unlocked(robot):
     # RED MUTANT: default a missing lock to False -> available:true,
-    # locked:false -> the button paints teal over an unknown chassis.
+    # locked:false -> the button paints green over an unknown chassis.
     g = data_readers.chassis_lock_group(robot)
     assert g["available"] is False and g["locked"] is None
 

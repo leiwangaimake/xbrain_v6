@@ -1737,16 +1737,16 @@
   }
   // -- chassis lock button (99 U159) ------------------------------------
   // Colour and label are the state/robot READ-BACK, never the click: deep red
-  // 底盘已锁定 while hes_lock or timeout_lock is set, teal 底盘已解锁 when both
+  // 底盘已锁定 while hes_lock or timeout_lock is set, green 底盘已解锁 when both
   // are clear, grey 底盘状态未知 when P5 has no fresh state/robot. So an unlock
-  // from anywhere else (commx 「解锁」, the cloud) turns the button teal on the
+  // from anywhere else (commx 「解锁」, the cloud) turns the button green on the
   // next snapshot, and an accepted unlock that did NOT clear the lock (the
   // hardware stop still pressed, 11 S9.3.4 E-2) leaves it red -- BOOT-L3:
   // only the read-back says the lock is gone.
   //
   // Clicks: red -> the first click ARMS (再点确认解锁, CHASSIS_ARM_MS) and the
   // second sends W9 with confirm.level L2 (S9.3.4 E-1: enable is a loosening
-  // command). Teal -> nothing: the contract has no lock command (a lock only
+  // command). Green -> nothing: the contract has no lock command (a lock only
   // comes from the hardware stop or a command timeout, S9.12.2).
   // <chassis-lock-view>
   function chassisLockView(cl) {
@@ -1793,7 +1793,7 @@
   }
   function onChassisLockClick() {
     const v = chassisLockView(chassisLock);
-    if (v.cls !== "locked") return;      // teal / grey: no action exists
+    if (v.cls !== "locked") return;      // green / grey: no action exists
     if (!chassisArmed) {
       chassisArmed = true;
       chassisArmTimer = setTimeout(() => { disarmChassis(); renderChassisLock(chassisLock); },

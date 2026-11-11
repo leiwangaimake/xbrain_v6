@@ -8,10 +8,10 @@ Brief: HMI chassis-lock button states (99 U159) -- hmi.js chassisLockView under 
 Description:
 Guards the three button states the frontend draws from the state/robot read-back
 (17 S6.10.1A): locked (hes_lock or timeout_lock) -> deep red "底盘已锁定" and
-clickable; unlocked -> teal "底盘已解锁", clickable but with no action (the
+clickable; unlocked -> green "底盘已解锁", clickable but with no action (the
 contract has no lock command); no read-back -> grey "底盘状态未知", disabled.
 The load-bearing row is the last: a missing state/robot must never be drawn as
-teal, or a chassis nobody has heard from looks safe to drive.
+green, or a chassis nobody has heard from looks safe to drive.
 
 How it runs. chassisLockView lives in the browser bundle, so the test cuts the
 block between the `// <chassis-lock-view>` markers out of hmi.js and evaluates
@@ -65,7 +65,7 @@ def test_markers_present():
 
 def test_locked_is_deep_red_and_clickable():
     # RED MUTANT: return cls "unlocked" for locked:true -> the operator sees
-    # teal over a locked chassis and never finds the unlock.
+    # green over a locked chassis and never finds the unlock.
     (v,) = _views([{"available": True, "locked": True,
                     "hes_lock": False, "timeout_lock": True}])
     assert v["cls"] == "locked" and v["text"] == "底盘已锁定"
@@ -95,7 +95,7 @@ def test_unlocked_is_teal():
     {"available": True, "locked": None},             # malformed: no boolean
 ])
 def test_unknown_is_grey_and_disabled_never_teal(cl):
-    # RED MUTANT: treat a missing lock as false (`!!cl.locked`) -> teal
+    # RED MUTANT: treat a missing lock as false (`!!cl.locked`) -> green
     # "unlocked" over a chassis nobody has heard from.
     (v,) = _views([cl])
     assert v["cls"] == "unknown" and v["text"] == "底盘状态未知"

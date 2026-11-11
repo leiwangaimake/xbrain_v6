@@ -231,7 +231,7 @@ def chassis_lock_group(robot: Optional[Dict[str, Any]]) -> Dict[str, Any]:
 
     No state/robot, or a frame missing either lock field -> available False and
     locked None: the button shows "unknown". Defaulting a missing lock to
-    False would paint a teal "unlocked" over a chassis nobody has heard from.
+    False would paint a green "unlocked" over a chassis nobody has heard from.
     hes rides along so the frontend can say WHY an unlock will not clear
     (S9.3.4 E-2: hes_lock only clears once the hardware stop is released).
     """

@@ -80,7 +80,8 @@ body { margin: 0; overflow: hidden; background: var(--bg); color: var(--ink);
 
 /* Chassis lock button (99 U159). Same box, font and white label as the ESTOP
    button (user 2026-11-11); only the fill says the state: deep red = locked
-   (a click arms, a second click sends the unlock), teal = unlocked (no click
+   (a click arms, a second click sends the unlock), emerald green = unlocked, the
+   traffic-light green (user 2026-11-11, replacing the first teal) (no click
    action: the system has no lock command), grey = state/robot unknown or the
    link is down. hmi.js renderChassisLock sets the class from the read-back. */
 .chassis-lock-btn { margin-left: 8px; padding: 8px 20px; border: 2px solid transparent;
@@ -89,7 +90,7 @@ body { margin: 0; overflow: hidden; background: var(--bg); color: var(--ink);
 .chassis-lock-btn.locked:hover:not(:disabled) { background: #a00000; }
 .chassis-lock-btn.locked.confirm { animation: chassis-lock-arm 1s ease-in-out infinite; }
 @keyframes chassis-lock-arm { 50% { box-shadow: 0 0 0 4px rgba(255,255,255,.35); } }
-.chassis-lock-btn.unlocked { background: #11a89a; border-color: #2fd0c0; cursor: default; }
+.chassis-lock-btn.unlocked { background: #10a83c; border-color: #34d05f; cursor: default; }
 .chassis-lock-btn.unknown,
 .chassis-lock-btn:disabled { background: #7a7a7a; border-color: #9a9a9a; color: #e8e8e8;
   cursor: not-allowed; }
