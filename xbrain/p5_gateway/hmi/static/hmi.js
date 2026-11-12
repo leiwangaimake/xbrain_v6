@@ -622,7 +622,7 @@
     renderChassisLock((snap.status || {}).chassis_lock || {});   // 99 U159
     renderBattery(snap.battery || {});                            // 99 U160
     renderHeading(snap.pose || {});
-    renderTeach(snap.teach || {}, origin);
+    renderTeach(snap.teach || {}, origin, snap.pose || {});
     renderGotoPins();                     // W2 target dot(s), fixed screen size
     followGoto(plans);                    // done / failed -> dot off, banner
     // Task state changed -> pull the panel now rather than on the 4 s poll, so
@@ -652,7 +652,7 @@
     arming: "准备中", closed: "已结束", idle: "无录制",
   };
 
-  function renderTeach(teach, origin) {
+  function renderTeach(teach, origin, pose) {
     const badge = $("teachBadge");
     clear("teachLayer");
     const live = teach.available &&
@@ -674,20 +674,22 @@
       // 与上一个几乎相同, 按坐标去重会把 F05 手动打的点吃掉).
       if (xy) { teachTrail.push(xy); teachSeq = lp.seq; }
     }
-    if (teachTrail.length >= 2) {
-      const pts = teachTrail.map((p) => p[0] + "," + p[1]).join(" ");
-      $("teachLayer").appendChild(polyline("teach-trail", pts, null));
-    }
-    for (const p of teachTrail) {
-      $("teachLayer").appendChild(dot(p[0], p[1], null, "teach-point"));
-    }
-    if (teachTrail.length) {
-      // 当前点单独画大一圈, 让操作员一眼看到"录到这儿了".
-      const head = teachTrail[teachTrail.length - 1];
-      const c = document.createElementNS(SVGNS, "circle");
-      c.setAttribute("cx", head[0]); c.setAttribute("cy", head[1]);
-      c.setAttribute("class", "teach-head");
-      $("teachLayer").appendChild(c);
+    // 2026-11-12 (用户): 录制中的轨迹只画折线, 粗细与已录制路径相同 (同一个
+    // 配置 route.recorded.line.width_px, lineStroke 按 x2 画成屏幕 7 px, CSS
+    // non-scaling-stroke 保证缩放不变粗); 颜色仍是录制粉 (CSS --teach-color
+    // 覆盖 lineStroke 写的绿色). 折线末端接到机器人当前位置, 让线一直连到红色
+    // 三角 -- 采点 1 Hz, 不接的话线头总落后机器人一截.
+    // ~~每个采样点画一个半径 1 m 的圆点, 当前点再画一个 r=4 m 的圆圈~~ -- 被替代
+    // (2026-11-12): 两者都按地图米制画, 放大后圆点连成一条很粗的粉带, 圆圈变成
+    // 盖住机器人的大粉圈 (用户截图).
+    const livePts = teachTrail.slice();
+    const rxy = (pose && pose.available && pose.lat != null)
+      ? toXY({ lat: pose.lat, lon: pose.lon }, origin) : null;
+    if (rxy && livePts.length) livePts.push(rxy);  // the line reaches the triangle
+    if (livePts.length >= 2) {
+      const pts = livePts.map((p) => p[0] + "," + p[1]).join(" ");
+      $("teachLayer").appendChild(
+        polyline("teach-trail", pts, ((cfg.route || {}).recorded || {}).line));
     }
     badge.hidden = false;
     $("teachDot").className = "teach-dot " + teach.state;
@@ -876,9 +878,9 @@
     const c = document.createElementNS(SVGNS, "circle");
     c.setAttribute("cx", x); c.setAttribute("cy", y);
     c.setAttribute("r", 1);
-    // cls lets a caller take the colour from CSS instead of an inline fill --
-    // the teach trail does, so its colour lives beside the other route colours
-    // rather than as a literal in here.
+    // cls lets a caller take the colour from CSS instead of an inline fill
+    // (the keypoint discs do). ~~the teach trail does~~ -- it draws no dots
+    // since 2026-11-12, only a polyline.
     c.setAttribute("class", cls || "geo-dot");
     if (!cls) c.setAttribute("fill", color || "#3aa0ff");
     return c;

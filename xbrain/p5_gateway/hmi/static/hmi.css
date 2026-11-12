@@ -451,10 +451,14 @@ body.controls-offline .goto-send { opacity: 0.35; pointer-events: none; }
    让它看起来像已保存的路径会误导操作员.  */
 :root { --teach-color: #ff7ad9; }
 
-.teach-trail { fill: none; stroke: var(--teach-color); stroke-width: 2;
-               stroke-dasharray: 6 4; stroke-linejoin: round; }
-.teach-point { fill: var(--teach-color); }
-.teach-head  { r: 4; fill: none; stroke: var(--teach-color); stroke-width: 2; }
+.teach-trail { fill: none; stroke: var(--teach-color); stroke-linejoin: round;
+               stroke-linecap: round; vector-effect: non-scaling-stroke; }
+/* 2026-11-12 (user): the width comes from route.recorded.line (hmi.js passes
+   it to lineStroke), solid like a recorded route.
+   ~~stroke-width: 2; stroke-dasharray: 6 4~~ and the ~~.teach-point~~ dots and
+   the ~~.teach-head r: 4~~ ring are gone: both were sized in map metres, so
+   zoomed in the dots merged into a thick pink band and the ring covered the
+   robot (user screenshot). */
 
 .teach-badge { right: 10px; bottom: 10px; display: grid; gap: 4px;
                padding: 8px 10px; min-width: 190px; }
