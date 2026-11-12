@@ -248,3 +248,30 @@ def test_g23_counts_waypoints_named_as_docks():  # 2026-11-05 runtime test
             "waypoints": [{"geo_id": "w-d", "name": "1号充电站"}, {"geo_id": "w-1", "name": "1号测试点"}]}
     a = sa.status_answer("G23", _with([("state/geo/objects", objs)]), TPL, NOW, max_age_ms=AGE)  # answer
     assert a.known and a.text == "共有1个充电桩:1号充电站"  # the named dock, not the keypoint
+
+
+# 2026-11-12 (user ruling 2026-11-06): G01 spoke the raw fix_type ("rtk_fixed")
+# because the word table was keyed "fixed" / "float" / "single". Mutants: key
+# the table by the old ids again (every case below fails), or drop the closed-
+# set guard (test_g01_unknown_fix_is_unreadable fails).
+@pytest.mark.parametrize("fix,said", [("rtk_fixed", "当前定位固定"),
+                                      ("rtk_float", "当前定位浮点"),
+                                      ("dgps", "当前定位差分"),
+                                      ("single", "当前定位单点")])
+def test_g01_speaks_the_fix_in_chinese(fix, said):  # every fix_type with a position
+    pose = {"fix_type": fix, "lat": 31.0916302, "lon": 121.5336327}
+    ans = sa.position_answer(_with([("state/pose", pose)]), TPL, NOW, max_age_ms=AGE)
+    assert ans.text == said + ",纬度31.091630,经度121.533633"  # wording + 6 decimals
+    assert "rtk" not in ans.text and "_" not in ans.text  # no raw id read out
+
+
+def test_g01_no_fix_and_unknown_fix():  # the two honest branches
+    no_fix = {"fix_type": "no_fix", "lat": None, "lon": None}
+    ans = sa.position_answer(_with([("state/pose", no_fix)]), TPL, NOW, max_age_ms=AGE)
+    assert ans.text == TPL["query_position"]["no_fix"]  # no position said
+
+
+def test_g01_unknown_fix_is_unreadable():  # outside the closed set
+    pose = {"fix_type": "ppp", "lat": 31.09, "lon": 121.53}
+    ans = sa.position_answer(_with([("state/pose", pose)]), TPL, NOW, max_age_ms=AGE)
+    assert ans.known is False and "ppp" not in ans.text  # never spoken raw

@@ -79,7 +79,13 @@ _TASK_WORDS = {"patrol": "巡逻", "goto": "前往目标点", "return_home": "�
                "charge": "回桩充电", "follow": "跟随", "standby": "待命", "teach": "路径录制"}  # id -> spoken label
 _TASK_STATE_WORDS = {"running": "执行中", "ready": "排队中", "suspended": "已挂起",
                      "pending": "待执行", "paused": "已暂停"}  # id -> spoken label
-_FIX_WORDS = {"single": "单点定位", "float": "RTK 浮点解", "fixed": "RTK 固定解"}
+# G01 fix_type -> spoken quality (11 S3.3 PoseState closed set; no_fix is the
+# no_fix branch). User ruling 2026-11-06: "当前定位固定" for rtk_fixed, the
+# other levels in the same words. Until 2026-11-12 the keys were "single" /
+# "float" / "fixed", which match no fix_type value, so .get(fix, fix) spoke
+# the raw id ("rtk_fixed") in English on every answer.
+_FIX_WORDS = {"rtk_fixed": "当前定位固定", "rtk_float": "当前定位浮点",
+              "dgps": "当前定位差分", "single": "当前定位单点"}
 _PTZ_HOLDER_WORDS = {"manual_cloud": "人工操控", "auto_track": "报警或喊话模式的自动跟踪",
                      "preset_patrol": "预置位巡视"}  # id -> spoken label
 
@@ -244,7 +250,9 @@ def position_answer(cache, t, now_mono_ms, *, max_age_ms) -> QueryAnswer:  # one
     fix = str(p.get("fix_type"))  # value used below
     if p.get("lat") is None or p.get("lon") is None or fix == "no_fix":  # no usable value: take the honest branch
         return QueryAnswer(True, _say(t, "query_position", "no_fix"))  # answer built from the live field
-    return QueryAnswer(True, _say(t, "query_position", "ok", fix=_FIX_WORDS.get(fix, fix),  # answer built from the live field
+    if fix not in _FIX_WORDS:  # outside the closed set: never spoken raw (CLAUDE.md 3.5)
+        return _unreadable(t, "位置")  # result to the caller
+    return QueryAnswer(True, _say(t, "query_position", "ok", fix=_FIX_WORDS[fix],  # answer built from the live field
                                   lat="%.6f" % p["lat"], lon="%.6f" % p["lon"]))
 
 
