@@ -109,6 +109,13 @@ _RESULT_TO_TURN = frozenset({"start", "finish", "discard", "mark_once"})  # star
 #: The layer value of such a record (the user-ruled extra field of 11 S8.7.6):
 #: tells "the result of an earlier turn" apart from a turn of its own.
 TEACH_RESULT_LAYER = "teach_result"  # voice_turn.layer of the result record
+#: 99 U169 (user 2026-11-12): every OTHER command result P4 words -- an
+#: executor refusal on cmd/task / cmd/geo / cmd/motion/intent / a teach action,
+#: a clear_queue count, an accepted task that later failed -- also goes out as a
+#: second voice_turn record. Until then those were spoken only (update_cloud.md
+#: S8.7): the cloud and commx, which read voice_turn, saw the turn's "好的, ..."
+#: and never the refusal; a silent text turn (no TTS) got no answer at all.
+COMMAND_RESULT_LAYER = "command_result"  # voice_turn.layer of those records
 
 #: The answer keys this speaker subscribes, one per command key (11 S2.2.4).
 ACK_KEYS = tuple(k + "/ack" for k in (CMD_TEACH, CMD_TASK, CMD_GEO,
@@ -164,6 +171,12 @@ _TEACH_REFUSED = {
     E_GEO_INVALID: "{name}没有记录, 充电桩和充电站必须在某条路径5米以内",
 }
 _SNAP_AGE = "{name}没有记录, 位置快照已过期, 请再说一遍"  # 18 PS-6 snap_age
+#: 99 U169 (user 2026-11-12, "语音回复失败的语言你来组织"): a 充电站 / 充电桩
+#: capture off every route (P3 E_GEO_INVALID dock_off_route, 99 U146) says how
+#: far the nearest route is, the limit, and what to do. limit / distance come
+#: from P3's detail (limit_m = its route_membership_m), never a typed-in 5.
+_DOCK_OFF_ROUTE = "{name}没有保存: 这里离最近的路径有{d}米, 充电站和充电桩必须{rule}. 请走到路径旁边再说一次"
+_DOCK_NO_ROUTE = "{name}没有保存: 还没有任何路径, 充电站和充电桩必须建在路径旁边. 请先录制路径"
 _TEACH_OTHER = "{name}没有记录成功"  # any other code
 _STORED = "已记录{name}"  # accepted
 _STORED_NO_HEADING = "已记录{name}, 没有记下朝向"  # accepted, warn no_heading
@@ -288,10 +301,15 @@ class AckSpeaker:  # one per process
     """Remembers this process's command frames and voices their answers."""
 
     def __init__(self) -> None:  # empty
-        # cmd_id -> (command key, what to say it about, speak source).
-        self._pending: "OrderedDict[str, Tuple[str, Dict[str, Any], str]]" = OrderedDict()
-        # task_id -> (spoken task name, speak source) of accepted submits (FS-1).
-        self._tasks: "OrderedDict[str, Tuple[str, str]]" = OrderedDict()
+        # cmd_id -> (command key, what to say it about, speak source). source
+        # None = the turn was silent (99 U169): answered as a record, not aloud.
+        self._pending: "OrderedDict[str, Tuple[str, Dict[str, Any], Optional[str]]]" = OrderedDict()
+        # task_id -> (spoken task name, speak source, turn record) of accepted
+        # submits (FS-1); the record is (voice_turn key, record) or None.
+        self._tasks: "OrderedDict[str, Tuple[str, Optional[str], Any]]" = OrderedDict()
+        # 99 U169: cmd_id -> (voice_turn key, that turn's record) of every
+        # command a turn sent, so a worded result can go out as a record.
+        self._turns: "OrderedDict[str, Tuple[str, Dict[str, Any]]]" = OrderedDict()
         # 99 U162: cmd_id -> (command, voice_turn key, that turn's record) for
         # a recording finish / discard, kept whether or not the turn spoke.
         self._results: "OrderedDict[str, Tuple[Dict[str, Any], str, Dict[str, Any]]]" = OrderedDict()
@@ -311,8 +329,10 @@ class AckSpeaker:  # one per process
                 if isinstance(speak, dict) and isinstance(speak.get("source"), str):
                     source = speak["source"]  # tts_local / tts_cloud / ...
                     break  # the first reply is the turn's
-        if source is None:
-            return  # a silent turn stays silent
+        # 99 U169: a silent turn (no TTS) is remembered too, with source None:
+        # its result is not spoken, but it still goes out as a record.
+        turn = next(((k, _json(d)) for k, d in pairs
+                     if k.endswith("/state/voice_turn")), None)  # the turn's record
         for key, data in pairs:  # find the commands
             if key not in (CMD_TEACH, CMD_TASK, CMD_GEO, CMD_MOTION_INTENT):
                 continue  # not a command this speaker answers for
@@ -325,6 +345,10 @@ class AckSpeaker:  # one per process
             self._pending[cmd["cmd_id"]] = (key, cmd, source)  # newest last
             while len(self._pending) > _PENDING_MAX:  # bounded
                 self._pending.popitem(last=False)  # drop the oldest
+            if turn is not None and isinstance(turn[1], dict):  # 99 U169
+                self._turns[cmd["cmd_id"]] = turn  # the record to answer under
+                while len(self._turns) > _PENDING_MAX:  # bounded
+                    self._turns.popitem(last=False)  # drop the oldest
 
     def _note_results(self, pairs: Iterable[Tuple[str, bytes]]) -> None:
         """99 U162 / U165: remember a recording start / finish / discard, or a
@@ -354,46 +378,86 @@ class AckSpeaker:  # one per process
         if not isinstance(ack, dict) or ack.get("result") == "duplicate":
             return []  # nothing new
         out = []  # in publish order: speech, then the record
-        spoken = self.on_ack(data)  # the existing spoken answer, or None
+        cmd_id = ack.get("cmd_id")  # the only link back to the turn
+        text, source = self._answer(ack)  # the worded result, where to say it
+        spoken = _speak(text, source) if (text is not None and source) else None
         if spoken is not None:  # nothing spoken when the turn was silent
             out.append(spoken)  # speech first, as before U162
-        hit = self._results.pop(ack.get("cmd_id"), None)  # a recording result?
+        turn_ref = self._turns.pop(cmd_id, None)  # 99 U169: the turn's record
+        hit = self._results.pop(cmd_id, None)  # a recording result?
         if hit is not None:
             cmd, vt_key, turn = hit  # the command, its record key, the record
             text = _result_text(cmd, ack)  # the spoken sentence, or the started one
             if text is not None:  # None: nothing to put in a record
                 out.append((vt_key, encode_turn(
                     teach_result_turn(turn, ack, text, spoken is not None))))
+        elif text is not None and turn_ref is not None:  # 99 U169: any other worded result
+            out.append((turn_ref[0], encode_turn(result_turn(
+                turn_ref[1], ack.get("result") == "accepted", ack.get("code"),
+                text, spoken is not None, COMMAND_RESULT_LAYER))))
         return out  # [] when the ack is neither spoken nor a result
 
     def on_ack(self, data: bytes) -> Optional[Tuple[str, bytes]]:
-        """The (key, frame) to publish for one ack, or None."""
+        """The spoken (key, frame) for one ack, or None (no record: on_ack_frames)."""
         ack = _body(_json(data))  # S7.7 Ack shape
         if not isinstance(ack, dict) or ack.get("result") == "duplicate":
             return None  # nothing new to say
+        text, source = self._answer(ack)  # the worded result, where to say it
+        self._turns.pop(ack.get("cmd_id"), None)  # answered: forget the record link
+        if text is None or not source:
+            return None  # accepted (the turn said it), or a silent turn
+        return _speak(text, source)  # on the turn's source
+
+    def _answer(self, ack: Dict[str, Any]) -> Tuple[Optional[str], Optional[str]]:
+        """(sentence or None, speak source or None) for one of our acks; pops it."""
         hit = self._pending.pop(ack.get("cmd_id"), None)  # ours?
         if hit is None:
-            return None  # another initiator's, or already answered
+            return None, None  # another initiator's, or already answered
         key, cmd, source = hit  # what was sent, where to say it
         if key == CMD_TASK and cmd.get("action") == "submit" and ack.get("result") == "accepted":
             self._remember_task(cmd, ack, source)  # FS-1: its outcome may follow
-        text = _sentence(key, cmd, ack)  # one sentence, or None
-        if text is None:
-            return None  # accepted: the turn already said it
-        return _speak(text, source)  # on the turn's source
+        return _sentence(key, cmd, ack), source  # None when nothing more to say
 
-    def _remember_task(self, cmd: Dict[str, Any], ack: Dict[str, Any], source: str) -> None:
+    def _remember_task(self, cmd: Dict[str, Any], ack: Dict[str, Any],
+                       source: Optional[str]) -> None:
         """FS-1: remember an accepted submit under the task_id P3 gave it."""
         detail = ack.get("detail") if isinstance(ack.get("detail"), dict) else {}
         task_id = detail.get("task_id")  # P3 allocates (11 S7.2)
         if not isinstance(task_id, str) or not task_id:
             return  # nothing to match an event to
-        self._tasks[task_id] = (_task_label(cmd.get("task")), source)  # newest last
+        turn_ref = self._turns.get(ack.get("cmd_id"))  # 99 U169: its turn's record
+        self._tasks[task_id] = (_task_label(cmd.get("task")), source, turn_ref)  # newest last
         while len(self._tasks) > _PENDING_MAX:  # bounded, like the commands
             self._tasks.popitem(last=False)  # drop the oldest
 
+    def on_task_event_frames(self, data: bytes) -> "list":
+        """FS-2 + 99 U169: speech (when the submitting turn spoke) and a
+        command_result record for an accepted task that later failed."""
+        ev = _json(data)  # Event shape (S6.1)
+        detail = ev.get("detail") if isinstance(ev, dict) else None
+        if not isinstance(detail, dict):
+            return []  # not an event
+        kind = detail.get("kind")  # accepted / started / completed / failed / ...
+        if kind not in ("failed", "rejected", "completed", "cancelled"):
+            return []  # not an outcome
+        hit = self._tasks.pop(detail.get("task_id"), None)  # ours? (forgotten either way)
+        if hit is None or kind in ("completed", "cancelled"):
+            return []  # another initiator's, or nothing to say (FS-2)
+        label, source, turn_ref = hit  # the name, where to say it, its record
+        why = _fail_why(kind, detail.get("error"))  # FS-4
+        text = (_TASK_FAILED.format(label=label, why=why) if why
+                else _TASK_FAILED_BARE.format(label=label))  # FS-3
+        out = [_speak(text, source)] if source else []  # silent turn: no speech
+        if turn_ref is not None:  # the cloud reads this one
+            err = detail.get("error") if isinstance(detail.get("error"), dict) else {}
+            out.append((turn_ref[0], encode_turn(result_turn(
+                turn_ref[1], False, err.get("code"), text, bool(source),
+                COMMAND_RESULT_LAYER))))
+        return out  # speech, then the record
+
     def on_task_event(self, data: bytes) -> Optional[Tuple[str, bytes]]:
-        """FS-2: the (key, frame) to publish for one 11 S6.2 task event, or None."""
+        """FS-2: the spoken (key, frame) for one 11 S6.2 task event, or None
+        (the record goes through on_task_event_frames)."""
         ev = _json(data)  # Event shape (S6.1)
         detail = ev.get("detail") if isinstance(ev, dict) else None
         if not isinstance(detail, dict):
@@ -404,7 +468,9 @@ class AckSpeaker:  # one per process
         hit = self._tasks.pop(detail.get("task_id"), None)  # ours? (forgotten either way)
         if hit is None or kind in ("completed", "cancelled"):
             return None  # another initiator's, or nothing to say (FS-2)
-        label, source = hit  # the name and where to say it
+        label, source, _turn_ref = hit  # the name and where to say it
+        if not source:
+            return None  # a silent turn: the record only (on_task_event_frames)
         why = _fail_why(kind, detail.get("error"))  # FS-4
         text = (_TASK_FAILED.format(label=label, why=why) if why
                 else _TASK_FAILED_BARE.format(label=label))  # FS-3
@@ -535,14 +601,42 @@ def teach_result_turn(turn: Dict[str, Any], ack: Dict[str, Any], text: str,
     reply_kind, layer = teach_result, ts_mono. Measured latencies are the
     turn's and are not copied.
     """
+    return result_turn(turn, ack.get("result") == "accepted", ack.get("code"),
+                       text, spoken, TEACH_RESULT_LAYER)  # saved / discarded = accepted
+
+
+def result_turn(turn: Dict[str, Any], accepted: bool, code: Any, text: str,
+                spoken: bool, layer: str) -> Dict[str, Any]:
+    """A second voice_turn record carrying a RESULT (teach_result: 99 U162 /
+    U165 / U167; command_result: 99 U169). Kept from the turn: channel,
+    session, asr_raw / asr_text (the only tie to the request -- 11 S8.7.6 has
+    no request id), intent, auth_level. Replaced: turn_id, verdict, reject_code,
+    reply_text (the result sentence), reply_kind, layer, ts_mono. The turn's
+    measured latencies are not copied."""
     rec = {k: v for k, v in turn.items() if k != "latency_ms"}  # the turn's fields
-    accepted = ack.get("result") == "accepted"  # saved / discarded
     rec.update({"turn_id": new_turn_id(), "bypass": None, "corrections": [],  # a record of its own
                 "verdict": "accepted" if accepted else "rejected",
-                "reject_code": None if accepted else ack.get("code"),
+                "reject_code": None if accepted else code,
                 "reply_text": text, "reply_kind": "stream" if spoken else "none",
-                "layer": TEACH_RESULT_LAYER, "ts_mono": time.monotonic()})
+                "layer": layer, "ts_mono": time.monotonic()})
     return rec  # the result record
+
+
+def _num(v: Any) -> Optional[str]:
+    """A spoken number: 13.5 -> "13.5", 5.0 -> "5"; None when not a number."""
+    if isinstance(v, bool) or not isinstance(v, (int, float)):
+        return None  # absent / not a number
+    return "%g" % round(float(v), 1)  # one decimal at most, no trailing .0
+
+
+def _dock_off_route(name: str, detail: Dict[str, Any]) -> str:
+    """99 U169: the refusal of a dock capture off every route, in words."""
+    d = _num(detail.get("distance_m"))  # None: there is no route at all
+    if d is None:
+        return _DOCK_NO_ROUTE.format(name=name)  # record a route first
+    limit = _num(detail.get("limit_m"))  # the configured membership distance
+    rule = ("在路径%s米以内" % limit) if limit else "建在路径旁边"  # never an invented number
+    return _DOCK_OFF_ROUTE.format(name=name, d=d, rule=rule)  # how far, and the rule
 
 
 def _speak(text: str, source: str) -> Tuple[str, bytes]:
@@ -604,6 +698,8 @@ def _sentence(key: str, cmd: Dict[str, Any], ack: Dict[str, Any]) -> Optional[st
             return (_STORED_NO_HEADING if "no_heading" in warn else _STORED).format(name=said)
         if detail.get("item") == "snap_age":
             return _SNAP_AGE.format(name=name)  # the snapshot, not the fix
+        if code == E_GEO_INVALID and detail.get("reason") == "dock_off_route":
+            return _dock_off_route(name, detail)  # 99 U169: distance, limit, what to do
         return _TEACH_REFUSED.get(code, _TEACH_OTHER).format(name=name)  # by code
     if (key == CMD_TASK and accepted and cmd.get("action") == "clear_queue"
             and cmd.get("filter") == {"state": "scheduled"}):

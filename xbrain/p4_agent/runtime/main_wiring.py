@@ -391,8 +391,8 @@ def run_voice_loop_wiring(cfg: TurnLoopConfig,
                 data = bytes(sample.payload)
 
                 def _job() -> None:
-                    out = ack_speaker.on_task_event(data)
-                    if out is not None:
+                    # speech + (99 U169) a command_result voice_turn record
+                    for out in ack_speaker.on_task_event_frames(data):
                         _publish(*out)
                 try:
                     jobs.put_nowait(_job)

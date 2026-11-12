@@ -674,7 +674,9 @@ def test_a_refused_capture_is_published_as_rejected():
     assert [k for k, _ in out] == ["cmd/audio/speak", _VT_KEY]  # speech, then record
     (rec,) = _turns(out)  # exactly one result record
     assert rec["verdict"] == "rejected" and rec["reject_code"] == "E_GEO_INVALID"  # by code, not by text
-    assert rec["reply_text"] == "2号充电站没有记录, 充电桩和充电站必须在某条路径5米以内"  # the spoken reason
+    # 99 U169 wording (distance from P3's detail; no limit_m in this ack)
+    assert rec["reply_text"] == ("2号充电站没有保存: 这里离最近的路径有13.5米, "
+                                 "充电站和充电桩必须建在路径旁边. 请走到路径旁边再说一次")
 
 
 
