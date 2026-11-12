@@ -196,10 +196,13 @@
   //  * robot: the arrow is bright red; 3x the old half-length 9 px (27 px), then
   //    halved (13.5 px), then a third larger, all the same day -> 18 px on screen,
   //    constant over zoom like before.
-  const KEYPOINT_DOT_PX_FALLBACK = 11.0;    // circle radius, screen px (ring centre)
-  const KEYPOINT_RING_PX_FALLBACK = 2.0;    // ring width, screen px
+  //  * 2026-11-12 (user): every disc twice as large again (outer 12 -> 24 px) with
+  //    the red ring twice as thick (2 -> 4 px): r 22 + 4 / 2 = 24; the robot arrow
+  //    twice as large (18 -> 36 px). ~~11.0 / 2.0 / 18~~ superseded.
+  const KEYPOINT_DOT_PX_FALLBACK = 22.0;    // circle radius, screen px (ring centre)
+  const KEYPOINT_RING_PX_FALLBACK = 4.0;    // ring width, screen px
   const MARK_RED_FALLBACK = "#ff1f1f";      // bright red
-  const ROBOT_ARROW_PX_FALLBACK = 18;       // arrow half-length, screen px (old 9)
+  const ROBOT_ARROW_PX_FALLBACK = 36;       // arrow half-length, screen px (old 9)
   const DOCK_FILL_FALLBACK = "#ffd400";     // charging point disc: yellow
   const HOME_FILL_FALLBACK = "#22c55e";     // return-home disc: green
   const DISC_OUTLINE_FALLBACK = "#1a1a1a";  // 1 px dark edge on yellow / green
@@ -225,7 +228,7 @@
   }
 
   // 2026-11-12 (user): every waypoint disc is the same size (outer radius =
-  // radius_px + ring_px / 2, 12 px); a charging point (type dock) is a yellow
+  // radius_px + ring_px / 2; 12 px, doubled the same day to 24 px); a charging point (type dock) is a yellow
   // disc carrying the number of its name ("1号充电站" -> 1), the return-home
   // point (type home) a green disc, any other point the white disc with the red
   // ring. Yellow and green get a 1 px dark outline inside the same outer radius,
@@ -259,9 +262,13 @@
     }
     return { kind, num };
   }
-  // The number's font size in screen px: two digits fit a 24 px disc at 14 px,
-  // three or more drop to 10 px.
-  function numFontPx(num) { return num.length <= 2 ? 14 : 10; }
+  // The number's font size in screen px, scaled with the disc (user 2026-11-12:
+  // a larger disc, a larger number). At the first disc size (outer radius 12 px)
+  // two digits fit at 14 px and three or more at 10 px; the same proportions
+  // hold for any outer radius, so the doubled 24 px disc gets 28 / 20 px.
+  function numFontPx(num, outerPx) {
+    return Math.round((num.length <= 2 ? 14 : 10) * outerPx / 12);
+  }
 
   // The arrow's corners in map units: (x, y) its centre, a the rotation (0 =
   // pointing north, i.e. screen up), s the half-length in map units.
@@ -521,7 +528,7 @@
     const dr = ((outer - ms.discOutlinePx / 2) * mpp).toFixed(3);
     svg.querySelectorAll("circle.keypoint-disc").forEach((c) => c.setAttribute("r", dr));
     svg.querySelectorAll("text.keypoint-num").forEach((t) => {
-      t.style.fontSize = (numFontPx(t.textContent) * mpp).toFixed(3) + "px"; });
+      t.style.fontSize = (numFontPx(t.textContent, outer) * mpp).toFixed(3) + "px"; });
     sizeGotoPins();                        // W2 target dots: constant screen size
   }
 
@@ -793,14 +800,13 @@
       const rlayer = realtime ? "realtimeTrajectoryLayer" : "recordedRouteLayer";
       $(rlayer).appendChild(
         polyline(realtime ? "realtime-trajectory" : "recorded-route", pts, rline));
-      // req1 (2026-08-18): a round dot at EVERY RTK point on the route, coloured
-      // the route line. Constant screen size (updateGridAndDots), so visible even
-      // on the ~5km fit view. The points stay un-labelled (route points have no
-      // names); only keypoints carry a name.
-      for (const p of (r.points || [])) {
-        const pxy = toXY(p, origin);
-        if (pxy) $(rlayer).appendChild(dot(pxy[0], pxy[1], rline.color));
-      }
+      // 2026-11-12 (user): a route is the polyline alone, as thick as the old
+      // point dots were wide (2 x DOT_PX = 7 screen px; lineStroke doubles the
+      // configured width, so route.recorded.line.width_px is 3.5).
+      // ~~a round dot at EVERY RTK point on the route (req1, 2026-08-18)~~
+      // superseded. A tap still snaps to the nearest route point (pickGotoTarget,
+      // snap_px); recorded points are about 0.55 m apart, so a tap on the line
+      // lands within snap_px of one at any normal zoom.
       // Route name label at its first vertex -- unified bright white (CSS).
       if (r.name && r.points && r.points[0]) {
         const rxy = toXY(r.points[0], origin);
@@ -2146,7 +2152,7 @@
     if (!t) {
       gotoCandidate = null;
       renderGotoPins();
-      showBanner("warn", "导航位置不正确: 只能选择路径上的点 (路径线上的圆点) "
+      showBanner("warn", "导航位置不正确: 只能选择路径折线上的点 "
                  + "或地图上带名称的关键点, 请点在它们上面。");
       return;
     }
