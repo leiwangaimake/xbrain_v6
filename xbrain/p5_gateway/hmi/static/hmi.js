@@ -1997,6 +1997,9 @@
   //:
   //: An action the state forbids is not drawn, because P3 would answer
   //: E_TASK_STATE and the operator would read a refusal as a broken button.
+  // <task-actions>
+  // node-tested by test_task_actions_js.py, which also pins QUEUED to P3's
+  // clear_queue states (99 U174: queued tasks are cancelled by a button here).
   const QUEUED = ["pending", "scheduled", "ready", "blocked"];
   function taskActions(state) {
     if (state === "running") return ["pause", "cancel"];
@@ -2004,6 +2007,7 @@
     if (QUEUED.indexOf(state) >= 0) return ["cancel"];
     return [];                       // terminal: done / failed / cancelled
   }
+  // </task-actions>
 
   const ACTION_LABEL = { pause: "暂停", resume: "继续", cancel: "取消任务" };
 
@@ -2203,7 +2207,14 @@
   }
 
   // P5/P3 reason codes -> what the operator reads. Unknown codes are shown raw.
+  // <goto-reason>
+  // Why a goto was refused, in the operator's words (pure; node-tested by
+  // test_goto_reason_js.py). Keyed on detail.reason from P3 / P5.
   const GOTO_REASON_CN = {
+    // 99 U173 (user 2026-11-12): an HMI goto never interrupts the running task
+    // and is not queued; P3 answers E_BUSY {reason: task_running}. Wording from
+    // the user's ruling; the button is named as it is on screen (确认前往).
+    task_running: "机器人正在执行任务, 点击导航不会打断它. 如需立即前往, 请先软件急停, 再点目标位置并点「确认前往」",
     positioning_failed: "定位失效 (单点解或无解), 暂时不能导航",
     target_outside_allow_fence: "目标点在活动区域围栏之外",
     target_inside_forbid_zone: "目标点在禁止区域之内",
@@ -2217,8 +2228,11 @@
   };
   function reasonText(m) {
     const d = m.detail || {};
+    // P5's own 2 s E_TIMEOUT (11 S12.1.4) carries detail.item, not a reason.
+    if (!d.reason && d.item === "downstream_ack") return "机器人未回应, 请稍后再试";
     return GOTO_REASON_CN[d.reason] || d.reason_text || d.reason || m.code || "";
   }
+  // </goto-reason>
 
   function onGotoAck(m) {
     if (!gotoPendingReq || m.req_id !== gotoPendingReq.reqId) return;
