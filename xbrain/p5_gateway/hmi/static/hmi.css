@@ -170,7 +170,11 @@ body { margin: 0; overflow: hidden; background: var(--bg); color: var(--ink);
   vector-effect: non-scaling-stroke; }
 /* fill set inline from hmi.web.robot.color (2026-11-11: bright red, 3x size). */
 .robot-arrow { fill: var(--ink); }
-.alarm-dot { fill: var(--fence-alarm-color); stroke: var(--ink); stroke-width: 1; }
+/* A clicked event's place (user 2026-11-12, recommendation 8): a ring blinking
+   for 3 s; radius and stroke are set in hmi.js in constant screen pixels. */
+.ev-flash { fill: none; stroke: #ff3b3b; pointer-events: none;
+            animation: ev-flash-blink .5s steps(1) 6; }
+@keyframes ev-flash-blink { 50% { stroke: #ffffff; } }
 /* req1 (2026-08-18): geo dots (route RTK points + keypoints). Fill set inline to
    the layer colour; a thin white ring makes a dot pop even on a same-colour line.
    radius is set to a constant screen size by hmi.js updateGridAndDots(). */
@@ -462,3 +466,55 @@ body.controls-offline .goto-send { opacity: 0.35; pointer-events: none; }
 .teach-dot.paused { opacity: .45; }
 .teach-dot.finalizing { background: var(--warn-color, #ffb454); }
 @keyframes teach-blink { 0%,100% { opacity: 1; } 50% { opacity: .25; } }
+
+/* -- event drawer (user 2026-11-12, 17 S6.6) ------------------------------
+   Bottom centre, the same panel look as the history task panel (navy, round
+   corners, a tinted border -- cyan here). Collapsed = the bar only; .expanded
+   opens the body to about half the map height. Severity colours: fault / alarm
+   red-orange, warn yellow, info blue-grey. */
+.event-drawer { left: 50%; bottom: 10px; transform: translateX(-50%);
+  width: 560px; max-width: calc(100% - 420px); padding: 0; overflow: hidden;
+  display: flex; flex-direction: column; border-color: rgba(91,192,235,.38);
+  font-family: var(--font-plan-family); font-size: var(--font-plan-size); }
+.event-drawer.expanded { height: 50%; min-height: 240px; }
+.ev-bar { flex: 0 0 auto; display: flex; align-items: center; gap: 10px;
+  padding: 7px 10px; cursor: pointer; white-space: nowrap; }
+.ev-title { font-weight: 700; color: var(--cyan); }
+.ev-badge { padding: 1px 8px; border-radius: 9px; font-size: .85em; color: var(--muted);
+  border: 1px solid rgba(176,176,176,.35); }
+.ev-badge.has-alarm { color: #fff; background: var(--danger); border-color: var(--danger); }
+.ev-latest { flex: 1 1 auto; overflow: hidden; text-overflow: ellipsis; color: var(--ink); }
+.ev-caret { width: 8px; height: 8px; border-left: 2px solid var(--muted);
+  border-top: 2px solid var(--muted); transform: rotate(45deg); margin-top: 4px; }
+.event-drawer.expanded .ev-caret { transform: rotate(225deg); margin-top: -4px; }
+.ev-body { display: none; }
+.event-drawer.expanded .ev-body { flex: 1 1 auto; display: flex; flex-direction: column;
+  min-height: 0; padding: 0 10px 8px; }
+.ev-chips { flex: 0 0 auto; display: flex; gap: 6px; margin-bottom: 6px; }
+.ev-chip { padding: 2px 10px; border-radius: 10px; cursor: pointer; font: inherit;
+  font-size: .85em; color: var(--muted); background: transparent;
+  border: 1px solid rgba(176,176,176,.35); }
+.ev-chip.on { color: var(--bg); background: var(--cyan); border-color: var(--cyan); font-weight: 700; }
+.ev-pinned { flex: 0 0 auto; }
+.ev-pinned:not(:empty) { margin-bottom: 6px; padding-bottom: 6px;
+  border-bottom: 1px dashed rgba(192,192,192,.3); }
+.ev-scroll { flex: 1 1 auto; overflow-y: auto; min-height: 0; }
+.ev-row { display: flex; gap: 8px; align-items: baseline; padding: 4px 6px; margin-bottom: 3px;
+  border-left: 3px solid #7d8ea3; border-radius: 3px; background: rgba(27,38,59,.42); }
+.ev-row.has-pos { cursor: pointer; }
+.ev-row.has-pos:hover { background: rgba(91,192,235,.14); }
+.ev-row.sev-fault { border-left-color: #ff3b3b; }
+.ev-row.sev-alarm { border-left-color: #ff7a1a; }
+.ev-row.sev-warn  { border-left-color: var(--gold); }
+.ev-row.sev-fault .ev-text, .ev-row.sev-alarm .ev-text { color: #ffb199; }
+.ev-row.sev-warn .ev-text { color: var(--gold); }
+.ev-row.ev-live, .ev-row.ev-pin { background: rgba(230,57,50,.16); }
+.ev-time { flex: 0 0 auto; color: var(--muted); font-size: .85em; font-variant-numeric: tabular-nums; }
+.ev-cat { flex: 0 0 auto; color: var(--cyan); font-size: .85em; }
+.ev-text { flex: 1 1 auto; word-break: break-all; }
+.ev-count { flex: 0 0 auto; color: var(--muted); font-size: .85em; }
+.ev-live-tag { color: #fff; background: var(--danger); padding: 0 6px; border-radius: 3px;
+  font-weight: 700; margin-right: 4px; }
+/* The teach badge sets display: grid, which beat the hidden attribute: it was
+   always on screen (found 2026-11-12). hidden must win. */
+.teach-badge[hidden] { display: none; }

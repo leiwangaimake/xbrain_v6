@@ -272,6 +272,176 @@
   }
   // </map-marks>
 
+  // <event-text>
+  // HMI event list wording (user design 2026-11-12, 17 S6.6 event drawer).
+  // Producers title events in English for logs and record.db; the drawer shows
+  // Chinese, chosen by cat + detail.type (or detail.kind). An unmapped event
+  // shows its original title -- never dropped, never guessed (recommendation 6).
+  // Pure functions, cut out and run under node by test_event_drawer_js.py.
+  const EV_CAT_CN = {
+    charging: "充电", rtk: "定位", comm: "通信", motion: "运动", task: "任务",
+    arbitration: "仲裁", payload: "载荷", ptz: "云台", health: "健康", system: "系统",
+    geo: "地图", perception: "感知", bit: "自检", chassis: "底盘", teach: "录制",
+    fence: "围栏", intrusion: "入侵", audio: "音频", voice: "语音",
+  };
+  const EV_SEV_CN = { fault: "故障", alarm: "告警", warn: "警告", info: "信息" };
+  // health/summary item names (p2 health/items.py ITEMS) and payload devices.
+  const EV_DEVICE_CN = {
+    rtk: "定位", heading: "航向", chassis: "底盘", clock: "授时", compute: "算力",
+    battery: "电池", cam_rgbd: "深度相机", lidar: "雷达", gpu: "GPU", dla: "DLA",
+    storage: "存储", ptz: "云台", mic: "麦克风", payload_speaker: "扬声器",
+    payload_siren: "警笛", payload_strobe: "爆闪灯", payload_light: "灯光",
+    speech_preset: "话术", network: "网络", ptz_home: "云台归零", speaker: "扬声器",
+    payload: "载荷",
+  };
+  const EV_HEALTH_STATE_CN = { ok: "正常", warn: "警告", degraded: "降级", fail: "故障", unknown: "未知" };
+  const EV_TASK_CN = {
+    accepted: "已接受", started: "已开始", completed: "已完成", failed: "已失败",
+    cancelled: "已取消", suspended: "已挂起", resumed: "已恢复", paused: "已暂停",
+  };
+  const EV_GEO_CN = {
+    "geo.created": "已新建", "geo.deleted": "已删除", "geo.renamed": "已改名",
+    "geo.updated": "已更新", "geo.route_deleted": "路径已删除",
+  };
+  // events whose producer gives no detail.type: keyed on the bare title
+  const EV_TITLE_CN = {
+    estop: "急停", estop_rearm: "急停解除", rotation_blocked: "原地旋转被拦(周围空间不足)",
+    rotation_clearance_unconfigured: "旋转许可未标定", nav_failed: "导航失败",
+    health_factor_degraded: "健康度降级, 已限速", broadcast_fault: "广播故障",
+    "ptz deadman stop": "云台遥控松手, 已停止", grant: "仲裁授予", release: "仲裁释放",
+    preempt: "仲裁抢占", suspend: "仲裁挂起", rearm: "仲裁重新武装",
+  };
+  const EV_ARB_CN = { grant: "占用", release: "释放", preempt: "抢占" };
+
+  function evDevice(name) { return EV_DEVICE_CN[name] || name || "设备"; }
+  function evSoc(d) { return typeof d.soc_pct === "number" ? "(" + d.soc_pct + "%)" : ""; }
+
+  // One entry -> {cat, text}: the category tag and the Chinese line.
+  function eventText(ev) {
+    const d = (ev && ev.detail) || {};
+    const sub = d.type || d.kind || null;
+    const title = (ev && ev.title) || "";
+    const cat = EV_CAT_CN[ev && ev.cat] || (ev && ev.cat) || "";
+    const word = (t) => ({ cat: cat, text: t });
+    const first = title.split(" ")[0];
+    const idIn = (re) => { const m = title.match(re); return m ? m[1] : ""; };
+    switch (sub) {
+      case "low_battery": return word("电量低" + evSoc(d) + ", 正在返回" + (d.target_name || "充电站"));
+      case "low_battery_no_target": return word("电量低" + evSoc(d) + ", 没有可用的充电站");
+      case "low_battery_unreachable": return word("电量低" + evSoc(d) + ", 剩余航程到不了充电站");
+      case "low_battery_stop": return word("电量严重不足" + evSoc(d) + ", 已停车趴下");
+      case "battery_charging": return word("低电后充电中" + evSoc(d));
+      case "charge_interrupted": return word("未充满即中断充电" + evSoc(d));
+      case "low_battery_cleared":
+        return word(d.cause === "charge_full" ? "已充满, 低电告警解除"
+          : d.cause === "battery_swap" ? "已换电, 低电告警解除" : "低电告警解除");
+      case "return_target_missing": return word("没有定义返航目标(充电站或返航终点站)");
+      case "rtk_lost": return word("定位丢失, 机器人已停车");
+      case "heading_recovered": return word("定位恢复");
+      case "cloud_up": return word("云端连接恢复");
+      case "cloud_down": return word("云端连接断开");
+      case "cloud_degraded": return word("云端连接不稳定");
+      case "cloud_lost": return word("云端连接丢失");
+      case "health.item_changed":
+        return word(evDevice(d.device) + " " + (EV_HEALTH_STATE_CN[d.from] || d.from || "?") +
+                    " -> " + (EV_HEALTH_STATE_CN[d.to] || d.to || "?"));
+      case "device_offline": return word(evDevice(first) + " 离线");
+      case "device_online": return word(evDevice(first) + " 上线");
+      case "hmi.session_closed": return word("HMI 会话关闭");
+      case "unclean_shutdown": return word("上次为非正常关机");
+      case "teach.time_warning": return word("录制即将到达时长上限");
+      case "teach.expired": return word("录制已超时结束");
+      case "zone_enter": return word("进入报警区域" + (d.zone_name ? " " + d.zone_name : ""));
+      case "zone_exit": return word("离开报警区域" + (d.zone_name ? " " + d.zone_name : ""));
+      case "perception.reason_changed": return word("感知状态变化");
+      case "config_digest": return word("感知配置摘要");
+      case "config_digest_mismatch": return word("配置摘要不一致");
+      case "config_digest_ok": return word("配置摘要一致");
+      case "config_manifest_unreadable": return word("配置清单不可读");
+      default: break;
+    }
+    if (ev && ev.cat === "task" && EV_TASK_CN[sub]) {
+      return word("任务 " + (d.task_id || idIn(/^task (\S+)/)) + " " + EV_TASK_CN[sub]);
+    }
+    if (ev && ev.cat === "geo" && EV_GEO_CN[sub]) {
+      return word("地图对象 " + idIn(/^geo (\S+)/) + " " + EV_GEO_CN[sub]);
+    }
+    if (sub && EV_TITLE_CN[sub]) return word(EV_TITLE_CN[sub]);
+    const arb = title.match(/^arbitration (grant|release|preempt) on (\S+)/);
+    if (arb) return word(evDevice(arb[2]) + " " + EV_ARB_CN[arb[1]]);
+    if (EV_TITLE_CN[title]) return word(EV_TITLE_CN[title]);
+    return word(title || "(无标题)");
+  }
+
+  // Continuous alarms (recommendation 5): one pinned "持续中" record per family
+  // while its newest start is not followed by an end. repeatS: the low-battery
+  // alarm repeats every 2 s while it lasts, so an episode silent for longer
+  // than repeatS has stopped even without low_battery_cleared (a reboot ended
+  // it -- found live 2026-11-12: a 12:36 episode stayed "持续中" after the 12:52
+  // reboot). rtk / comm are one-shot transitions: start / end pairing only.
+  const EV_FAMILIES = {
+    charging: { cat: "charging", name: "低电量", repeatS: 30,
+                starts: ["low_battery", "low_battery_no_target", "low_battery_unreachable",
+                         "low_battery_stop", "battery_charging", "charge_interrupted",
+                         "return_target_missing"],
+                ends: ["low_battery_cleared"] },
+    rtk: { cat: "rtk", name: "定位丢失", starts: ["rtk_lost"], ends: ["heading_recovered"] },
+    comm: { cat: "comm", name: "云端断链", starts: ["cloud_lost", "cloud_down", "cloud_degraded"],
+            ends: ["cloud_up"] },
+  };
+
+  function eventFamily(ev) {
+    const d = (ev && ev.detail) || {};
+    const sub = d.type || d.kind;
+    for (const k of Object.keys(EV_FAMILIES)) {
+      const f = EV_FAMILIES[k];
+      if (!ev || ev.cat !== f.cat) continue;
+      if (f.starts.indexOf(sub) >= 0) return { fam: k, role: "start" };
+      if (f.ends.indexOf(sub) >= 0) return { fam: k, role: "end" };
+    }
+    return null;
+  }
+
+  // items -> [{fam, name, since, latest}], each family whose last word was a start
+  // (and, for a repeating family, recent enough at nowS -- P5's clock).
+  // since = the first occurrence of this episode (merged entries keep first_ts).
+  function activeFamilies(items, nowS) {
+    const st = {};
+    const sorted = (items || []).slice().sort((a, b) => (a.ts || 0) - (b.ts || 0));
+    for (const it of sorted) {
+      const f = eventFamily(it); if (!f) continue;
+      if (f.role === "end") { delete st[f.fam]; continue; }
+      const start = it.first_ts != null ? it.first_ts : it.ts;
+      const cur = st[f.fam];
+      st[f.fam] = { fam: f.fam, name: EV_FAMILIES[f.fam].name, latest: it,
+                    since: cur ? Math.min(cur.since, start) : start };
+    }
+    return Object.keys(st).map((k) => st[k]).filter((a) => {
+      const r = EV_FAMILIES[a.fam].repeatS;
+      return !(r && typeof nowS === "number" && nowS - (a.latest.ts || 0) > r);
+    }).sort((a, b) => (b.latest.ts || 0) - (a.latest.ts || 0));
+  }
+
+  // Alarm / fault entries of the last windowS, newest first, at most max, minus
+  // the families already pinned as "持续中".
+  function pinnedAlarms(items, nowS, active, windowS, max) {
+    const fams = (active || []).map((a) => a.fam);
+    return (items || []).filter((it) => {
+      if (it.sev !== "alarm" && it.sev !== "fault") return false;
+      if (typeof it.ts !== "number" || nowS - it.ts > windowS) return false;
+      const f = eventFamily(it);
+      return !(f && fams.indexOf(f.fam) >= 0);
+    }).sort((a, b) => b.ts - a.ts).slice(0, max);
+  }
+
+  // chip filter: "alarm" = alarm + fault, "warn", "info", "all"
+  function eventPasses(ev, filter) {
+    if (filter === "all") return true;
+    if (filter === "alarm") return ev.sev === "alarm" || ev.sev === "fault";
+    return ev.sev === filter;
+  }
+  // </event-text>
+
   // Chosen every view change (applyView) from the CURRENT metres-per-screen-px.
   // applyView keeps the viewBox at the element's aspect, so the scale is uniform
   // (x==y) and mpp is a single value.
@@ -382,7 +552,7 @@
     const patrolling = plans.some((p) => p.state === "running");
     renderGeo(snap.geo || {}, origin, patrolling);
     renderRobot(snap.pose || {}, origin);
-    renderEvents(snap.events || {}, origin);
+    renderEvents(snap.events || {}, snap.server_ts);
     // The task panel is NOT rendered from the snapshot -- it pulls current +
     // history from GET /api/tasks (17 S6.8.4, refreshTasks below). snap.plan
     // (state/task) still drives the `patrolling` trajectory flag above.
@@ -679,17 +849,158 @@
     $("robotLayer").appendChild(el);
   }
 
-  function renderEvents(events, origin) {
-    clear("eventLayer");
-    if (!events.available) return;
-    for (const ev of events.items) {
-      if (!ev.pos) continue;                          // located-nowhere -> no dot
-      const xy = toXY(ev.pos, origin); if (!xy) continue;
-      const dot = document.createElementNS(SVGNS, "circle");
-      dot.setAttribute("cx", xy[0]); dot.setAttribute("cy", xy[1]);
-      dot.setAttribute("r", 2.4); dot.setAttribute("class", "alarm-dot");
-      $("eventLayer").appendChild(dot);
+  // -- event drawer (user design 2026-11-12, 17 S6.6) -----------------------
+  // Bottom-centre drawer in the history-panel style: collapsed it is one bar
+  // (alarm count + the newest line), expanded about half the map high with
+  // chips 告警/故障 / 警告 / 信息 / 全部, the "持续中" families and recent
+  // alarms / faults pinned on top. Collapses after 10 s without mouse movement
+  // or on a click of its title. The standing red event dots on the map are gone
+  // (recommendation 8): an entry with a place flashes it when clicked.
+  const EV_PIN_WINDOW_S = 600;     // alarms / faults of the last 10 min stay pinned
+  const EV_PIN_MAX = 5;            // at most this many pinned alarm / fault rows
+  const EV_IDLE_MS = 10000;        // same idle collapse as the history panel
+  const EV_FLASH_MS = 3000;        // a clicked place blinks this long
+  let evItems = [];                // the snapshot's events.items, ring order
+  let evAvailable = false;
+  let evExpanded = false;
+  let evFilter = "all";
+  let evIdleTimer = null;
+  let evSig = null;                // skip a re-render when nothing changed
+  let evRowRefs = [];              // row index -> entry, for the click handler
+  let evServerTs = null;           // snapshot.server_ts: P5's clock, the events' clock
+
+  // HH:MM:SS in siteTz; MM-DD in front when it is not today there.
+  function fmtEvTime(ts) {
+    if (typeof ts !== "number") return "--";
+    const opts = { month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit",
+                   second: "2-digit", hour12: false };
+    const o = siteTz ? Object.assign({ timeZone: siteTz }, opts) : opts;
+    const parts = (d) => {
+      const g = {};
+      try { for (const p of new Intl.DateTimeFormat("zh-CN", o).formatToParts(d)) g[p.type] = p.value; }
+      catch (e) { return null; }
+      return g;
+    };
+    const g = parts(new Date(ts * 1000)), n = parts(new Date());
+    if (!g) return "--";
+    const hms = `${g.hour}:${g.minute}:${g.second}`;
+    return (n && n.month === g.month && n.day === g.day) ? hms : `${g.month}-${g.day} ${hms}`;
+  }
+
+  function evRowHTML(ev, idx, extraCls, timeHTML) {
+    const t = eventText(ev);
+    const cnt = (ev.count || 1) > 1 ? `<span class="ev-count">${ev.count} 次</span>` : "";
+    const cls = `ev-row sev-${esc(ev.sev || "info")}${ev.pos ? " has-pos" : ""}${extraCls || ""}`;
+    return `<div class="${cls}" data-ev="${idx}"${ev.pos ? ' title="点击在地图上闪烁位置"' : ""}>` +
+      `<span class="ev-time">${timeHTML}</span><span class="ev-cat">${esc(t.cat)}</span>` +
+      `<span class="ev-text">${esc(t.text)}</span>${cnt}</div>`;
+  }
+  function evTimeRange(ev) {
+    const many = (ev.count || 1) > 1 && typeof ev.first_ts === "number" && ev.first_ts !== ev.ts;
+    return many ? `${fmtEvTime(ev.first_ts)} - ${fmtEvTime(ev.ts)}` : fmtEvTime(ev.ts);
+  }
+
+  function renderEvents(events, serverTs) {
+    if (typeof serverTs === "number") evServerTs = serverTs;
+    evAvailable = !!events.available;
+    evItems = evAvailable ? (events.items || []) : [];
+    drawEventDrawer(false);
+  }
+
+  function drawEventDrawer(force) {
+    const box = $("eventDrawer"); if (!box) return;
+    const last = evItems[evItems.length - 1];
+    // An older backend has no server_ts: the browser clock is the fallback.
+    const nowS = evServerTs != null ? evServerTs : Date.now() / 1000;
+    const sig = [evAvailable, evExpanded, evFilter, evItems.length,
+                 last ? last.eid + ":" + last.count : "", Math.floor(nowS / 10)].join("|");
+    if (!force && sig === evSig) return;
+    evSig = sig;
+    box.classList.toggle("expanded", evExpanded);
+    const active = activeFamilies(evItems, nowS);
+    const pins = pinnedAlarms(evItems, nowS, active, EV_PIN_WINDOW_S, EV_PIN_MAX);
+    const nAlarm = active.length + pins.length;
+    evRowRefs = [];
+    const ref = (ev) => { evRowRefs.push(ev); return evRowRefs.length - 1; };
+    // collapsed bar: always there, it is also the title of the expanded drawer
+    const newest = evItems.slice().sort((a, b) => (b.ts || 0) - (a.ts || 0))[0];
+    $("eventBarCount").textContent = nAlarm ? `告警 ${nAlarm}` : "无告警";
+    $("eventBarCount").classList.toggle("has-alarm", nAlarm > 0);
+    $("eventBarLatest").textContent = !evAvailable ? "事件源不可用"
+      : newest ? `${fmtEvTime(newest.ts)}  ${eventText(newest).text}` : "暂无事件";
+    if (!evExpanded) { $("eventPinned").innerHTML = ""; $("eventList").innerHTML = ""; return; }
+    document.querySelectorAll("#eventChips .ev-chip").forEach((c) =>
+      c.classList.toggle("on", c.dataset.filter === evFilter));
+    $("eventPinned").innerHTML =
+      active.map((a) => evRowHTML(a.latest, ref(a.latest), " ev-live",
+        `<b class="ev-live-tag">持续中</b> 自 ${fmtEvTime(a.since)}`)).join("") +
+      pins.map((ev) => evRowHTML(ev, ref(ev), " ev-pin", evTimeRange(ev))).join("");
+    const keep = $("eventList").scrollTop;      // new rows must not jump the reader
+    const rows = evItems.filter((ev) => eventPasses(ev, evFilter))
+      .sort((a, b) => (b.ts || 0) - (a.ts || 0));
+    $("eventList").innerHTML = rows.length
+      ? rows.map((ev) => evRowHTML(ev, ref(ev), "", evTimeRange(ev))).join("")
+      : `<div class="task-empty">${evAvailable ? "暂无事件" : "事件源不可用"}</div>`;
+    $("eventList").scrollTop = keep;
+  }
+
+  // Restart the idle countdown only -- no re-render, so the list keeps its
+  // scroll position while the operator reads it.
+  function armEventIdle() {
+    if (evIdleTimer) { clearTimeout(evIdleTimer); evIdleTimer = null; }
+    if (evExpanded) evIdleTimer = setTimeout(() => setEventDrawer(false), EV_IDLE_MS);
+  }
+  function setEventDrawer(open) {
+    const changed = evExpanded !== open;
+    evExpanded = open;
+    armEventIdle();
+    if (changed) drawEventDrawer(true);
+  }
+
+  // Blink the entry's place; pan there first when it is off screen.
+  function flashEventPos(ev) {
+    const xy = ev && ev.pos ? toXY(ev.pos, lastOrigin) : null;
+    if (!xy) return;
+    const svg = $("mapSvg");
+    let vb = (svg.getAttribute("viewBox") || "").split(/\s+/).map(Number);
+    if (xy[0] < vb[0] || xy[0] > vb[0] + vb[2] || xy[1] < vb[1] || xy[1] > vb[1] + vb[3]) {
+      view.pan = { x: xy[0] - (baseVB[0] + baseVB[2] / 2), y: xy[1] - (baseVB[1] + baseVB[3] / 2) };
+      applyView();
+      vb = (svg.getAttribute("viewBox") || "").split(/\s+/).map(Number);
     }
+    const mpp = (vb[2] || baseVB[2]) / (svg.clientWidth || 1);
+    clear("eventLayer");
+    const c = document.createElementNS(SVGNS, "circle");
+    c.setAttribute("cx", xy[0]); c.setAttribute("cy", xy[1]);
+    c.setAttribute("r", (14 * mpp).toFixed(3));
+    c.setAttribute("class", "ev-flash");
+    c.style.strokeWidth = (3 * mpp).toFixed(3);
+    $("eventLayer").appendChild(c);
+    setTimeout(() => { if (c.parentNode) c.parentNode.removeChild(c); }, EV_FLASH_MS);
+  }
+
+  function wireEventDrawer() {
+    const box = $("eventDrawer"); if (!box) return;
+    $("eventBar").addEventListener("click", () => setEventDrawer(!evExpanded));
+    $("eventChips").addEventListener("click", (e) => {
+      const chip = e.target.closest(".ev-chip"); if (!chip) return;
+      evFilter = chip.dataset.filter; armEventIdle();
+      $("eventList").scrollTop = 0; drawEventDrawer(true);
+    });
+    box.addEventListener("click", (e) => {
+      const row = e.target.closest(".ev-row"); if (!row) return;
+      flashEventPos(evRowRefs[Number(row.dataset.ev)]);
+      armEventIdle();                             // a click is activity too
+    });
+    // Same guards as the task panel: the wheel scrolls the list, not the map,
+    // and a press here never starts a map pan.
+    box.addEventListener("wheel", (e) => {
+      const list = e.target.closest(".ev-scroll");
+      if (list) list.scrollTop += e.deltaY;
+      e.preventDefault(); e.stopPropagation();
+    }, { passive: false });
+    box.addEventListener("mousedown", (e) => e.stopPropagation());
+    document.addEventListener("mousemove", () => { if (evExpanded) armEventIdle(); });
   }
 
   // -- task panel (17 S6.8.4): current + history, five fields each ----------
@@ -2091,7 +2402,7 @@
       const el = $(id); if (el) el.addEventListener("click", hideBanner);
     }
     window.addEventListener("resize", applyView);   // req3: rescale map labels on resize
-    wirePanelScroll(); wirePanelResize();
+    wirePanelScroll(); wirePanelResize(); wireEventDrawer();
     try { applyUiConfig(await getJSON("/api/hmi/ui_config")); }
     catch (e) { console.error("ui_config load failed", e); return; }
     await tick();                                     // instant first paint (REST)

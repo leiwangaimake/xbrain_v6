@@ -141,6 +141,28 @@
         </div>
       </div>
 
+      <!-- 事件列表(用户 2026-11-12, 17 S6.6): 底部居中, 风格同历史任务面板. 收起时一条
+           (告警数 + 最新一条), 点击上拉到约半个地图高; 10s 无鼠标移动或再点标题收回.
+           告警/故障与"持续中"的低电量/定位丢失/云端断链置顶; 点有位置的事件在地图上闪烁. -->
+      <section class="map-overlay event-drawer" id="eventDrawer" aria-label="事件列表">
+        <div class="ev-bar" id="eventBar" title="点击展开/收起事件列表">
+          <span class="ev-title">事件</span>
+          <span class="ev-badge" id="eventBarCount">无告警</span>
+          <span class="ev-latest" id="eventBarLatest">暂无事件</span>
+          <span class="ev-caret" aria-hidden="true"></span>
+        </div>
+        <div class="ev-body">
+          <div class="ev-chips" id="eventChips">
+            <button type="button" class="ev-chip" data-filter="alarm">告警/故障</button>
+            <button type="button" class="ev-chip" data-filter="warn">警告</button>
+            <button type="button" class="ev-chip" data-filter="info">信息</button>
+            <button type="button" class="ev-chip on" data-filter="all">全部</button>
+          </div>
+          <div class="ev-pinned" id="eventPinned"></div>
+          <div class="ev-scroll" id="eventList"></div>
+        </div>
+      </section>
+
       <!-- 左下角坐标块(客户样例): GPS 一行, ENU 一行含 E/N + 航向 + 速度 -->
       <div class="map-overlay coord">
         <strong>GPS</strong> <span id="coordGps">无定位</span><br>
@@ -165,6 +187,6 @@
     </footer>
   </section>
 </main>
-<script src="hmi.js?v=banner-1"></script>
+<script src="hmi.js?v=events-2"></script>
 </body>
 </html>
