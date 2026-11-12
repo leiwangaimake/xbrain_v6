@@ -3499,6 +3499,7 @@ set_time_sync:                             # H03 / H03f —— 18 §10.2 / §10.
 
 | # | 规则 |
 |---|---|
+| ★ FS-0 | ★ **2026-11-12（`99` U169）指令结果一律进 `voice_turn`**：`ack_speech` 说出的每一句指令结果（执行端拒绝、`clear_queue` 计数、FS-2 的任务失败）都另发一条 `layer = command_result` 的 `state/voice_turn`（`11` §8.7.6 ⑫）；静默轮（无 TTS）也登记、只发记录不播报。实现 `AckSpeaker._answer` / `result_turn` / `on_task_event_frames`；断言 `tests/p4_agent/runtime/test_command_result_turn.py`。★ 充电站 / 充电桩打点不在路径上（`E_GEO_INVALID dock_off_route`）的话术改为带距离、限距与下一步：「X没有保存: 这里离最近的路径有N米, 充电站和充电桩必须在路径M米以内. 请走到路径旁边再说一次」，没有任何路径时「X没有保存: 还没有任何路径, 充电站和充电桩必须建在路径旁边. 请先录制路径」；M 取 P3 detail 的 `limit_m`（配置 `route_membership_m`），缺失时说「必须建在路径旁边」，不写死 5 |
 | FS-1 | ★ P4 在 `cmd/task/ack` **受理** `submit` 时，按 `detail.task_id` 记下这条任务（任务名与本轮回复的 TTS 来源）；★ 只记**本进程发出且本轮有语音回复**的提交（与 `11` §12A 结果播报同一条件），HMI / 云端下的任务不播。表长有上限（与回执播报同一上限），最旧的先丢 |
 | FS-2 | ★ P4 订阅 `event/*/task`（`11` §6.2）。`detail.kind` 为 `failed` / `rejected` 且 `task_id` 在表中 ⇒ 播一句；`completed` / `cancelled` ⇒ 只把它从表里删掉、不播（完成由运动结果体现，取消是操作员自己说的） |
 | FS-3 | ★ 句式「**{任务名}没有完成: {原因}**」，原因未知时只说「{任务名}没有完成」。任务名：`goto` → 去{航点}；`patrol` → 沿{路径}巡逻（`B04` 无路径名 → 再巡逻）；`return_home` → 返航；`charge` → 去{充电站}（未说名字 → 去充电站）；`follow` → 跟随；其他 → 任务 |
