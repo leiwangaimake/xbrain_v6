@@ -192,4 +192,7 @@ def test_fences_degraded_returns_503():
 
 def test_fences_normal_returns_200():
     r = fences_endpoint(fence_db_degraded=False)
-    assert r.status == 200 and "fences" in r.body
+    assert r.status == 200 and r.body == {"fences": []}  # synced, no polygons
+    r = fences_endpoint(False, {"fence_set_id": "fs", "rev": 2},
+                        [{"vertices": [1, 2, 3]}])  # one polygon, 3 vertices
+    assert r.body["fences"][0]["polygons"] == 1 and r.body["fences"][0]["vertices"] == 3

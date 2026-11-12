@@ -33,7 +33,8 @@ WS UPLINK whitelist, not this REST read surface.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass  # the response pair
+from typing import Any, Dict, Mapping, Optional, Sequence  # signatures
 
 from xbrain.common.errors import E_DEGRADED
 
@@ -44,10 +45,35 @@ class DegradedResponse:
     body: dict
 
 
-def fences_endpoint(fence_db_degraded: bool):
-    """/api/fences precondition: 503 + E_DEGRADED when the fence
-    DB is in degraded write mode."""
-    if fence_db_degraded:
+def fence_set_summary(meta: Optional[Mapping[str, Any]],
+                      fences: Sequence[Mapping[str, Any]]) -> Dict[str, Any]:
+    """One 11 S9A.11 FenceSet summary row: fence_set_id / rev / name / active /
+    polygons / vertices / updated_ts. P5 holds only the ACTIVE set (cmd/fence
+    carries the set every consumer runs on), so active is always true and the
+    list has one row. Header fields cmd/fence did not carry stay None, never
+    invented; polygons / vertices are counts, the geometry itself is
+    /api/fences/active."""
+    m = meta or {}  # no header seen yet -> the header fields stay None
+    return {"fence_set_id": m.get("fence_set_id"), "rev": m.get("rev"),  # identity
+            "name": m.get("name"), "active": True,  # P5 holds only the active set
+            "polygons": len(fences),  # a count; geometry is /api/fences/active
+            "vertices": sum(len(f.get("vertices") or []) for f in fences),  # total
+            "updated_ts": m.get("updated_ts")}  # wall clock, display only (B5)
+
+
+def fences_endpoint(fence_db_degraded: bool,
+                    meta: Optional[Mapping[str, Any]] = None,
+                    fences: Optional[Sequence[Mapping[str, Any]]] = None):
+    """/api/fences: 503 + E_DEGRADED while the fence cache is not synced (17
+    S6.9 P5F-2), else the 11 S9A.11 summary list.
+
+    ~~Until 2026-11-12 a synced cache answered {"fences": []}~~: a 200 empty
+    set is exactly what P5F-2 forbids for the unsynced case, and here it was
+    returned for the synced one -- a client could not tell "no fences" from
+    "fences exist". The summary now comes from the same cmd/fence cache as
+    /api/fences/active."""
+    if fence_db_degraded:  # unsynced: say so, never a 200 empty set (P5F-2)
         return DegradedResponse(status=503,
                                   body={"error": E_DEGRADED})
-    return DegradedResponse(status=200, body={"fences": []})
+    rows = [fence_set_summary(meta, fences)] if fences else []  # one active set or none
+    return DegradedResponse(status=200, body={"fences": rows})  # the S9A.11 list

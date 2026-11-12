@@ -532,6 +532,10 @@ def _start_hmi(gen, hmi_cfg: dict, hmi_state: dict,
             # the WS poll delivers each ack exactly once.
             return hmi_state.get("uplink_acks", {}).pop("h-" + req_id, None)
 
+        def fence_set_meta(self):
+            # 11 S9A.11 summary header of the cached active FenceSet.
+            return hmi_state.get("fence_set_meta")
+
         def fence_degraded(self):
             # 503 E_DEGRADED (P5F-2) until a fresh cmd/fence has been staged;
             # never a 200 empty set.
@@ -542,11 +546,19 @@ def _start_hmi(gen, hmi_cfg: dict, hmi_state: dict,
             # W8: sources for the 17 S6.5 REST endpoints NOT in the A..F snapshot.
             # health/bit are wired (P2 health/factor / health/bit); routes/docks/
             # metrics/approval have no P5 source yet -> None -> available:false.
+            # routes / waypoints / docks: the state/geo/objects cache (11
+            # S7.10A), the same one the map draws -- ~~"geo.db gated"~~
+            # superseded 2026-11-12. None while no fresh broadcast is cached.
+            from xbrain.p5_gateway.geo.cache import geo_layers  # noqa: PLC0415
+            routes, waypoints = geo_layers(hmi_state["geo_cache"].snapshot(_now_mono_ms()))
+            docks = (None if waypoints is None
+                     else [w for w in waypoints if w.get("type") == "dock"])
             return {
                 "health": hmi_state.get("health"),  # /api/health (W8-wired)
                 "bit": hmi_state.get("bit"),        # /api/bit (W8-wired)
-                "routes": None,      # /api/routes: geo.db gated (W8/geo src)
-                "docks": None,       # /api/docks: geo.db gated
+                "routes": routes,        # /api/routes
+                "waypoints": waypoints,  # /api/routes, keypoints beside routes
+                "docks": docks,          # /api/docks: type-dock keypoints (U119)
                 "metrics": None,     # /api/metrics: telemetry aggregator gated
                 "approval_pending": None,  # /api/approval/pending: L3 queue gated
             }
@@ -1108,6 +1120,10 @@ def run_voice_loop_wiring(stop_flag: dict,
                            "vertices": p.get("vertices"),
                            "role": p.get("role")} for p in polys]
                 hmi_state["fence_cache"].on_update(fences, _now_mono_ms())
+                # The set header, for the 11 S9A.11 /api/fences summary row
+                # (2026-11-12). Replaced whole with the polygons it came with.
+                hmi_state["fence_set_meta"] = {
+                    k: d.get(k) for k in ("fence_set_id", "rev", "name", "updated_ts")}
             # *** 权威 enu_origin 走这条路进来.
             # 11 S9A.2 把 enu_origin 定为 FenceSet 的必填字段, 值来自
             # common.geo.enu_origin(L4 sites/{site_id}.yaml, 11 第 7815 行逐字

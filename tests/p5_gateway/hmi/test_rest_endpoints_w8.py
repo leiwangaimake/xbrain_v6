@@ -106,8 +106,8 @@ def _client(provider):
 
 
 @pytest.mark.parametrize("path,key,available", [
-    ("/api/routes", "routes", False),          # geo.db gated
-    ("/api/docks", "docks", False),            # geo.db gated
+    ("/api/routes", "routes", False),          # no fresh geo broadcast in this fake
+    ("/api/docks", "docks", False),            # same source
     ("/api/health", "health", True),           # P2 health/factor wired
     ("/api/bit", "bit", False),                # no health/bit yet
     ("/api/metrics", "metrics", False),        # aggregator gated
@@ -131,3 +131,57 @@ def test_legacy_provider_without_rest_inputs_degrades_not_crashes():
     resp = _client(_LegacyProvider()).get("/api/metrics")
     assert resp.status_code == 200
     assert resp.json()["available"] is False
+
+
+class _GeoProvider(_Provider):
+    """Fake with a fresh geo broadcast and a synced fence cache."""
+
+    _FENCES = [{"geo_id": "f-1", "name": "area", "role": "allow",
+                "vertices": [{"lat": 1, "lon": 2}] * 4},
+               {"geo_id": "f-2", "name": "no-go", "role": "forbid",
+                "vertices": [{"lat": 1, "lon": 2}] * 3}]
+
+    def snapshot_inputs(self):
+        d = super().snapshot_inputs()
+        d["fences"] = self._FENCES
+        return d
+
+    def fence_degraded(self):
+        return False
+
+    def fence_set_meta(self):
+        return {"fence_set_id": "fs-site", "rev": 7, "name": "site", "updated_ts": 1.5}
+
+    def rest_inputs(self):
+        d = super().rest_inputs()
+        d["routes"] = [{"geo_id": "r-1", "name": "1号路径", "points": [], "kind": "recorded"}]
+        d["waypoints"] = [{"geo_id": "w-1", "name": "1号充电站", "type": "dock"},
+                          {"geo_id": "w-2", "name": "2号测试点", "type": "poi"}]
+        d["docks"] = [d["waypoints"][0]]
+        return d
+
+
+def test_fences_returns_the_s9a11_summary_when_synced():
+    """11 S9A.11: /api/fences is the FenceSet summary list (2026-11-12; was a
+    fixed {"fences": []} even when synced). MUTATION: back to [] -> red; counts
+    from the wrong field -> red."""
+    resp = _client(_GeoProvider()).get("/api/fences")
+    assert resp.status_code == 200
+    assert resp.json() == {"fences": [{
+        "fence_set_id": "fs-site", "rev": 7, "name": "site", "active": True,
+        "polygons": 2, "vertices": 7, "updated_ts": 1.5}]}
+    degraded = _client(_Provider()).get("/api/fences")
+    assert degraded.status_code == 503  # P5F-2: never 200 [] while unsynced
+
+
+def test_routes_and_docks_come_from_the_geo_cache():
+    """17 S6.5: routes + keypoints, and the charging stations (type-dock
+    keypoints, 99 U119). MUTATION: routes still None -> available false -> red;
+    waypoints not attached -> red."""
+    c = _client(_GeoProvider())
+    r = c.get("/api/routes").json()
+    assert r["available"] is True and r["routes"][0]["geo_id"] == "r-1"
+    assert [w["geo_id"] for w in r["waypoints"]] == ["w-1", "w-2"]
+    d = c.get("/api/docks").json()
+    assert d == {"available": True, "docks": [{"geo_id": "w-1", "name": "1号充电站",
+                                               "type": "dock"}]}

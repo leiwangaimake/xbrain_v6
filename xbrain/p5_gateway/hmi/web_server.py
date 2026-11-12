@@ -465,7 +465,12 @@ def build_app(
         the cache is degraded (P5F-2). fences_endpoint picks the status/body;
         JSONResponse carries the status code directly (a `Response` PARAMETER
         makes FastAPI try to validate it as a request field -> 422)."""
-        result = fences_endpoint(provider.fence_degraded())
+        # 11 S9A.11 summary rows from the same cmd/fence cache as
+        # /api/fences/active (2026-11-12; was a fixed {"fences": []}).
+        meta_fn = getattr(provider, "fence_set_meta", None)
+        meta = meta_fn() if callable(meta_fn) else None
+        result = fences_endpoint(provider.fence_degraded(), meta,
+                                 provider.snapshot_inputs().get("fences"))
         return JSONResponse(status_code=result.status, content=result.body)
 
     @app.get("/api/tasks")
@@ -534,13 +539,21 @@ def build_app(
 
     @app.get("/api/routes")
     def get_routes() -> Dict[str, Any]:
-        """17 S6.5: route + waypoint list. Gated on geo.db (P5 does not read P3's
-        dbs; needs the geo query key, 17 S6.9 note) -> available:false today."""
-        return rest_list_endpoint(_rest().get("routes"), "routes")
+        """17 S6.5 "路径与位置点列表": routes and keypoints from P5's
+        state/geo/objects cache (11 S7.10A) -- P5 never reads geo.db.
+        ~~"Gated on geo.db ... available:false today"~~ superseded 2026-11-12:
+        the cache has existed since the geo broadcast; nothing read it here.
+        available:false only while no fresh broadcast is cached."""
+        rest = _rest()
+        body = rest_list_endpoint(rest.get("routes"), "routes")
+        body["waypoints"] = list(rest.get("waypoints") or [])
+        return body
 
     @app.get("/api/docks")
     def get_docks() -> Dict[str, Any]:
-        """17 S6.5: charging-dock list. Same geo.db gate as /api/routes."""
+        """17 S6.5 "充电桩列表": the charging stations in use are keypoints of
+        type dock (99 U119, 11 S7.10A GO-6) from the same cache. The legacy
+        docks table is not listed: it is empty and still ENU (11 S7.10A GO-1)."""
         return rest_list_endpoint(_rest().get("docks"), "docks")
 
     @app.get("/api/health")
