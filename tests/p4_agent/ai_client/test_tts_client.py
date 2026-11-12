@@ -113,6 +113,22 @@ def test_speak_non_200_error_contains_status(monkeypatch):
     with pytest.raises(tts_client.TtsClientError) as ei:
         tts_client.speak("http://x", "hi", timeout_s=1.0)
     assert "503" in str(ei.value)
+    # 99 U166: the status rides on the error as a number -- p2 health tells an
+    # offline speaker (503) from one that cannot play by it, never by the text.
+    # MUTATION: drop status=r.status_code -> None -> red.
+    assert ei.value.status == 503
+
+
+def test_speak_connect_failure_has_no_status(monkeypatch):
+    """99 U166: no HTTP answer -> status None (p2 treats it as online but cannot
+    play while the link is up). MUTATION: a fabricated status -> red."""
+    def _fake_post(url, **kw):
+        raise requests.ConnectionError("refused")
+
+    monkeypatch.setattr(tts_client.requests, "post", _fake_post)
+    with pytest.raises(tts_client.TtsClientError) as ei:
+        tts_client.speak("http://x", "hi", timeout_s=1.0)
+    assert ei.value.status is None
 
 
 def test_speak_bad_est_ms_type_raises(monkeypatch):

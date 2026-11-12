@@ -55,7 +55,17 @@ class TtsClientError(RuntimeError):
     failure, non-200, and unexpected body shape because the router's
     response to all three is the same (log, skip audio for this turn,
     keep listening).
+
+    `status` is the HTTP status of a non-200 reply, None otherwise (connect
+    failure, bad body). 99 U166: p2 health tells a speaker that is offline
+    (payload-service 503, "device not reachable") or busy in another mode
+    (409) from one that is online but cannot play -- by this number, never by
+    parsing the message text.
     """
+
+    def __init__(self, message: str, status: "int | None" = None) -> None:
+        super().__init__(message)
+        self.status = status
 
 
 def _count_sentences(text: str) -> int:
@@ -117,7 +127,8 @@ def speak(
             "tts request to %s failed: %s" % (url, exc)) from exc
     if r.status_code != 200:
         raise TtsClientError(
-            "tts returned %d: %s" % (r.status_code, r.text[:200]))
+            "tts returned %d: %s" % (r.status_code, r.text[:200]),
+            status=r.status_code)
     try:
         body = r.json()
     except ValueError as exc:
