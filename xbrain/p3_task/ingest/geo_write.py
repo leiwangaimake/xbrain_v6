@@ -234,7 +234,8 @@ async def _refuse_dock_off_route(ctx: GeoContext, conn, lat, lon) -> None:
         raise GeoCommandError(
             E_GEO_INVALID, "a dock waypoint must be within %.1f m of a route" % member,
             {"reason": "dock_off_route",
-             "distance_m": None if gap == float("inf") else round(gap, 1)})
+             "distance_m": None if gap == float("inf") else round(gap, 1),
+             "limit_m": float(member)})  # 2026-11-12: named in the spoken refusal
 
 
 async def apply_upsert(cmd: GeoCommand, ctx: GeoContext,

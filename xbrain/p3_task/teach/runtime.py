@@ -796,7 +796,10 @@ class TeachRuntime:
                     "nearest route is %s m away" % (self._route_membership_m,
                                                     "none" if gap == float("inf") else "%.1f" % gap),
                     {"reason": "dock_off_route",
-                     "distance_m": None if gap == float("inf") else round(gap, 1)})
+                     "distance_m": None if gap == float("inf") else round(gap, 1),
+                     # 2026-11-12: the configured limit, so the spoken refusal
+                     # (p4 ack_speech) names it instead of a typed-in 5
+                     "limit_m": self._route_membership_m})
         await commit_waypoint(self._geo_conn, geo_id=geo_id, name=name,
                               wtype=wtype,
                               rtk_lat=float(pose["lat"]),
