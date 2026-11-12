@@ -23,7 +23,7 @@ import pytest_asyncio
 from xbrain.p3_task.dao.tasks_dao import TaskRow, TasksDAO
 from xbrain.p3_task.persistence.schema_task import ALL_DDL_STATEMENTS
 from xbrain.p3_task.query.task_query import (
-    _percent,
+    card_percent,
     query_task_cards,
     task_card_from_row,
 )
@@ -143,7 +143,9 @@ async def test_card_carries_five_fields(dao):
     card = next(c for c in reply["tasks"] if c["task_id"] == "t-1")
     assert card["created_at"] == "2026-08-17T10:00:12Z"     # field 2
     assert card["command_text"] == "开始巡逻东区"            # field 3
-    assert card["progress"]["percent"] == pytest.approx(33.3)  # field 5
+    # field 5 is by distance now (2026-11-12); t-1 has no patrol_progress row
+    # in this seed, so it is unknown -- NOT the old step value 1/3 = 33.3.
+    assert card["progress"]["percent"] is None  # field 5
     # field 4 deferred to the keypoint layer -> empty SHAPE, not fabricated.
     # MUTATION: dropping the key -> KeyError; fabricating points -> non-empty.
     assert card["targets"] == []
@@ -151,12 +153,49 @@ async def test_card_carries_five_fields(dao):
     assert "submit_seq" not in card
 
 
-def test_percent_none_when_total_zero_else_value():
-    # total 0 (route not expanded) -> None, NEVER 0.0. MUTATION: returning 0.0
-    # would render a real-looking 0% for a task whose progress is simply unknown.
-    assert _percent(0, 0) is None
-    assert _percent(1, 3) == pytest.approx(33.3)
-    assert _percent(2, 2) == pytest.approx(100.0)
+def test_card_percent_by_distance_done_full_queued_zero():
+    """User ruling 2026-11-12 + 15 PP-3. MUTATION: done from the distance (92 %
+    for a goto that ended 0.6 m short) -> red; no clamp (100.08 %) -> red; a
+    zero length dividing -> red; unknown shown as 0 -> red."""
+    prog = {"dist_done_m": 6.912, "route_total_m": 7.5, "loop_total": 1}  # 92.2 %
+    assert card_percent("done", prog) == 100.0  # finished = 100 %
+    assert card_percent("done", None) == 100.0  # even without a distance record
+    assert card_percent("running", prog) == pytest.approx(92.2)  # live
+    assert card_percent("failed", prog) == pytest.approx(92.2)  # at that moment
+    assert card_percent("suspended", {"dist_done_m": 5.0, "route_total_m": 10.0,  # 2 loops
+                                      "loop_total": 2}) == pytest.approx(25.0)  # PP-3
+    assert card_percent("running", {"dist_done_m": 30.968, "route_total_m": 30.942,  # overshoot
+                                    "loop_total": 1}) == 100.0  # clamped
+    assert card_percent("running", {"dist_done_m": 1.0, "route_total_m": 0.0,  # PP-3a
+                                    "loop_total": 1}) is None  # no division
+    assert card_percent("running", None) is None  # unknown, never 0
+    for queued in ("pending", "scheduled", "ready", "blocked"):  # not moved yet
+        assert card_percent(queued, None) == 0.0
+
+
+async def _progress(dao, task_id, dist, total, loops=1):
+    """One patrol_progress row (the columns PP-3 reads plus the NOT NULL ones)."""
+    await dao._conn.execute(
+        "INSERT INTO patrol_progress (task_id, route_name, route_rev, direction, "
+        "waypoint_total, dist_done_m, route_total_m, loop_total, created_at, updated_at) "
+        "VALUES (?, 'r', 1, 'forward', 10, ?, ?, ?, 't', 't')",
+        (task_id, dist, total, loops))
+    await dao._conn.commit()
+
+
+@pytest.mark.asyncio
+async def test_cards_read_the_tasks_distance_row(dao):
+    """Each card reads its own task's patrol_progress row. MUTATION: progress
+    not joined -> None -> red; rows crossed between tasks -> red."""
+    await _seed(dao)
+    await _progress(dao, "t-1", 7.5, 10.0)  # running: 75 %
+    await _progress(dao, "t-4", 3.0, 12.0)  # the failed one: 25 % when it failed
+    cur = {c["task_id"]: c for c in (await query_task_cards(dao._conn, scope="current", limit=10))["tasks"]}
+    assert cur["t-1"]["progress"]["percent"] == pytest.approx(75.0)  # live
+    hist = {c["task_id"]: c for c in (await query_task_cards(dao._conn, scope="history", limit=10))["tasks"]}
+    assert hist["t-4"]["progress"]["percent"] == pytest.approx(25.0)  # frozen at failure
+    assert hist["t-3"]["progress"]["percent"] == 100.0  # done
+    assert hist["t-5"]["progress"]["percent"] is None  # cancelled, never moved: unknown
 
 
 @pytest.mark.asyncio

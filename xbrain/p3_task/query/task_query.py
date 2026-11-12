@@ -41,7 +41,7 @@ Looks-right-but-wrong traps this guards:
 
 from __future__ import annotations
 
-from typing import Any, Dict, List, Mapping, Optional
+from typing import Any, Dict, List, Mapping, Optional, Sequence
 
 from xbrain.p3_task.state.machine import TERMINAL_STATES
 
@@ -76,38 +76,55 @@ _SCOPE_WHERE = {
 }
 
 
-def _percent(current_step: int, total_steps: int) -> Optional[float]:
-    """Step-based percent for the task card, or None when total is unknown.
+#: Queued states: nothing has moved yet, so the card shows 0 % (not "unknown").
+_NOT_STARTED = ("pending", "scheduled", "ready", "blocked")
 
-    *** DOCSTRING CORRECTED 2026-10-10. It used to read "total_steps is 0
-    until the route layer expands the task (17 S6.10.4 EX-1)". That causal
-    chain does not exist: 15 S9.5A.2 gives total_steps as a CONSTANT PER
-    TASK TYPE (patrol/goto/return_home/standby/follow = 1, charge/teach = 3,
-    composite = child count) and states in as many words that a step "不是
-    waypoint". Nothing was ever going to expand it. ingest/task_row.py now
-    fills it from that table, and schema_task.py's CHECK is back to >= 1.
 
-    So the `total_steps <= 0` branch below is no longer reachable through
-    the database -- the CHECK forbids it. It is kept as a guard for the
-    hand-built mappings task_card_from_row also accepts (several criteria
-    pass dicts directly), where a caller can still omit the field.
+def card_percent(state: str, prog: Optional[Mapping[str, Any]]) -> Optional[float]:
+    """Field 5 (已巡逻) of the task card: how far the robot has MOVED, by distance.
 
-    *** AND A LARGER QUESTION THIS FUNCTION SITS ON, registered rather than
-    answered: 15 S9.5A.2 ST-3 says verbatim that "current_step 不用于对外
-    进度百分比 -- TaskState.progress.pct 只按里程算 (PP-3)", with the reason
-    "两套百分比会让 HMI 与云端各读一个". This function computes a percent
-    FROM current_step. Whether the 17 S6.8.4 task card's percent is the same
-    quantity ST-3 is talking about, or a separate step-based indicator the
-    card is entitled to, is not something either volume settles -- and the
-    field-5 reference in the old docstring pointed at 17's "completed plans
-    list", which is not a percent at all. See docs/NEXT.md.
+    User ruling 2026-11-12: a running task shows the live percent; a finished
+    one 100 %; a suspended / failed / cancelled one the percent at that moment.
+    15 S9.5A.2 ST-3 + S9.5B PP-3: the external percent is by distance only,
+    pct = dist_done_m / (loop_total x route_total_m) x 100, computed on read
+    from the task's patrol_progress row (P3 flushes it at every route point and
+    at least every progress_flush_s). ~~current_step / total_steps~~ -- the step
+    count is 1 for patrol / goto, so the card could only read 0 or 100 %.
+
+      done                      -> 100.0 (even if dist_done_m ended a few cm short)
+      queued (_NOT_STARTED)     -> 0.0
+      a progress row            -> the PP-3 percent, clamped to 0..100 (dist_done_m
+                                   overshoots route_total_m by centimetres)
+      anything else             -> None: unknown, the card shows "--", never a guess
     """
-    if not total_steps or total_steps <= 0:
+    if state == "done":  # finished: the whole way, by definition
+        return 100.0
+    if state in _NOT_STARTED:  # still waiting: not moved
+        return 0.0
+    if not prog:  # no distance record (standby, a charge before its leg)
         return None
-    return round(100.0 * current_step / total_steps, 1)
+    total = (prog.get("route_total_m") or 0.0) * (prog.get("loop_total") or 0)  # whole job
+    if total <= 0:  # PP-3a: a zero length would divide by zero
+        return None
+    pct = 100.0 * (prog.get("dist_done_m") or 0.0) / total  # PP-3
+    return round(max(0.0, min(100.0, pct)), 1)  # clamp the centimetre overshoot
 
 
-def task_card_from_row(row: Mapping[str, Any]) -> Dict[str, Any]:
+async def _progress_rows(conn, task_ids: Sequence[str]) -> Dict[str, Dict[str, Any]]:
+    """The patrol_progress row of each task on the page (task_id is UNIQUE there:
+    one distance record per task, kept through suspend / resume)."""
+    if not task_ids:  # empty page
+        return {}
+    marks = ",".join("?" * len(task_ids))  # one placeholder per id
+    cur = await conn.execute(  # one query for the whole page
+        "SELECT task_id, dist_done_m, route_total_m, loop_total FROM patrol_progress "
+        "WHERE task_id IN (%s)" % marks, list(task_ids))
+    return {r[0]: {"dist_done_m": r[1], "route_total_m": r[2], "loop_total": r[3]}
+            for r in await cur.fetchall()}  # task_id -> its distance record
+
+
+def task_card_from_row(row: Mapping[str, Any],
+                       prog: Optional[Mapping[str, Any]] = None) -> Dict[str, Any]:
     """Project one tasks row (a _CARD_COLUMNS mapping) into a 17 S6.8.4 card.
 
     '' -> None for the nullable TEXT display fields so the frontend gets an
@@ -126,7 +143,8 @@ def task_card_from_row(row: Mapping[str, Any]) -> Dict[str, Any]:
         "progress": {                                   # field 5
             "current_step": row["current_step"],
             "total_steps": row["total_steps"],
-            "percent": _percent(row["current_step"], row["total_steps"]),
+            # by distance (card_percent); the step fields stay for the record
+            "percent": card_percent(row["state"], prog),
         },
     }
 
@@ -161,7 +179,8 @@ async def query_task_cards(conn, *, scope: str, limit: int,
     # construction. A silent truncation here would hand task_card_from_row a
     # dict with the tail keys missing -- a card short a field, not an error.
     dicts = [dict(zip(_CARD_COLUMNS, r, strict=True)) for r in kept]
-    cards = [task_card_from_row(d) for d in dicts]
+    progress = await _progress_rows(conn, [d["task_id"] for d in dicts])  # one query
+    cards = [task_card_from_row(d, progress.get(d["task_id"])) for d in dicts]
     # Cursor for the next page = the last kept row's submit_seq, only when there
     # IS a next page (else None so the client stops paging).
     next_before = dicts[-1]["submit_seq"] if (has_more and dicts) else None
