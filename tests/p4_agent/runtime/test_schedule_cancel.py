@@ -195,3 +195,40 @@ def test_the_next_minute_is_free():  # 15:01 is another slot
     """MUTATION: compare hours -> 15:01 refused -> red."""
     _said, frame = _say(_orch([_A]), OrchestratorSession(), "下午3点01分去1号测试点")
     assert frame is not None and frame["task"]["not_before_ts"] == _T15 + 60  # scheduled
+
+
+
+# -- 99 U174 (user ruling 2026-11-12): the whole queue by voice / text -----------
+@pytest.mark.parametrize("text", ["取消所有任务", "取消全部任务", "删除所有的任务",
+                                  "取消排队中的任务", "取消所有排队的任务",
+                                  "清空任务队列", "清空所有任务", "把所有任务取消掉"])
+def test_parse_cancel_queue(text):
+    """MUTATION: drop _QUEUE_WORDS / _CLEAR_QUEUE -> not parsed -> red."""
+    got = parse_ptp(text)
+    assert got is not None and got.kind == "cancel_queue"
+
+
+@pytest.mark.parametrize("text", ["取消任务", "取消巡逻的任务", "取消所有定时任务"])
+def test_plain_and_scheduled_cancels_are_not_the_queue(text):
+    """MUTATION: read every 取消...任务 as the queue -> B07 / U144 hijacked -> red."""
+    got = parse_ptp(text)
+    assert got is None or got.kind != "cancel_queue"
+
+
+def test_cancel_all_tasks_clears_the_whole_queue():
+    """MUTATION: keep the scheduled filter -> ready tasks stay -> red."""
+    ready = dict(_A, task_id="t-r", state="ready", not_before_ts=None)
+    said, frame = _say(_orch([_A, ready]), OrchestratorSession(), "取消所有任务")
+    assert frame["action"] == "clear_queue" and "filter" not in frame
+    assert said == "好的,取消全部排队中的任务"  # the count follows from P3's ack
+
+
+def test_cancel_all_tasks_says_the_running_one_is_kept():
+    """S7.2: clear_queue leaves running alone -- said, not hidden.
+    MUTATION: drop the running branch -> the plain sentence -> red."""
+    orch = _orch([_A])
+    state = orch._state_fn()  # the snapshot the orchestrator reads
+    state["state/task"]["current"] = {"task_id": "t-run", "type": "goto", "state": "running"}
+    said, frame = _say(orch, OrchestratorSession(), "取消所有任务")
+    assert frame["action"] == "clear_queue"
+    assert said == "好的,取消全部排队中的任务. 正在执行的任务不受影响, 要停下请说取消任务"

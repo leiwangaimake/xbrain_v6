@@ -397,12 +397,15 @@ def test_clear_scheduled_speaks_p3s_count(cleared, text):  # 99 U147 race fix
     assert _said(out)[1] == text  # P3's number
 
 
-def test_an_unfiltered_clear_stays_silent():  # only the scheduled sweep is counted
-    """MUTATION: drop the filter check -> a plain clear_queue speaks too -> red."""
+def test_an_unfiltered_clear_says_the_queue_count():  # 99 U174
+    """Until 2026-11-12 no P4 turn sent an unfiltered clear_queue and this case
+    asserted silence; "取消所有任务" (U174) sends one and its count is P3's.
+    MUTATION: speak the scheduled sentence for it -> "定时任务" -> red."""
     sp = AckSpeaker()  # fresh
     sp.note_turn(_sent("cmd/task", {"cmd_id": "c-2", "action": "clear_queue"}))  # no filter
-    assert sp.on_ack(_b({"cmd_id": "c-2", "result": "accepted", "code": "OK",
-                         "detail": {"cleared_ids": ["t-1"]}})) is None  # the turn said it
+    out = sp.on_ack(_b({"cmd_id": "c-2", "result": "accepted", "code": "OK",
+                        "detail": {"cleared_ids": ["t-1"]}}))
+    assert _said(out)[1] == "已取消1个排队中的任务"  # not the scheduled wording
 
 
 # -- 99 U162: a recording's result as a second state/voice_turn ----------------
@@ -672,3 +675,20 @@ def test_a_refused_capture_is_published_as_rejected():
     (rec,) = _turns(out)
     assert rec["verdict"] == "rejected" and rec["reject_code"] == "E_GEO_INVALID"
     assert rec["reply_text"] == "2号充电站没有记录, 充电桩和充电站必须在某条路径5米以内"
+
+
+
+# -- 99 U174: the count of a whole-queue cancel is P3's -------------------------
+@pytest.mark.parametrize("ids,said", [(["t-1", "t-2"], "已取消2个排队中的任务"),
+                                      ([], "现在没有排队中的任务")])
+def test_a_whole_queue_cancel_says_how_many_p3_cleared(ids, said):
+    """MUTATION: no unfiltered branch -> accepted says nothing -> red."""
+    sp = AckSpeaker()
+    sp.note_turn([("cmd/task", _b({"cmd_id": "c-q", "action": "clear_queue",
+                                    "source": "local"})),
+                  ("cmd/audio/speak", _b({"schema": "p4_speak_v1",
+                                          "text": "好的,取消全部排队中的任务",
+                                          "source": "tts_local"}))])
+    out = sp.on_ack(_b({"cmd_id": "c-q", "result": "accepted", "code": "OK",
+                        "detail": {"cleared_ids": ids, "applied": {"cleared": len(ids)}}}))
+    assert _said(out)[1] == said

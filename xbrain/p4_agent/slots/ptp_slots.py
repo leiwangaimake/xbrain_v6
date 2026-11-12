@@ -148,6 +148,8 @@ class PtpParse:  # one parsed command
     loops: Optional[int] = None  # patrol / repeat: the spoken lap count, None = not said
     round_trip: bool = False  # patrol / repeat: a "来回" sentence (U131)
     every: bool = False  # cancel_scheduled: "所有 / 全部" (99 U144)
+    # kind cancel_queue (99 U174): every waiting task -- "取消所有任务",
+    # "取消排队中的任务", "清空任务队列".
 
 
 #: G48: "X(路径)上有哪些航点" -- X must end like a route name (it is what the
@@ -376,6 +378,15 @@ _CANCEL_BACK = re.compile("^把" + _CANCEL_ALL + "(?P<rest>.*?)(?P<kind>定时�
                           + _CANCEL_VERB + "(?:掉|了)?$")
 
 
+#: 99 U174: what may stand between "取消[所有]" and "任务" for the whole queue.
+#: "" only counts with 所有 / 全部 (a bare "取消任务" is B07's plain cancel).
+_QUEUE_WORDS = ("", "排队", "排队的", "排队中", "排队中的", "等待", "等待中的",
+                "待执行", "待执行的", "未执行", "未执行的")
+#: 99 U174: "清空任务队列" / "清空队列" / "清空所有任务".
+_CLEAR_QUEUE = re.compile("^清空(?:所有的|全部的|所有|全部)?(?:排队中的|排队的)?"
+                          "(?:任务队列|任务|队列)$")
+
+
 def _cancel_scheduled(text: str) -> Optional[PtpParse]:
     """The 99 U144 cancel sentence, or None."""
     t = _PUNCT.sub("", text or "")  # same normalisation as _stages
@@ -383,6 +394,8 @@ def _cancel_scheduled(text: str) -> Optional[PtpParse]:
         if t.startswith(lead) and len(t) > len(lead):
             t = t[len(lead):]
             break
+    if _CLEAR_QUEUE.match(t):  # 99 U174
+        return PtpParse("cancel_queue", "")
     m = _CANCEL_FRONT.match(t) or _CANCEL_BACK.match(t)  # either word order
     if m is None:
         return None  # not a cancel sentence
@@ -393,9 +406,14 @@ def _cancel_scheduled(text: str) -> Optional[PtpParse]:
         timed_word = m.group("kind") == "定时任务"
     when, desc = split_time_prefix(rest) if rest else (None, "")
     desc = _trim(desc.strip("的"), ("的",)) if desc else ""  # "的沿1号路径巡逻的" -> content
-    if not timed_word and when is None:
-        return None  # "取消任务" / "取消巡逻的任务": B07's plain cancel
     every = bool(m.groupdict().get("all"))  # 所有 / 全部
+    if not timed_word and when is None:
+        # 99 U174 (user ruling 2026-11-12): queued tasks must be cancellable by
+        # voice / text. "取消所有任务" / "取消排队中的任务" clear the queue; a
+        # content word ("取消巡逻的任务") still means B07's plain cancel.
+        if (every and desc in _QUEUE_WORDS) or (desc in _QUEUE_WORDS and desc):
+            return PtpParse("cancel_queue", "")
+        return None  # "取消任务" / "取消巡逻的任务": B07's plain cancel
     return PtpParse("cancel_scheduled", desc, when=when, every=every)
 
 

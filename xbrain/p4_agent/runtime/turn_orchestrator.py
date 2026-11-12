@@ -189,6 +189,9 @@ _SCHED_CN = {
     # a broadcast (measured ~0.3 s: "全部2个" said while P3 cleared 1); the
     # count is P3's, spoken from cmd/task/ack (ack_speech _SCHED_CLEARED).
     "done_all": "好的,取消全部定时任务",
+    # 99 U174: the queue; the count is P3's (ack_speech), as for done_all.
+    "queue_all": "好的,取消全部排队中的任务",
+    "queue_all_running": "好的,取消全部排队中的任务. 正在执行的任务不受影响, 要停下请说取消任务",
     "ambiguous": "现在有{n}个定时任务: {items}. 没有取消. 要取消其中一个, 请带上时间说, 例如: 取消{example}的定时任务",
 }
 
@@ -1235,6 +1238,20 @@ class TurnOrchestrator:
                                      rule_slots=dslots)
         if ptp.kind == "cancel_scheduled":
             return self._cancel_scheduled(ptp, text, session, now_mono_ms, _reply)
+        if ptp.kind == "cancel_queue":
+            # 99 U174 (user ruling 2026-11-12): every waiting task (pending /
+            # scheduled / blocked / ready) through clear_queue with no filter;
+            # S7.2 leaves running and suspended alone, and the answer says so
+            # when something is running. Always sent: the snapshot may lag.
+            state = self._state_fn() if self._state_fn else {}
+            task = state.get("state/task") if isinstance(state, Mapping) else None
+            if isinstance(task, Mapping) and isinstance(task.get("data"), Mapping):
+                task = task["data"]  # 11 S3.0 envelope
+            running = isinstance(task, Mapping) and isinstance(task.get("current"), Mapping)
+            self._turn_ptp_ack = _SCHED_CN["queue_all_running" if running else "queue_all"]
+            return self._route_entry(self._registry.by_id("B07"), text, session,
+                                     now_mono_ms, layer="ptp_rule",
+                                     rule_slots={"cancel_queue_all": True})
         if ptp.kind in ("return_home", "charge"):
             # 99 U143 (user ruling 2026-11-06 "支持定时"): "下午3点返航" /
             # "10分钟后去充电". The parser yields these kinds ONLY with a time,
@@ -1578,6 +1595,12 @@ class TurnOrchestrator:
                     channel=self._turn_channel, asr_text=text)}
         _sched = extra or {}
         if (entry.name == "cancel_task" and not release_hold
+                and _sched.get("cancel_queue_all")):
+            # 99 U174: the whole queue -- clear_queue with no state filter.
+            extra = {**_sched, "task_command": {
+                "cmd_id": uuid.uuid4().hex, "action": "clear_queue",
+                "source": task_source(self._turn_channel)}}
+        elif (entry.name == "cancel_task" and not release_hold
                 and (_sched.get("cancel_task_id") or _sched.get("cancel_scheduled_all"))):
             # 99 U144: a scheduled task picked by _cancel_scheduled -- by id,
             # or every scheduled task through clear_queue's state filter.

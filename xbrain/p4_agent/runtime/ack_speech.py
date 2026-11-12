@@ -207,6 +207,9 @@ _REC_DISCARDED = "已取消录制{name}, 录到的{count}个点已丢弃"  # 99 
 #: the one P4's (possibly stale) state/task snapshot showed at the turn.
 _SCHED_CLEARED = "已取消{n}个定时任务"
 _SCHED_NONE_LEFT = "现在没有定时任务"
+#: 99 U174: "取消所有任务" -- clear_queue with no filter, the count P3 cleared.
+_QUEUE_CLEARED = "已取消{n}个排队中的任务"
+_QUEUE_NONE_LEFT = "现在没有排队中的任务"
 
 #: cmd/task/ack: what the refused action was, in words.
 _TASK_VERB = {"pause": "暂停", "resume": "继续", "cancel": "取消",
@@ -606,6 +609,10 @@ def _sentence(key: str, cmd: Dict[str, Any], ack: Dict[str, Any]) -> Optional[st
             and cmd.get("filter") == {"state": "scheduled"}):
         n = len(detail.get("cleared_ids") or [])  # S7.2: cleared_ids is mandatory
         return _SCHED_CLEARED.format(n=n) if n else _SCHED_NONE_LEFT
+    if (key == CMD_TASK and accepted and cmd.get("action") == "clear_queue"
+            and not cmd.get("filter")):  # 99 U174: the whole queue
+        n = len(detail.get("cleared_ids") or [])
+        return _QUEUE_CLEARED.format(n=n) if n else _QUEUE_NONE_LEFT
     if accepted:
         return None  # the turn already said what it does
     if key == CMD_TASK:
