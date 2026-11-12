@@ -113,35 +113,36 @@ async def test_live_link_loss_returns_are_cancelled_and_committed(db):
     MUTATION: skip the clear -> rh rows stay live -> red; clear every
     return_home (not only rh-*) -> the low-battery one is cancelled -> red;
     drop the commit -> the second connection still reads live -> red."""
-    conn, path = db
-    dao = TasksDAO(conn)
-    for row in (_rh("rh-1-1", 1), _rh("rh-2-1", 2), _rh("rh-3-1", 3), _rh("rh-4-1", 4),
-                goto_row("t-q", "ready", 5)):
-        await dao.insert(row)
+    conn, path = db  # connection and file
+    dao = TasksDAO(conn)  # rows written as P3 writes them
+    for row in (_rh("rh-1-1", 1), _rh("rh-2-1", 2), _rh("rh-3-1", 3), _rh("rh-4-1", 4),  # four F-5 rows
+                goto_row("t-q", "ready", 5)):  # and an operator goto that must stay
+        await dao.insert(row)  # all pending first; states are set below
     lb = _rh("lb-a-1", 6)  # a low-battery return: same type, not a link-loss one
-    await dao.insert(lb)
-    await conn.execute("UPDATE tasks SET state='suspended', suspend_kind='passive', "
-                       "suspend_reason='unclean_shutdown' WHERE task_id='rh-2-1'")
-    await conn.execute("UPDATE tasks SET state='running' WHERE task_id='rh-3-1'")
-    await conn.execute("UPDATE tasks SET state='cancelled' WHERE task_id='rh-4-1'")
-    await conn.commit()
-    cleared = await cancel_link_loss_returns(conn, 1000)
-    assert cleared == [("rh-1-1", "pending"), ("rh-2-1", "suspended"), ("rh-3-1", "running")]
+    await dao.insert(lb)  # stays pending: not ours to clear
+    await conn.execute("UPDATE tasks SET state='suspended', suspend_kind='passive', "  # what boot recovery
+                       "suspend_reason='unclean_shutdown' WHERE task_id='rh-2-1'")  # leaves behind
+    await conn.execute("UPDATE tasks SET state='running' WHERE task_id='rh-3-1'")  # killed mid-run
+    await conn.execute("UPDATE tasks SET state='cancelled' WHERE task_id='rh-4-1'")  # already terminal
+    await conn.commit()  # as on disk at power-up
+    cleared = await cancel_link_loss_returns(conn, 1000)  # the step under test
+    assert cleared == [("rh-1-1", "pending"), ("rh-2-1", "suspended"), ("rh-3-1", "running")]  # each from-state, id order
     async with aiosqlite.connect(path) as other:  # only committed rows are visible here
-        cur = await other.execute("SELECT task_id, state, suspend_kind, finished_at "
-                                  "FROM tasks ORDER BY task_id")
-        got = {r[0]: r[1:] for r in await cur.fetchall()}
-    for tid in ("rh-1-1", "rh-2-1", "rh-3-1"):
-        assert got[tid][0] == "cancelled" and got[tid][1] is None and got[tid][2]
-    assert got["rh-4-1"][0] == "cancelled" and got["lb-a-1"][0] == "pending"
+        cur = await other.execute("SELECT task_id, state, suspend_kind, finished_at "  # the terminal columns
+                                  "FROM tasks ORDER BY task_id")  # every row, cleared or not
+        got = {r[0]: r[1:] for r in await cur.fetchall()}  # task_id -> (state, kind, finished_at)
+    for tid in ("rh-1-1", "rh-2-1", "rh-3-1"):  # the three live F-5 rows
+        assert got[tid][0] == "cancelled" and got[tid][1] is None and got[tid][2]  # terminal, CR-8 clean, timed
+    assert got["rh-4-1"][0] == "cancelled" and got["lb-a-1"][0] == "pending"  # untouched both
     assert got["t-q"][0] == "ready"  # nothing else touched
 
 
 @pytest.mark.asyncio
 async def test_no_link_loss_return_opens_no_transaction(db):
     """MUTATION: BEGIN before the empty check -> in_transaction stays set -> red."""
-    conn, _path = db
-    await TasksDAO(conn).insert(goto_row("t-q", "ready", 1))
-    await conn.commit()
-    assert await cancel_link_loss_returns(conn, 1000) == []
-    assert not conn.in_transaction
+    conn, _path = db  # the file is not needed here
+    await TasksDAO(conn).insert(goto_row("t-q", "ready", 1))  # no rh-* at all
+    await conn.commit()  # a clean start-up state
+    assert await cancel_link_loss_returns(conn, 1000) == []  # nothing cleared
+    assert not conn.in_transaction  # and no write lock left behind (ES-2 shape)
+

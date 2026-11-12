@@ -113,29 +113,32 @@ async def cancel_link_loss_returns(conn, now_mono_ms: int) -> List[Tuple[str, st
     suspend fields cleared, duration_sec NULL (the row started in an earlier
     boot, and 15 S9.5 forbids a wall-clock difference across boots).
     """
-    cur = await conn.execute(
-        "SELECT task_id, state FROM tasks WHERE task_type='return_home' "
-        "AND task_id LIKE 'rh-%%' AND state IN (%s) ORDER BY task_id"
-        % ",".join("'%s'" % s for s in _RH_LIVE))
-    rows = [(r[0], r[1]) for r in await cur.fetchall()]
+    # Only the F-5 rows: the task_id prefix is what marks a link-loss return
+    # (link_loss.maybe_inject_return_home writes rh-{gw}-{epoch}); a low-battery
+    # return_home (lb-*) or an operator's B08 shares the type and must survive.
+    cur = await conn.execute(  # read-only: no transaction yet
+        "SELECT task_id, state FROM tasks WHERE task_type='return_home' "  # the F-5 type
+        "AND task_id LIKE 'rh-%%' AND state IN (%s) ORDER BY task_id"  # '%%' -> '%' after %-format
+        % ",".join("'%s'" % s for s in _RH_LIVE))  # the live states, from the constant
+    rows = [(r[0], r[1]) for r in await cur.fetchall()]  # (task_id, from_state)
     if not rows:
         return []  # nothing to clear: no transaction opened
     for _tid, state in rows:  # legality checked before anything is written
-        apply_transition(state, "cancel")
-    await conn.execute("BEGIN IMMEDIATE")
+        apply_transition(state, "cancel")  # raises on a state with no cancel arrow
+    await conn.execute("BEGIN IMMEDIATE")  # the write lock, as every P3 write path
     try:
-        for task_id, _state in rows:
-            await conn.execute(
-                "UPDATE tasks SET state='cancelled', suspend_kind=NULL, "
-                "suspend_reason=NULL, updated_ms=?, duration_sec=NULL, "
-                "finished_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE task_id=?",
-                (now_mono_ms, task_id))
-        await conn.commit()
+        for task_id, _state in rows:  # every live rh-*, not only the newest
+            await conn.execute(  # the operator-cancel terminal columns, written in one go
+                "UPDATE tasks SET state='cancelled', suspend_kind=NULL, "  # CR-8: no suspend fields off suspended
+                "suspend_reason=NULL, updated_ms=?, duration_sec=NULL, "  # NULL: started in an earlier boot (15 S9.5)
+                "finished_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE task_id=?",  # audit wall time, display only
+                (now_mono_ms, task_id))  # updated_ms is monotonic (CLK-C1)
+        await conn.commit()  # never leave the implicit transaction open (ES-2 bug)
     except Exception:
         await conn.rollback()  # all or nothing, the caller logs it
-        raise
-    return rows
+        raise  # start-up must see it, not a half-cleared queue
+    return rows  # the caller publishes one task event per row
 
 
-__all__ = ["suspend_unclosed_running", "cancel_link_loss_returns",
-           "BOOT_SUSPEND_KIND", "BOOT_SUSPEND_REASON", "BOOT_CLEAR_REASON"]
+__all__ = ["suspend_unclosed_running", "cancel_link_loss_returns",  # the two start-up steps
+           "BOOT_SUSPEND_KIND", "BOOT_SUSPEND_REASON", "BOOT_CLEAR_REASON"]  # their attributions

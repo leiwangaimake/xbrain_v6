@@ -255,7 +255,7 @@ class LowBatteryMonitor:  # the episode state machine
         self.last_cold_swap = False  # the last swap end was judged cold (detail.cold_swap)
         # 99 U171: the lowest not-charging soc of this episode, what a swap's
         # rise is measured from; reset to the current soc while charging.
-        self._rise_base: Optional[float] = None
+        self._rise_base: Optional[float] = None  # None: no episode, or no soc seen yet
 
     @property
     def low(self) -> bool:
@@ -283,7 +283,7 @@ class LowBatteryMonitor:  # the episode state machine
         return {"phase": self.phase, "stopped": self.stopped, "last_alarm": self._last_alarm,
                 "absent_since": dict(self._absent_since), "swap_pending": self._swap_pending,
                 "restored": self._restored, "restored_soc": self._restored_soc,
-                "last_cold_swap": self.last_cold_swap, "rise_base": self._rise_base,
+                "last_cold_swap": self.last_cold_swap, "rise_base": self._rise_base,  # U171 state too
                 "charging": (self.charging.stable, self.charging.raw, self.charging._since)}
 
     def rollback(self, snap: Mapping[str, Any]) -> None:
@@ -294,7 +294,7 @@ class LowBatteryMonitor:  # the episode state machine
         self._absent_since, self._swap_pending = dict(snap["absent_since"]), snap["swap_pending"]
         self._restored, self._restored_soc = snap["restored"], snap["restored_soc"]
         self.last_cold_swap = snap["last_cold_swap"]
-        self._rise_base = snap["rise_base"]
+        self._rise_base = snap["rise_base"]  # a rolled-back frame re-judges the same rise
         self.charging.stable, self.charging.raw, self.charging._since = snap["charging"]
 
     def _enter(self, phase: str) -> None:  # a phase change inside an episode
@@ -308,7 +308,7 @@ class LowBatteryMonitor:  # the episode state machine
         self.phase, self.stopped, self._last_alarm = PHASE_IDLE, False, None
         self._absent_since, self._swap_pending = {}, False  # presence history belongs to one episode
         self._restored, self._restored_soc = False, None
-        self._rise_base = None
+        self._rise_base = None  # the next episode measures from its own start
 
     def _track_presence(self, power: Mapping[str, Any], now_s: float) -> None:  # 99 U154 swap evidence
         """Record when a slot went empty; a slot that is filled again after
@@ -364,15 +364,15 @@ class LowBatteryMonitor:  # the episode state machine
                 self._swap_pending = False  # judged on the soc of the refill, once
                 hot = soc >= self._trigger
             rise = False  # 99 U171: a large rise without charging is a swap
-            if soc is not None:
-                if raw or stable is not False or self.phase == PHASE_CHARGING:
+            if soc is not None:  # no soc this frame: nothing to measure, base kept
+                if raw or stable is not False or self.phase == PHASE_CHARGING:  # any hint of charging
                     self._rise_base = soc  # on the charger (or not yet known): a rise from here is the charge
-                else:
-                    rise = (self._rise_base is not None
-                            and self.phase in (PHASE_LOW, PHASE_INTERRUPTED)
-                            and soc >= self._trigger
-                            and soc - self._rise_base >= self._cold_rise)
-                    self._rise_base = soc if self._rise_base is None else min(self._rise_base, soc)
+                else:  # confirmed not charging: a rise here came from a new pack
+                    rise = (self._rise_base is not None  # a base to measure from
+                            and self.phase in (PHASE_LOW, PHASE_INTERRUPTED)  # not while charging
+                            and soc >= self._trigger  # out of the low band, as hot / cold require
+                            and soc - self._rise_base >= self._cold_rise)  # 10 points: not a wobble
+                    self._rise_base = soc if self._rise_base is None else min(self._rise_base, soc)  # the episode low
             if hot or cold or rise:  # a swap (99 U154 / U157 / U171)
                 full = soc >= self._swap_resume  # U157: high enough to resume at once
                 self.last_cold_swap = cold and not hot  # for the cleared report
