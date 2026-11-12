@@ -169,3 +169,18 @@ def test_the_disc_colours_are_configured():
     assert w["dock_fill_color"].lower() == "#ffd400"  # yellow
     assert w["home_fill_color"].lower() == "#22c55e"  # green
     assert w["disc_outline_px"] == 1.0 and w["disc_outline_color"].lower() == "#1a1a1a"  # thin dark edge
+
+
+def test_the_goto_pin_is_a_waypoint_disc_and_the_disc_is_tappable():
+    """User 2026-11-12: the blinking target disc is as large as a waypoint disc,
+    and (the disc having grown past snap_px) a tap anywhere on a disc picks it.
+    MUTATION: pin back to 20 -> red; keypoint hit = snap_px only -> a tap 20 px
+    from the centre misses -> red; hit ignoring a larger snap_px -> red."""
+    web = _web()  # source yaml
+    w = web["waypoint"]  # U6
+    assert web["goto"]["pin_diameter_px"] == pytest.approx(2 * (w["radius_px"] + w["ring_px"] / 2))  # 48
+    with open(_HMI_JS, encoding="utf-8") as f:  # the fallback must match too
+        assert "const GOTO_PIN_PX_FALLBACK = 48;" in f.read()  # same look without config
+    got = _node('[keypointHitPx(14, {waypoint: {radius_px: 22, ring_px: 4}}),'  # disc 24 > 14
+                ' keypointHitPx(30, {waypoint: {radius_px: 22, ring_px: 4}})]')  # snap larger
+    assert got == [24, 30]  # the larger of the two

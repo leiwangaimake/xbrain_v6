@@ -262,6 +262,14 @@
     }
     return { kind, num };
   }
+  // Tap radius for a keypoint in screen px: the whole drawn disc (its outer
+  // radius), never less than snap_px. 2026-11-12: the disc grew to 24 px while
+  // snap_px stayed 14, so a tap on the outer ring missed the keypoint.
+  function keypointHitPx(snapPx, c) {
+    const ms = markStyle(c);
+    return Math.max(snapPx, ms.kpRadiusPx + ms.kpRingPx / 2);
+  }
+
   // The number's font size in screen px, scaled with the disc (user 2026-11-12:
   // a larger disc, a larger number). At the first disc size (outer radius 12 px)
   // two digits fit at 14 px and three or more at 10 px; the same proportions
@@ -2069,7 +2077,9 @@
   const GOTO_TRACK_KEY = "xbrain_hmi_goto_track";
   // Presentation fallbacks if ui_config carries no goto group (17 S6.10.2: UI
   // values, not safety values; the yaml is where they are tuned).
-  const GOTO_PIN_PX_FALLBACK = 20;
+  // 2026-11-12 (user): the blinking target disc is the size of a waypoint disc
+  // (outer diameter 2 x 24 px). ~~20~~ superseded.
+  const GOTO_PIN_PX_FALLBACK = 48;
   const GOTO_SNAP_PX_FALLBACK = 14;
   const GOTO_HISTORY_EVERY_MS = 2000;
   const BANNER_INFO_MS = 6000;
@@ -2109,7 +2119,11 @@
     const cx = clientX - r.left, cy = clientY - r.top;
     const toScreen = (xy) => [(xy[0] - vb[0]) / vb[2] * r.width,
                               (xy[1] - vb[1]) / vb[3] * r.height];
-    const lim = gotoCfg().snapPx;
+    const snap = gotoCfg().snapPx;
+    // A keypoint is hit anywhere on its drawn disc (keypointHitPx), a route
+    // point within snap_px -- the disc grew past snap_px on 2026-11-12, and a
+    // tap on its outer ring must not answer "导航位置不正确".
+    let lim = keypointHitPx(snap, cfg);
     let best = null;
     const consider = (pt, mk) => {
       const xy = toXY(pt, lastOrigin); if (!xy) return;
@@ -2124,6 +2138,7 @@
                            lat: g.lat, lon: g.lon }));
     }
     if (best) return best.t;                         // keypoint first
+    lim = snap;                                      // route points: snap_px
     const routes = lastGeo.routes || {};
     if (routes.available) for (const rt of routes.items) {
       if (rt.kind === "realtime") continue;          // the live trail is not a route
