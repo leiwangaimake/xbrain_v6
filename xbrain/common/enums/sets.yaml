@@ -449,6 +449,7 @@ sets:
       - shutdown_pending
       - preempted
       - mode_takeover
+      - nav_stalled
   heading_source:
     source: "11 S3.3"
     anchor: "| `heading_source` | string |"

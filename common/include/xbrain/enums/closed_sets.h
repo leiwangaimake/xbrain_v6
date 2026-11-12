@@ -337,6 +337,7 @@ inline constexpr std::string_view kSuspendReason[] = {
     "shutdown_pending",
     "preempted",
     "mode_takeover",
+    "nav_stalled",
 };
 
 // task_action -- 11 S7.2   anchor: | `action` | 必填字段 | 可选 | 语义 |
