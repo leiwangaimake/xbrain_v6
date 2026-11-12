@@ -82,7 +82,7 @@ def test_p5_forwards_the_whole_event_detail_to_the_result_tracker():
     # 切片终点 = 转发调用. 2026-09-27 起唯一的 publish_event 调用点搬进了
     # _relay_to_cloud(底盘故障派生路共用它, "只有一个调用点"正是云端面不
     # 重复发布的判据), 所以这里改用对那个辅助函数的调用作分界.
-    body = body[:body.index("_relay_to_cloud(ev[")]
+    body = body[:body.index("_relay_to_cloud(_sev")]
     assert "observe_task(dict(_det))" in body, (
         "事件 detail 没有整个交给 result tracker")
 

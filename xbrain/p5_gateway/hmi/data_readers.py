@@ -299,13 +299,18 @@ def chassis_lock_group(robot: Optional[Dict[str, Any]]) -> Dict[str, Any]:
 
 
 def events_group(events: Optional[Sequence[Dict[str, Any]]]) -> Dict[str, Any]:
-    """17 S6.8 group F: recent events for the map dots + event stream.
+    """17 S6.8 group F: the HMI event list (bottom drawer, 17 S6.6).
 
-    `events` come from P5's own record.db (P5 is the writer, so this IS a real
-    source today). Each event keeps eid/title/sev/cat/ts and pos (lat/lon) --
-    but pos is only real once pose exists to stamp it (17 S6.10.4); a null pos
-    means "event known, location not". The map plots a dot only when pos is
-    non-null, so a located-nowhere event shows in the stream but not on the map.
+    `events` is P5's in-memory ring (hmi/event_ring.py: 200 entries, exact
+    repeats merged into one entry with count / first_ts), seeded at start-up
+    from the newest record.db rows (event/recent.py) so it survives a restart.
+    ~~The old docstring said the events "come from P5's own record.db"~~ --
+    superseded 2026-11-12: until then they came from the memory ring only, and
+    a restart emptied the list.
+
+    pos is the event's own place, or the robot's fresh position when the event
+    arrived (pos_src "robot"); None means "event known, place not" -- the drawer
+    then has nothing to flash, and nothing is ever plotted at 0,0.
     """
     if events is None:
         return {"available": False, "items": []}
@@ -313,16 +318,25 @@ def events_group(events: Optional[Sequence[Dict[str, Any]]]) -> Dict[str, Any]:
 
 
 def _event(ev: Dict[str, Any]) -> Dict[str, Any]:
-    """One event row projected for the HMI (map dot + stream line)."""
+    """One ring entry projected for the HMI event drawer."""
     pos = ev.get("pos")
+    has_pos = bool(pos and pos.get("lat") is not None and pos.get("lon") is not None)
     return {
         "eid": ev.get("eid"),
         "title": ev.get("title"),
         "sev": ev.get("sev"),                  # severity -> colour (S6.6)
         "cat": ev.get("cat"),
+        "code": ev.get("code"),
+        "src": ev.get("src"),
+        # detail.type / kind pick the Chinese wording (hmi.js eventText).
+        "detail": ev.get("detail"),
         "ts": ev.get("ts"),
-        # pos None -> stream only, no map dot (do not plot at 0,0).
-        "pos": pos if (pos and pos.get("lat") is not None) else None,
+        # A merged continuous alarm: count occurrences since first_ts.
+        "first_ts": ev.get("first_ts", ev.get("ts")),
+        "count": ev.get("count") or 1,
+        # pos None -> nothing to flash (do not plot at 0,0).
+        "pos": pos if has_pos else None,
+        "pos_src": ev.get("pos_src") if has_pos else None,
     }
 
 
@@ -371,6 +385,7 @@ def build_snapshot(
     robot: Optional[Dict[str, Any]] = None,
     power: Optional[Dict[str, Any]] = None,
     site_timezone: Optional[str] = None,
+    server_ts: Optional[float] = None,
 ) -> Dict[str, Any]:
     """Assemble the full 17 S6.8 HMI snapshot from P5 runtime state.
 
@@ -402,6 +417,12 @@ def build_snapshot(
         "teach": teach_group(teach),
         "battery": battery_group(power),   # toolbar gauges (99 U160)
         "timezone": tz,
+        # P5's wall clock at assembly (2026-11-12, event drawer): the drawer
+        # compares it with event ts -- both stamped on the robot -- to tell a
+        # low-battery alarm that is still repeating from one that stopped. The
+        # browser's own clock may be off; this one is the events' clock. A
+        # top-level key, so its per-push change re-sends only itself.
+        "server_ts": server_ts,
     }
 
 
@@ -464,7 +485,9 @@ def snapshot_delta(prev: Dict[str, Any],
 
     Group-level, NOT deep field-level: the frontend merges a changed group
     wholesale (currentSnap[k] = delta[k]), so a single changed status replaces
-    the whole status group. Cheap to compute, trivially correct to merge. The
+    the whole status group. Cheap to compute, trivially correct to merge.
+    Since 2026-11-12 the top-level server_ts changes on every push, so a quiet
+    tick's delta is {"server_ts": ...} (a few bytes) rather than {}. The
     _MISSING sentinel makes a group that is present in curr but absent in prev
     count as changed (a value of None is a real value, not 'absent').
     """

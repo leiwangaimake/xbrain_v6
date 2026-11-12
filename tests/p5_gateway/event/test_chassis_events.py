@@ -447,7 +447,7 @@ def test_the_wiring_routes_the_chassis_key_into_the_deriver():
 
     src = inspect.getsource(run_voice_loop_wiring)
     body = src[src.index("def _on_event("):]
-    route = body[:body.index("_relay_to_cloud(ev[")]
+    route = body[:body.index("_relay_to_cloud(_sev")]
     assert '_cat == "chassis" and _sev == "fault"' in route
     assert "_on_chassis_fault(key, d)" in route
     # There must be exactly ONE subscriber feeding it: event/** already matches

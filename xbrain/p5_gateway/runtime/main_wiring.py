@@ -33,6 +33,8 @@ from typing import Callable, Optional
 #: 八字段手写一次就是一次拼错的机会, 而拼错的表现是对端 read_envelope
 #: 在某个字段上静默退出, 不报错也不回内容(13 DDS-9 的形状).
 from xbrain.common.envelope import Envelope, encode, read_local_boot_id
+#: HMI event list ring (pure): merge, robot position, record.db seed fold.
+from xbrain.p5_gateway.hmi import event_ring
 
 _logger = logging.getLogger("xbrain.p5.wiring")
 
@@ -138,7 +140,10 @@ POWER_STALE_AFTER_MS = 3000
 # HMI clock readout and the estop-probe envelope ts_sync (2026-10-24 review: both
 # read the last state/clock forever). cloud_state.CLOCK_STALE_MS is the same 5 s.
 CLOCK_STALE_AFTER_MS = 5000
-EVENT_RING = 50                          # HMI keeps the most recent N events
+# HMI event list ring: 200 entries, exact repeats merged (hmi/event_ring.py,
+# user design 2026-11-12). Was 50, which held under two minutes of the 2 s
+# low-battery alarm. Kept as a name here for readers of this file.
+EVENT_RING = 200
 DEFAULT_RTT_DEGRADE_MS = 200             # hmi.link_rtt_degrade_ms fallback (probe, not safety)
 DEFAULT_DOWN_MISSES = 3                   # hmi.link_down_misses fallback (17 S6.3)
 
@@ -477,6 +482,9 @@ def _start_hmi(gen, hmi_cfg: dict, hmi_state: dict,
                 "fences": fences,                  # cmd/fence cache (W1)
                 "mode": hmi_state.get("mode"),     # state/mode (W3)
                 "events": hmi_state.get("events"),  # event/** ring (W2)
+                # WALL-CLOCK-OK(align): the event drawer compares event ts (robot
+                # wall stamps) with this one; display only, no timeout acts on it.
+                "server_ts": time.time(),
                 # routes/keypoints now flow via state/geo/objects (11 S7.10A).
                 # v1.5 PLAN A: geo geometry is WGS84 {lat,lon}, so it REQUIRES an
                 # enu_origin to project -- until SITE calibration (W4 GATED-HW) that
@@ -852,6 +860,16 @@ def run_voice_loop_wiring(stop_flag: dict,
         event_subsystem = None
         replay_pub_normal = replay_pub_alarm = None
         recon_req_pub = None
+        # The HMI event list survives a p5 restart: seed it from the newest
+        # record.db rows (user ruling 2026-11-12, recommendation 7). Read-only,
+        # once, before any subscriber runs; unreadable -> the list starts empty.
+        if record_db_path:
+            from xbrain.p5_gateway.event.recent import read_recent  # noqa: PLC0415
+            _seed_rows = read_recent(record_db_path)
+            if _seed_rows:
+                hmi_state["events"] = event_ring.seed(_seed_rows, cap=EVENT_RING)
+                _logger.info("p5 wiring: event list seeded, rows=%d entries=%d",
+                             len(_seed_rows), len(hmi_state["events"]))
         if record_db_path:
             from xbrain.p5_gateway.runtime.event_subsystem import EventSubsystem
             event_subsystem = EventSubsystem(
@@ -1270,6 +1288,19 @@ def run_voice_loop_wiring(stop_flag: dict,
             except Exception:      # noqa: BLE001
                 _logger.exception("p5 cloud event relay failed")
 
+        def _ring_push(body: dict, sev, cat, ts=None) -> None:
+            """One event into the HMI list ring (merge + robot position).
+
+            REPLACES the list, never mutates it: the web thread reads
+            hmi_state["events"] under the GIL while this runs. The robot pose is
+            taken only while fresh, so a silent state/pose gives pos None.
+            """
+            pose = _pose_if_fresh(hmi_state.get("pose"),
+                                  hmi_state.get("pose_updated_ms") or 0, _now_mono_ms())
+            item = event_ring.ring_item(body, sev, cat, pose, ts=ts)
+            hmi_state["events"] = event_ring.push(hmi_state["events"], item,
+                                                  cap=EVENT_RING)
+
         def _ingest_derived_event(ev: dict) -> None:
             """One already-assembled 11 S6.1 Event -> HMI ring + cloud + record.
 
@@ -1278,10 +1309,7 @@ def run_voice_loop_wiring(stop_flag: dict,
             SNAPSHOT and produces zero or more Events, so it cannot reuse the
             one-message-one-event body above it.
             """
-            hmi_state["events"] = (hmi_state["events"] + [{
-                "eid": ev["eid"], "title": ev["title"], "sev": ev["sev"],
-                "cat": ev["cat"], "ts": ev["ts"], "pos": None,
-            }])[-EVENT_RING:]
+            _ring_push(ev, ev["sev"], ev["cat"])
             _relay_to_cloud(ev["sev"], ev["cat"], ev)
             if event_subsystem is not None and event_subsystem.enabled:
                 link = hmi_state.get("link") or {}
@@ -1364,19 +1392,13 @@ def run_voice_loop_wiring(stop_flag: dict,
             # traceback per comm event, the same day the envelope was added.
             # _normalise_event below has always unwrapped the same way.
             _body = d["data"] if isinstance(d.get("data"), dict) else d
-            ev = {
-                "eid": _body.get("eid") or _body.get("event_id"),
-                "title": _body.get("title") or _body.get("message"),
-                "sev": _sev,
-                "cat": _cat,
-                # Body ts first, envelope ts as the fallback: for a bare
-                # producer they are the same field, and for an enveloped one the
-                # body's is the event's own stamp (11 S6.2) while the envelope's
-                # is the publish instant.
-                "ts": _body.get("ts") or d.get("ts"),
-                "pos": _body.get("pos"),   # None until pose stamps it (W4)
-            }
-            hmi_state["events"] = (hmi_state["events"] + [ev])[-EVENT_RING:]
+            # Body ts first, envelope ts as the fallback: for a bare producer
+            # they are the same field, and for an enveloped one the body's is
+            # the event's own stamp (11 S6.2) while the envelope's is the
+            # publish instant. The ring entry keeps detail / code / src too
+            # (the drawer words its text on detail.type / kind) and merges
+            # exact repeats -- see hmi/event_ring.py.
+            _ring_push(_body, _sev, _cat, ts=_body.get("ts") or d.get("ts"))
             # Cloud result face (v2.0 R12.4): the TERMINAL half of the task
             # transition arrives here, not on state/task. 11 S4.4 TaskState lists
             # only non-terminal tasks, so a finishing task drops OUT of that
@@ -1402,7 +1424,7 @@ def run_voice_loop_wiring(stop_flag: dict,
             # change -- see CLOUD_EVENT in cloud_wiring.py. The call itself sits
             # in _relay_to_cloud so this module keeps exactly one publish_event
             # call site with the chassis path sharing it.
-            _relay_to_cloud(ev["sev"], ev["cat"], _body)
+            _relay_to_cloud(_sev, _cat, _body)
             # Persist + deliver via the event subsystem (fire-and-forget, no-op
             # when disabled). A malformed event normalises to None and is skipped;
             # the HMI ring above is unaffected either way.

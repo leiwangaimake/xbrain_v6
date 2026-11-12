@@ -110,7 +110,7 @@ def test_the_hmi_stream_and_the_relay_gate_read_the_key_not_the_body():
     from double-publishing), so the delimiter is the call TO that helper."""
     src = inspect.getsource(run_voice_loop_wiring)
     body = src[src.index("def _on_event("):]
-    body = body[:body.index("_relay_to_cloud(ev[")]
+    body = body[:body.index("_relay_to_cloud(_sev")]
     assert "_event_sev_cat(key, d)" in body, (
         "the event callback does not derive sev/cat from the key")
     assert '"sev": d.get(' not in body and '"cat": d.get(' not in body, (
@@ -132,7 +132,9 @@ def test_the_relay_gate_is_fed_by_what_the_key_parse_produced():
     call = src[src.index("def _on_event("):]
     call = call[call.index("_relay_to_cloud("):]
     call = call[:call.index("\n")]
-    assert 'ev["sev"]' in call and 'ev["cat"]' in call, call
+    # 2026-11-12: the local ev dict is gone (the HMI ring builds its own
+    # entry, hmi/event_ring.py); the relay is fed the key parse directly.
+    assert call.strip() == "_relay_to_cloud(_sev, _cat, _body)", call
 
 
 def test_the_two_parses_are_one_implementation():

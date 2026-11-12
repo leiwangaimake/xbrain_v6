@@ -158,12 +158,13 @@ def test_on_event_reads_the_body_out_of_the_envelope():
     src = inspect.getsource(run_voice_loop_wiring)
     body = src[src.index("def _on_event("):]
     assert '_body = d["data"] if isinstance(d.get("data"), dict) else d' in body
-    assert '"eid": _body.get("eid")' in body
-    assert '"title": _body.get("title")' in body
+    # 2026-11-12: the HMI ring entry (eid / title / detail / pos) is built
+    # from the BODY by hmi/event_ring.ring_item, not from an inline dict.
+    assert "_ring_push(_body, _sev, _cat" in body
     assert '_det = _body.get("detail")' in body
-    assert "_relay_to_cloud(ev[\"sev\"], ev[\"cat\"], _body)" in body
+    assert "_relay_to_cloud(_sev, _cat, _body)" in body
     # And the old top-level reads are gone, or the unwrap would be decorative.
-    head = body[:body.index("_relay_to_cloud(ev[")]
+    head = body[:body.index("_relay_to_cloud(_sev")]
     assert '"eid": d.get(' not in head and '"title": d.get(' not in head
 
 
