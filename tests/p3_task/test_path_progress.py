@@ -490,3 +490,20 @@ async def test_the_live_wiring_subscribes_and_the_frame_reaches_task_db(
     finally:
         stop["stop"] = True
         await asyncio.wait_for(task, timeout=10.0)
+
+
+
+@pytest.mark.asyncio
+async def test_a_stall_keeps_the_progress_run_for_resume(db):
+    """99 U175: the stalled patrol is suspended and its progress run stays
+    active, so "继续" resumes from it (RP-2). MUTATION: close the run on any
+    truthy result -> run aborted -> red."""
+    dao, pp = await _running_patrol(db)
+    out = await apply_path_progress(
+        _frame(state="failed", fail_reason="watchdog_no_progress", waypoint_index=9),
+        conn=db, dao=dao, progress_dao=pp, tracker=ProgressTracker(),
+        now_mono_ms=1000, now_wall_ms=1_785_000_000_000,
+        on_transition=_noop_transition, boot_id="b1", next_pass=None, pass_latch=set())
+    assert out["closed"] == "suspended"
+    assert (await dao.fetch_by_id("t1")).state == "suspended"
+    assert await pp.fetch_active("t1") is not None  # still resumable

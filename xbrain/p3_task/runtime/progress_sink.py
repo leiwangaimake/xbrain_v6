@@ -235,7 +235,9 @@ async def apply_path_progress(body: Any, *, conn, dao, progress_dao, tracker,
             finished_at=iso_from_wall_ms(now_wall_ms),
             boot_id=boot_id)
         out["closed"] = closed
-        if closed:
+        # 99 U175: a stall SUSPENDED the task (closed == "suspended"); its
+        # progress run stays active so "继续" resumes from it (RP-2).
+        if closed is True:
             # Close the progress run to match the task. 'arrived' completed
             # the run; 'failed' did not. path_progress 'aborted' never reaches
             # here (it maps to no task transition, see

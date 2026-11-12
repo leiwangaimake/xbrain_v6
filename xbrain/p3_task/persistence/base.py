@@ -102,43 +102,56 @@ async def open_configured(path: str, ddl_statements=()):
     if parent:
         os.makedirs(parent, exist_ok=True)
     conn = await aiosqlite.connect(path)
-    for stmt in format_pragma_statements():
-        await conn.execute(stmt)
-    # BEFORE the DDL, not after. Every statement below is CREATE ... IF NOT
-    # EXISTS, so a table that exists in an obsolete shape is silently left
-    # alone by the burst; the reshape has to happen while the burst can still
-    # rebuild what it removes. No-op on a fresh database and on the three DBs
-    # that do not carry the table (15 S9.5 patrol_progress lives in task.db).
-    from xbrain.p3_task.persistence.schema_task import (
-        ensure_patrol_progress_shape,
-        ensure_task_route_snapshot_shape,
-        ensure_task_route_snapshot_uncapped,
-    )
+    # 2026-11-12 (99 U175): a migration or DDL that raises here must not
+    # leak the connection. Its worker thread is not a daemon, so a leaked
+    # connection kept the process alive after the error (found when a
+    # mutant broke the tasks rebuild: the test hung instead of failing).
+    try:
+        for stmt in format_pragma_statements():
+            await conn.execute(stmt)
+        # BEFORE the DDL, not after. Every statement below is CREATE ... IF NOT
+        # EXISTS, so a table that exists in an obsolete shape is silently left
+        # alone by the burst; the reshape has to happen while the burst can still
+        # rebuild what it removes. No-op on a fresh database and on the three DBs
+        # that do not carry the table (15 S9.5 patrol_progress lives in task.db).
+        from xbrain.p3_task.persistence.schema_task import (
+            ensure_patrol_progress_shape,
+            ensure_task_route_snapshot_shape,
+            ensure_task_route_snapshot_uncapped,
+            ensure_tasks_reason_set_current,
+        )
 
-    if await ensure_patrol_progress_shape(conn):
-        _logger.warning(
-            "db %s: dropped the pre-2026-09-28 four-column patrol_progress; "
-            "rebuilding at the 15 S9.5 shape", path)
-    if await ensure_task_route_snapshot_shape(conn):
-        _logger.warning(
-            "db %s: dropped the pre-2026-09-28 per-point task_route_snapshot; "
-            "rebuilding at the 15 S9.3A shape", path)
-    if await ensure_task_route_snapshot_uncapped(conn):
-        _logger.warning(
-            "db %s: rebuilt task_route_snapshot without the 5000-point CHECK "
-            "(99 U163), rows kept", path)
-    for stmt in ddl_statements:
-        await conn.execute(stmt)
-    await conn.commit()
-    # Additive column migration for the geo/fence tables, if this connection
-    # owns any of them. It runs after the DDL and is a no-op on a database that
-    # the DDL just created (every column is already there) and on task.db /
-    # record.db (they have none of those tables). It is here rather than at the
-    # call site so no future opener of geo.db can forget it -- an un-migrated
-    # geo.db does not fail at open, it fails at the first upsert on the robot.
-    from xbrain.p3_task.persistence.schema_geo import ensure_added_columns
+        if await ensure_patrol_progress_shape(conn):
+            _logger.warning(
+                "db %s: dropped the pre-2026-09-28 four-column patrol_progress; "
+                "rebuilding at the 15 S9.5 shape", path)
+        if await ensure_task_route_snapshot_shape(conn):
+            _logger.warning(
+                "db %s: dropped the pre-2026-09-28 per-point task_route_snapshot; "
+                "rebuilding at the 15 S9.3A shape", path)
+        if await ensure_task_route_snapshot_uncapped(conn):
+            _logger.warning(
+                "db %s: rebuilt task_route_snapshot without the 5000-point CHECK "
+                "(99 U163), rows kept", path)
+        if await ensure_tasks_reason_set_current(conn):
+            _logger.warning(
+                "db %s: rebuilt tasks with the current suspend_reason set "
+                "(99 U175 nav_stalled), rows kept", path)
+        for stmt in ddl_statements:
+            await conn.execute(stmt)
+        await conn.commit()
+        # Additive column migration for the geo/fence tables, if this connection
+        # owns any of them. It runs after the DDL and is a no-op on a database that
+        # the DDL just created (every column is already there) and on task.db /
+        # record.db (they have none of those tables). It is here rather than at the
+        # call site so no future opener of geo.db can forget it -- an un-migrated
+        # geo.db does not fail at open, it fails at the first upsert on the robot.
+        from xbrain.p3_task.persistence.schema_geo import ensure_added_columns
 
-    added = await ensure_added_columns(conn)
-    if added:
-        _logger.info("db %s: migrated, %d column(s) added", path, added)
+        added = await ensure_added_columns(conn)
+        if added:
+            _logger.info("db %s: migrated, %d column(s) added", path, added)
+    except BaseException:
+        await conn.close()  # release the worker thread, then re-raise
+        raise
     return conn

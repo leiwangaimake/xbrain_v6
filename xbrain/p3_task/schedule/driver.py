@@ -333,6 +333,20 @@ async def scheduler_tick(conn, dao, *, now_mono_ms: int,
 _MOTION_TERMINAL = {"succeeded": "complete", "aborted": "fail",
                     "rejected": "fail"}
 
+#: 99 U175 (user ruling 2026-11-12): a navigation stall SUSPENDS the task
+#: (passive) instead of failing it, the same outcome as a positioning loss
+#: (RL-2, rtk_degraded). Measured 2026-11-10: two stalls on the same outing,
+#: one judged failed (watchdog_no_progress) and one suspended (no fix); the
+#: operator could resume only the second. Now "继续" re-plans from where the
+#: robot stands (15 S7.3). Only this RNS attribution (20 S9.0.2) is a stall;
+#: every other fail_reason still fails the task.
+NAV_STALL_FAIL_REASONS = frozenset({"watchdog_no_progress"})
+NAV_STALL_SUSPEND_KIND = "passive"
+NAV_STALL_SUSPEND_REASON = "nav_stalled"
+#: apply_motion_result's return for a stall: truthy (a transition was made)
+#: but not True, so the caller keeps the patrol progress run open for resume.
+SUSPENDED_ON_STALL = "suspended"
+
 
 def compute_duration_sec(started_mono: "float | None",
                          started_boot: "str | None",
@@ -423,6 +437,21 @@ async def apply_motion_result(conn, dao, task_id: str, result: str, *,
     full = await dao.fetch_by_id(task_id)
     if full is None or full.state != "running":
         return False                              # already terminal / cancelled
+    if event == "fail" and fail_reason in NAV_STALL_FAIL_REASONS:
+        # 99 U175: suspended, not failed. Same graph check and CR-8 pairing as
+        # every other suspension, BEFORE anything is written.
+        to_state = apply_transition("running", "suspend").to_state
+        validate_suspend_fields(to_state, NAV_STALL_SUSPEND_KIND,
+                                NAV_STALL_SUSPEND_REASON)
+        await dao.suspend_task(task_id, NAV_STALL_SUSPEND_KIND,
+                               NAV_STALL_SUSPEND_REASON, now_mono_ms)
+        await conn.execute(  # the RNS attribution stays on the task (U124)
+            "UPDATE tasks SET error_context_json=? WHERE task_id=?",
+            (json.dumps({"fail_reason": fail_reason}, ensure_ascii=False), task_id))
+        await conn.commit()
+        await on_transition(task_id, "running", to_state,
+                            f"motion:{result}:{fail_reason}")
+        return SUSPENDED_ON_STALL
     transition = apply_transition("running", event)
     # 终态要落 finished_at 与 duration_sec(15 S9.5), update_state 只写 state.
     # 少了这两列: v2.0 S3.3 的 result.summary.duration_sec 无源, 而

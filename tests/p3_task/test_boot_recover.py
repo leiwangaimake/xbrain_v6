@@ -146,3 +146,42 @@ async def test_no_link_loss_return_opens_no_transaction(db):
     assert await cancel_link_loss_returns(conn, 1000) == []  # nothing cleared
     assert not conn.in_transaction  # and no write lock left behind (ES-2 shape)
 
+
+
+# -- 99 U175: an existing task.db gains nav_stalled without losing rows ------------
+@pytest.mark.asyncio
+async def test_an_old_tasks_table_is_rebuilt_with_rows_and_references_kept(tmp_path):
+    """SQLite cannot alter a CHECK, so without the rebuild the robot's task.db
+    would refuse the first stall suspension. MUTATION: skip the rebuild ->
+    the nav_stalled UPDATE raises IntegrityError -> red; drop the copy -> the
+    row is gone -> red."""
+    from xbrain.p3_task.persistence.base import open_configured  # the real opener, migration included
+    from xbrain.p3_task.persistence import schema_task as st  # the current DDL
+    path = str(tmp_path / "old.db")  # a file: the opener reopens it
+    old = [s.replace(",'nav_stalled'", "").replace("'nav_stalled',", "")  # the pre-U175 CHECK lists
+           for s in ALL_DDL_STATEMENTS]  # every statement, same shape otherwise
+    assert any("'nav_stalled'" in s for s in ALL_DDL_STATEMENTS)  # the new set has it
+    assert not any("'nav_stalled'" in s for s in old)  # the old one does not
+    async with aiosqlite.connect(path) as c:  # build the robot's existing task.db
+        await c.execute("PRAGMA foreign_keys=ON")  # as P3 runs it (base.REQUIRED_PRAGMAS)
+        for stmt in old:  # the old schema, CHECK without nav_stalled
+            await c.execute(stmt)  # create
+        await TasksDAO(c).insert(goto_row("t-old", "running", 1))  # a row that must survive
+        await c.execute("INSERT INTO task_route_snapshot (task_id, route_id, rev, loop_mode, "  # and a row that
+                        "point_count, total_len_m, points_json, arclen_json, created_at) "  # REFERENCES it,
+                        "VALUES ('t-old','r-1',1,'oneway',2,1.0,'[]','[]','2026-11-12')")  # SN-3 keeps it
+        await c.commit()  # on disk, as before the upgrade
+    conn = await open_configured(path, st.ALL_DDL_STATEMENTS)  # the upgrade happens here
+    try:
+        await TasksDAO(conn).suspend_task("t-old", "passive", "nav_stalled", 5)  # IntegrityError on the old CHECK
+        await conn.commit()  # durable
+        row = await (await conn.execute(  # read it back
+            "SELECT state, suspend_reason FROM tasks WHERE task_id='t-old'")).fetchone()  # the copied row
+        assert row == ("suspended", "nav_stalled")  # kept, and now accepts the new reason
+        snap = await (await conn.execute(  # the referencing table
+            "SELECT task_id FROM task_route_snapshot")).fetchall()  # untouched by the rebuild
+        assert snap == [("t-old",)]  # the reference survived the rebuild
+        assert await (await conn.execute("PRAGMA foreign_key_check")).fetchall() == []  # no dangling key
+        assert (await (await conn.execute("PRAGMA foreign_keys")).fetchone())[0] == 1  # enforcement back on
+    finally:
+        await conn.close()  # cleanup

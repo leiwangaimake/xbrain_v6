@@ -290,3 +290,43 @@ async def test_only_the_urgent_task_preempts_an_equal_priority(dao_conn):
     await scheduler_tick(conn, dao, now_mono_ms=4, on_transition=_noop_t, urgent_task_id="t-lb")
     assert (await dao.fetch_by_id("t-lb")).state == "running"
     assert (await dao.fetch_by_id("t-rh")).state == "suspended"
+
+
+
+# -- 99 U175 (user ruling 2026-11-12): a navigation stall suspends ------------
+@pytest.mark.asyncio
+async def test_a_navigation_stall_suspends_instead_of_failing(dao_conn):
+    """Measured 2026-11-10: a watchdog_no_progress stall failed the task while
+    a no-fix stall on the same outing suspended it. MUTATION: drop the stall
+    branch -> failed -> red; yielding instead of passive -> the CR-8 check
+    raises -> red."""
+    import json as _json
+    from xbrain.p3_task.schedule.driver import apply_path_progress_terminal
+    dao, conn = dao_conn
+    await _run_one(dao, conn)
+    seen = []
+    async def _record(task_id, frm, to, reason):
+        seen.append((frm, to, reason))
+    made = await apply_path_progress_terminal(
+        conn, dao, "t1", "failed", now_mono_ms=2, on_transition=_record,
+        fail_reason="watchdog_no_progress")
+    assert made == "suspended" and made is not True  # the run must stay open
+    row = await dao.fetch_by_id("t1")
+    assert (row.state, row.suspend_kind, row.suspend_reason) == (
+        "suspended", "passive", "nav_stalled")
+    ctx = await (await conn.execute(
+        "SELECT error_context_json FROM tasks WHERE task_id='t1'")).fetchone()
+    assert _json.loads(ctx[0]) == {"fail_reason": "watchdog_no_progress"}
+    assert seen == [("running", "suspended", "motion:aborted:watchdog_no_progress")]
+
+
+@pytest.mark.asyncio
+async def test_other_navigation_failures_still_fail(dao_conn):
+    """Only the stall changed. MUTATION: suspend on every fail_reason -> red."""
+    from xbrain.p3_task.schedule.driver import apply_path_progress_terminal
+    dao, conn = dao_conn
+    await _run_one(dao, conn)
+    made = await apply_path_progress_terminal(
+        conn, dao, "t1", "failed", now_mono_ms=2, on_transition=_noop,
+        fail_reason="escalations_exhausted")
+    assert made is True and (await dao.fetch_by_id("t1")).state == "failed"

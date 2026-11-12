@@ -481,6 +481,54 @@ async def ensure_task_route_snapshot_uncapped(conn) -> bool:
     return True
 
 
+async def ensure_tasks_reason_set_current(conn) -> bool:
+    """Rebuild a `tasks` table whose suspend_reason / interrupt_reason CHECK
+    lacks a value of the current closed set (99 U175 added nav_stalled).
+    Returns True if it rebuilt. MUST run BEFORE the DDL burst, for the reason
+    given at ensure_task_route_snapshot_uncapped: CREATE ... IF NOT EXISTS
+    leaves the old CHECK in place and SQLite cannot alter a CHECK, so the
+    first stall suspension on the robot's existing task.db would fail.
+
+    Rows are KEPT: the columns both tables have are copied across. The table
+    is referenced by task_route_snapshot (REFERENCES tasks), so this follows
+    the SQLite "other kinds of table schema changes" procedure: foreign keys
+    OFF (outside any transaction), one transaction for create / copy / drop /
+    rename, foreign_key_check must come back empty, foreign keys ON again.
+    The indexes go with the old table; the DDL burst recreates them."""
+    cur = await conn.execute(
+        "SELECT sql FROM sqlite_master WHERE type='table' AND name='tasks'")
+    row = await cur.fetchone()
+    if row is None:
+        return False  # not task.db, or a fresh one: the DDL creates it right
+    sql = row[0] or ""
+    if all("'%s'" % v in sql for v in SUSPEND_REASON_VALUES):
+        return False  # already current
+    old_cols = [r[1] for r in await (await conn.execute("PRAGMA table_info(tasks)")).fetchall()]
+    await conn.execute("PRAGMA foreign_keys=OFF")
+    try:
+        await conn.execute("BEGIN IMMEDIATE")
+        try:
+            await conn.execute(DDL_TASKS.replace(
+                "CREATE TABLE IF NOT EXISTS tasks (", "CREATE TABLE tasks__u175 (", 1))
+            new_cols = {r[1] for r in await (await conn.execute(
+                "PRAGMA table_info(tasks__u175)")).fetchall()}
+            cols = ", ".join(c for c in old_cols if c in new_cols)
+            await conn.execute("INSERT INTO tasks__u175 (%s) SELECT %s FROM tasks"
+                               % (cols, cols))
+            await conn.execute("DROP TABLE tasks")
+            await conn.execute("ALTER TABLE tasks__u175 RENAME TO tasks")
+            bad = await (await conn.execute("PRAGMA foreign_key_check")).fetchall()
+            if bad:
+                raise RuntimeError("tasks rebuild broke foreign keys: %r" % (bad[:3],))
+            await conn.commit()
+        except Exception:
+            await conn.rollback()
+            raise
+    finally:
+        await conn.execute("PRAGMA foreign_keys=ON")
+    return True
+
+
 class TaskRouteSnapshotShapeConflict(Exception):
     """A legacy task_route_snapshot that still holds rows (see above)."""
 
