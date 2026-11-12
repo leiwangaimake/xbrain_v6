@@ -258,6 +258,13 @@ class LowBatteryMonitor:  # the episode state machine
         self._rise_base: Optional[float] = None  # None: no episode, or no soc seen yet
 
     @property
+    def restore_pending(self) -> bool:
+        """True while a restored episode's first reading is not judged yet
+        (the charging flag still unconfirmed). The boot reissue waits for it:
+        a cold swap or a U171 rise may end the episode on that reading."""
+        return self._restored
+
+    @property
     def low(self) -> bool:
         """An episode is in progress (any phase but idle)."""
         return self.phase != PHASE_IDLE
@@ -275,7 +282,19 @@ class LowBatteryMonitor:  # the episode state machine
         self._absent_since, self._swap_pending = {}, False
         self._restored = True  # the first frame with a soc is judged for a cold swap
         self._restored_soc = _num(last_soc)
-        self._rise_base = self._restored_soc  # U171 measures from the record too
+        # U171 base after a restart (fix 2026-11-12 19:10, measured on the
+        # robot): the record's soc is the LAST reading, kept current by the
+        # previous P3 for as long as the episode lasted -- 63 % after four
+        # unrecognised swaps -- so measuring from it found no rise and the
+        # stale episode re-sent a return task at 63 %. A low phase began below
+        # the trigger and a charger resets the base, so the episode's lowest
+        # not-charging soc is at most the trigger: measure from min(record,
+        # trigger). The interrupted phase keeps the record (it followed a charge).
+        if phase == PHASE_LOW:
+            self._rise_base = (self._trigger if self._restored_soc is None
+                               else min(self._restored_soc, self._trigger))
+        else:
+            self._rise_base = self._restored_soc  # interrupted: measured from the charge's end
 
     def snapshot(self) -> Dict[str, Any]:
         """Every mutable fact, so the wiring can roll a frame back when its
@@ -365,8 +384,13 @@ class LowBatteryMonitor:  # the episode state machine
                 hot = soc >= self._trigger
             rise = False  # 99 U171: a large rise without charging is a swap
             if soc is not None:  # no soc this frame: nothing to measure, base kept
-                if raw or stable is not False or self.phase == PHASE_CHARGING:  # any hint of charging
-                    self._rise_base = soc  # on the charger (or not yet known): a rise from here is the charge
+                if raw or stable is True or self.phase == PHASE_CHARGING:  # charging, seen or confirmed
+                    self._rise_base = soc  # on the charger: a rise from here is the charge
+                elif stable is None:
+                    # right after a start the flag is not confirmed yet: judge
+                    # nothing and keep the base. Resetting it here (the U171
+                    # first version) erased the restored base on the first frame.
+                    pass
                 else:  # confirmed not charging: a rise here came from a new pack
                     rise = (self._rise_base is not None  # a base to measure from
                             and self.phase in (PHASE_LOW, PHASE_INTERRUPTED)  # not while charging

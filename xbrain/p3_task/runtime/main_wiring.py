@@ -1829,6 +1829,11 @@ async def _amain(stop_flag: dict, heartbeat_period_s: float,
                                                   "frame: %s", _lev, exc)
                                     break
                             if (lb_reissue["pending"] and lb_monitor.phase == lb.PHASE_LOW
+                                    # 2026-11-12 19:10 fix: wait until the restored
+                                    # reading is JUDGED (charging flag confirmed). The
+                                    # first frame with a soc came before that, and a
+                                    # stale episode at 63 % drove to the dock.
+                                    and not lb_monitor.restore_pending
                                     and isinstance((state_cache.get("power") or {}).get("soc_pct"),
                                                    (int, float))
                                     and start_from_pose(state_cache.get("pose")) is not None):

@@ -416,7 +416,10 @@ def test_the_charging_debouncer():
                                                 (19.0, 20.0, None, False),   # wobble
                                                 (12.0, 21.9, None, False),   # 9.9 < 10
                                                 (12.0, 22.0, ["swapped_partial"], True),
-                                                (None, 69.0, None, False)])  # no soc on record
+                                                # no soc on record: a low phase began below the
+                                                # trigger, so 69 is a U171 rise from <= 20
+                                                # (fix 2026-11-12 19:10; was None before)
+                                                (None, 69.0, ["swapped_partial"], False)])
 def test_a_cold_swap_is_judged_on_the_first_reading_after_a_restore(last, soc, want, cold):
     """Found live 2026-11-11: 8 % at power-off, a 69 % pack at boot, and the
     restored low phase kept alarming. Restored low + first reading >= the
@@ -1160,3 +1163,58 @@ async def test_an_episode_starting_at_five_percent_preempts_not_parks(tmp_path, 
     finally:
         await stop_p3(stop, loop)
 
+
+
+
+# -- 2026-11-12 19:10 fix: a stale restored episode (measured on the robot) ----------
+def test_a_restored_episode_measures_its_rise_from_the_trigger_not_the_record():
+    """The previous P3 kept the record's soc current through four unrecognised
+    swaps (63 % at the restart). Measured from 63 the 61 % reading was no rise
+    and the stale episode sent a return task. MUTATION: base = the record soc
+    -> still low -> red; reset the base while the charging flag is unknown ->
+    61 becomes the base -> still low -> red."""
+    m = _mon(prime=False)  # right after a start: the charging flag is unknown
+    m.restore(lb.PHASE_LOW, 63.0)  # the record as the robot had it
+    assert m.restore_pending  # the boot reissue must wait
+    assert m.update(_power(61.0), 0.0) == ["alarm"]  # flag unknown: nothing judged
+    assert m.restore_pending  # still not judged
+    assert m.update(_power(61.0), 0.6) == ["swapped_partial"]  # 61 - 20 >= 10, not charging
+    assert not m.low and not m.last_cold_swap and not m.restore_pending  # a running swap, judged
+
+
+def test_a_restored_interrupted_phase_keeps_the_record_as_its_base():
+    """The interrupted phase followed a charge, so its base is the record, not
+    the trigger. MUTATION: min(record, trigger) for every phase -> 45 % after
+    an interrupted charge at 40 reads as a swap -> red."""
+    m = _mon(prime=False)  # flag unknown
+    m.restore(lb.PHASE_INTERRUPTED, 40.0)  # unplugged at 40 before the restart
+    m.update(_power(45.0), 0.0)  # unknown flag: nothing judged
+    got = m.update(_power(45.0), 0.6)  # +5 from the record: a wobble
+    assert m.low and not {"swapped", "swapped_partial"} & set(got)
+
+
+@pytest.mark.asyncio
+async def test_a_stale_restored_episode_ends_instead_of_driving(tmp_path, monkeypatch):
+    """Measured 2026-11-12 19:08: restored low phase (record soc 63, return task
+    cancelled), the boot reissue went out on the first power frame and the
+    robot drove to the dock at 63 %. Now the episode ends on the judged
+    reading and nothing is sent. MUTATION: reissue before the reading is
+    judged -> a fresh lb- row -> red."""
+    rows = [goto_row("lb-old", "cancelled", 1, priority=95)]  # cancelled long ago
+    await _seed_task_db(tmp_path, rows,
+                        lb.encode_episode(lb.PHASE_LOW, set(), "lb-old", 63.0))  # the stale record
+    h, stop, loop, task_db = await start_p3(
+        tmp_path, monkeypatch, geo_sql=[ROUTE_SQL, DOCK_ON, HOME],
+        route_membership_m=5.0, low_battery=LB)
+    try:
+        await _feed(h, _power(61.0), 2.0)  # not charging, 61 %
+        st = await _live_states(task_db)  # every lb- row and its state
+        assert [t for t in st if t.startswith("lb-") and t != "lb-old"] == []  # nothing sent
+        cleared = [e for e in h.frames("event/info/charging")
+                   if e["detail"]["type"] == "low_battery_cleared"]  # the episode end
+        assert len(cleared) == 1 and cleared[0]["detail"]["cause"] == "battery_swap"
+        async with aiosqlite.connect(task_db) as t:  # the memory row
+            from xbrain.p3_task.dao.simple_daos import MemoryDAO
+            assert lb.decode_episode(await MemoryDAO(t).get(lb.EPISODE_MEMORY_KEY)) is None
+    finally:
+        await stop_p3(stop, loop)
