@@ -76,6 +76,9 @@ def geo_layers(payload: Optional[Dict[str, Any]]
     waypoints = [
         {"geo_id": w.get("geo_id"),
          "name": w.get("name"),
+         # poi / dock / home (99 U119): the HMI picks the disc by it -- dock
+         # yellow + number, home green, poi white with a red ring (17 S6.10.2)
+         "type": w.get("type"),
          "geom": {"lat": w["lat"], "lon": w["lon"]},
          "recorded": True}                          # a stored keypoint = recorded
         for w in payload.get("waypoints", [])

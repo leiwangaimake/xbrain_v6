@@ -181,6 +181,12 @@ body { margin: 0; overflow: hidden; background: var(--bg); color: var(--ink);
    ring width come from hmi.web.waypoint via hmi.js markStyle (set inline),
    constant on screen. Route RTK points keep .geo-dot. */
 .keypoint-dot { stroke-opacity: 1; fill-opacity: 1; vector-effect: non-scaling-stroke; }
+/* 2026-11-12 (user): charging point (yellow, numbered) and return-home (green)
+   discs -- colours and sizes from hmi.web.waypoint via hmi.js markStyle. The
+   number is centred on the disc; its size is set per zoom by updateGridAndDots. */
+.keypoint-disc { stroke-opacity: 1; fill-opacity: 1; vector-effect: non-scaling-stroke; }
+.keypoint-num { text-anchor: middle; dominant-baseline: central; font-weight: 700;
+  font-family: var(--font-map-family); pointer-events: none; }
 .keypoint circle { stroke-width: 2; }
 .keypoint.recorded circle { fill: var(--ok); stroke: var(--ok); }
 .keypoint.unrecorded circle { fill: var(--warn); stroke: var(--warn); }

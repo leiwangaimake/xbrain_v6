@@ -25,7 +25,7 @@ from xbrain.p5_gateway.geo.cache import (
 _PAYLOAD = {
     "schema": "geo_objects_v1", "catalog_rev": 130,
     "waypoints": [{"geo_id": "w-1", "name": "东门岗亭",
-                   "lat": 31.2003, "lon": 121.5007}],
+                   "lat": 31.2003, "lon": 121.5007, "type": "dock"}],
     "routes": [{"geo_id": "r-1", "name": "营区日常",
                 "points": [{"lat": 31.2010, "lon": 121.4990},
                            {"lat": 31.2003, "lon": 121.5007}]}],
@@ -59,6 +59,8 @@ def test_waypoint_reshaped_to_geom_object():
     # MUTATION: emitting a bare [lat,lon] array makes toXY read it as ENU metres.
     assert wps[0]["geom"] == {"lat": 31.2003, "lon": 121.5007}
     assert wps[0]["name"] == "东门岗亭" and wps[0]["recorded"] is True
+    # 2026-11-12: type passes through (the HMI disc colour). MUTATION: drop it -> red.
+    assert wps[0]["type"] == "dock"
 
 
 def test_route_points_and_kind():

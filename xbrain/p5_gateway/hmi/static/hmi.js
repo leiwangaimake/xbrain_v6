@@ -200,6 +200,10 @@
   const KEYPOINT_RING_PX_FALLBACK = 2.0;    // ring width, screen px
   const MARK_RED_FALLBACK = "#ff1f1f";      // bright red
   const ROBOT_ARROW_PX_FALLBACK = 18;       // arrow half-length, screen px (old 9)
+  const DOCK_FILL_FALLBACK = "#ffd400";     // charging point disc: yellow
+  const HOME_FILL_FALLBACK = "#22c55e";     // return-home disc: green
+  const DISC_OUTLINE_FALLBACK = "#1a1a1a";  // 1 px dark edge on yellow / green
+  const DISC_OUTLINE_PX_FALLBACK = 1.0;
   const GRID_LINE_COLOR_FALLBACK = "#2a2a2a";  // grid line, half the old #555555
 
   // The marks' look from ui_config. A missing or non-positive size falls back
@@ -211,9 +215,53 @@
              kpRingPx: pos(w.ring_px, KEYPOINT_RING_PX_FALLBACK),
              kpFill: w.fill_color || "#ffffff",
              kpRing: w.ring_color || MARK_RED_FALLBACK,
+             dockFill: w.dock_fill_color || DOCK_FILL_FALLBACK,
+             homeFill: w.home_fill_color || HOME_FILL_FALLBACK,
+             discOutline: w.disc_outline_color || DISC_OUTLINE_FALLBACK,
+             discOutlinePx: pos(w.disc_outline_px, DISC_OUTLINE_PX_FALLBACK),
+             numColor: w.number_color || "#000000",
              robotPx: pos(r.size_px, ROBOT_ARROW_PX_FALLBACK),
              robotColor: r.color || MARK_RED_FALLBACK };
   }
+
+  // 2026-11-12 (user): every waypoint disc is the same size (outer radius =
+  // radius_px + ring_px / 2, 12 px); a charging point (type dock) is a yellow
+  // disc carrying the number of its name ("1号充电站" -> 1), the return-home
+  // point (type home) a green disc, any other point the white disc with the red
+  // ring. Yellow and green get a 1 px dark outline inside the same outer radius,
+  // so a disc on the yellow trail line stays visible.
+  //   kind: "dock" | "home" | "poi"; num: the digits to print ("" = none).
+  // The number is taken ONLY from "<N>号" at the start of the name, Chinese
+  // numerals converted ("二号充电站" -> 2). A name without one gets an empty
+  // disc -- never an invented number that could disagree with the label.
+  const CN_DIGIT = { "零": 0, "一": 1, "二": 2, "两": 2, "三": 3, "四": 4,
+                     "五": 5, "六": 6, "七": 7, "八": 8, "九": 9 };
+  const CN_UNIT = { "十": 10, "百": 100, "千": 1000 };
+  function cnToInt(s) {
+    let total = 0, cur = 0;
+    for (const ch of s) {
+      if (ch in CN_DIGIT) cur = CN_DIGIT[ch];
+      else if (ch in CN_UNIT) { total += (cur || 1) * CN_UNIT[ch]; cur = 0; }
+      else return null;
+    }
+    return total + cur;
+  }
+  function waypointMark(w) {
+    const t = w && w.type;
+    const kind = t === "dock" ? "dock" : t === "home" ? "home" : "poi";
+    let num = "";
+    if (kind === "dock") {
+      const m = /^([0-9]+|[零一二两三四五六七八九十百千]+)号/.exec((w && w.name) || "");
+      if (m) {
+        const n = /^[0-9]+$/.test(m[1]) ? parseInt(m[1], 10) : cnToInt(m[1]);
+        if (n != null) num = String(n);
+      }
+    }
+    return { kind, num };
+  }
+  // The number's font size in screen px: two digits fit a 24 px disc at 14 px,
+  // three or more drop to 10 px.
+  function numFontPx(num) { return num.length <= 2 ? 14 : 10; }
 
   // The arrow's corners in map units: (x, y) its centre, a the rotation (0 =
   // pointing north, i.e. screen up), s the half-length in map units.
@@ -255,8 +303,15 @@
     // non-scaling geo dots: constant screen radius regardless of zoom.
     const rr = (DOT_PX * mpp).toFixed(3);
     svg.querySelectorAll("circle.geo-dot").forEach((c) => c.setAttribute("r", rr));
-    const kr = (markStyle(cfg).kpRadiusPx * mpp).toFixed(3);  // keypoints: own size
+    const ms = markStyle(cfg);
+    const kr = (ms.kpRadiusPx * mpp).toFixed(3);  // keypoints: own size
     svg.querySelectorAll("circle.keypoint-dot").forEach((c) => c.setAttribute("r", kr));
+    // yellow / green discs: same outer radius, the 1 px edge drawn inside it
+    const outer = ms.kpRadiusPx + ms.kpRingPx / 2;
+    const dr = ((outer - ms.discOutlinePx / 2) * mpp).toFixed(3);
+    svg.querySelectorAll("circle.keypoint-disc").forEach((c) => c.setAttribute("r", dr));
+    svg.querySelectorAll("text.keypoint-num").forEach((t) => {
+      t.style.fontSize = (numFontPx(t.textContent) * mpp).toFixed(3) + "px"; });
     sizeGotoPins();                        // W2 target dots: constant screen size
   }
 
@@ -271,8 +326,10 @@
     for (let i = 0; i < txt.length; i++) u += (txt.charCodeAt(i) > 255 ? 1.0 : 0.52);
     return u * fontPx + 4;
   }
+  // The number inside a charging-point disc is part of the mark, not a label:
+  // nudging or hiding it would separate it from its disc (2026-11-12).
   const LABEL_LAYERS = "#keepInLayer text, #alarmLayer text, #recordedRouteLayer text, " +
-                       "#realtimeTrajectoryLayer text, #keypointLayer text";
+                       "#realtimeTrajectoryLayer text, #keypointLayer text:not(.keypoint-num)";
   function declutterLabels() {
     const svg = $("mapSvg");
     const cw = svg.clientWidth || 1;
@@ -553,10 +610,25 @@
       // matched a <text class="keypoint">, hence the dedicated class.
       // 2026-11-11 (user): white dot, red ring, one look for every keypoint --
       // ~~fill = cfg.waypoint.recorded / unrecorded colour~~ superseded.
-      const ms = markStyle(cfg), kd = dot(xy[0], xy[1], null, "keypoint-dot");
-      kd.style.fill = ms.kpFill; kd.style.stroke = ms.kpRing;   // hmi.web.waypoint
-      kd.style.strokeWidth = ms.kpRingPx + "px";  // non-scaling (hmi.css)
-      $("keypointLayer").appendChild(kd);
+      const ms = markStyle(cfg), wm = waypointMark(w);
+      if (wm.kind === "poi") {
+        const kd = dot(xy[0], xy[1], null, "keypoint-dot");
+        kd.style.fill = ms.kpFill; kd.style.stroke = ms.kpRing;   // hmi.web.waypoint
+        kd.style.strokeWidth = ms.kpRingPx + "px";  // non-scaling (hmi.css)
+        $("keypointLayer").appendChild(kd);
+      } else {
+        // 2026-11-12: charging point yellow (+ its number), return-home green
+        const kd = dot(xy[0], xy[1], null, "keypoint-disc");
+        kd.style.fill = wm.kind === "dock" ? ms.dockFill : ms.homeFill;
+        kd.style.stroke = ms.discOutline;
+        kd.style.strokeWidth = ms.discOutlinePx + "px";
+        $("keypointLayer").appendChild(kd);
+        if (wm.num) {
+          const nt = label(xy[0], xy[1], "keypoint-num", wm.num);
+          nt.style.fill = ms.numColor;
+          $("keypointLayer").appendChild(nt);
+        }
+      }
       if (w.name) {
         $("keypointLayer").appendChild(
           label(xy[0], xy[1] - 2, "keypoint-label", w.name));

@@ -94,10 +94,14 @@ def test_mark_style_reads_the_config_and_falls_back_to_the_same_look():
     got = _node('[markStyle({waypoint: {radius_px: 7, ring_px: 3, fill_color: "#fefefe",'
                 ' ring_color: "#ee0000"}, robot: {size_px: 30, color: "#dd0000"}}),'
                 ' markStyle({}), markStyle({waypoint: {radius_px: 0}, robot: {size_px: -1}})]')
-    assert got[0] == {"kpRadiusPx": 7, "kpRingPx": 3, "kpFill": "#fefefe",
-                      "kpRing": "#ee0000", "robotPx": 30, "robotColor": "#dd0000"}
+    assert {k: got[0][k] for k in ("kpRadiusPx", "kpRingPx", "kpFill", "kpRing",
+                                   "robotPx", "robotColor")} == {
+        "kpRadiusPx": 7, "kpRingPx": 3, "kpFill": "#fefefe",
+        "kpRing": "#ee0000", "robotPx": 30, "robotColor": "#dd0000"}
     fallback = {"kpRadiusPx": 11, "kpRingPx": 2, "kpFill": "#ffffff",
-                "kpRing": "#ff1f1f", "robotPx": 18, "robotColor": "#ff1f1f"}
+                "kpRing": "#ff1f1f", "dockFill": "#ffd400", "homeFill": "#22c55e",
+                "discOutline": "#1a1a1a", "discOutlinePx": 1, "numColor": "#000000",
+                "robotPx": 18, "robotColor": "#ff1f1f"}
     assert got[1] == fallback
     assert (got[2]["kpRadiusPx"], got[2]["robotPx"]) == (11, 18)
 
@@ -109,3 +113,36 @@ def test_the_arrow_scales_with_its_size_and_turns_with_the_heading():
     assert pts[0][0] == pytest.approx([10, -7])  # tip 27 north (screen up) of (10, 20)
     assert math.hypot(*pts[1][0]) == pytest.approx(9)
     assert pts[1][0][0] == pytest.approx(9) and abs(pts[1][0][1]) < 1e-9
+
+
+# -- 2026-11-12: charging-point / return-home discs ---------------------------
+@pytest.mark.parametrize("w,kind,num", [
+    ({"type": "dock", "name": "1号充电站"}, "dock", "1"),
+    ({"type": "dock", "name": "二号充电站"}, "dock", "2"),
+    ({"type": "dock", "name": "十二号充电桩"}, "dock", "12"),
+    ({"type": "dock", "name": "120号充电桩"}, "dock", "120"),
+    ({"type": "dock", "name": "东门充电站"}, "dock", ""),
+    ({"type": "dock", "name": "东门充电桩3"}, "dock", ""),  # not "<N>号" at the start
+    ({"type": "home", "name": "返航终点站"}, "home", ""),
+    ({"type": "poi", "name": "3号测试点"}, "poi", ""),
+    ({"name": "1号充电站"}, "poi", ""),
+])
+def test_waypoint_mark_kind_and_number(w, kind, num):
+    """The number is the one in the name, never invented; only a dock gets one.
+    MUTATION: number from any digit (not N号) / Chinese numerals not converted /
+    a numberless dock gets "1" / type ignored -> red."""
+    assert _node("waypointMark(" + json.dumps(w, ensure_ascii=False) + ")") == {
+        "kind": kind, "num": num}
+
+
+def test_number_font_shrinks_past_two_digits():
+    """MUTATION: one size for all -> a 3-digit number overflows the disc -> red."""
+    assert _node('[numFontPx("1"), numFontPx("12"), numFontPx("120")]') == [14, 14, 10]
+
+
+def test_the_disc_colours_are_configured():
+    """MUTATION: dock not yellow / home not green / outline over 1 px -> red."""
+    w = _web()["waypoint"]
+    assert w["dock_fill_color"].lower() == "#ffd400"
+    assert w["home_fill_color"].lower() == "#22c55e"
+    assert w["disc_outline_px"] == 1.0 and w["disc_outline_color"].lower() == "#1a1a1a"
