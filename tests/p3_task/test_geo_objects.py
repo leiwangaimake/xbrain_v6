@@ -91,6 +91,17 @@ async def test_payload_shape_and_names(geo):
 
 
 @pytest.mark.asyncio
+async def test_waypoint_type_rides_along(geo):
+    """2026-11-12: the HMI draws charging / return-home points by type (17
+    S6.10.2 U6). MUTATION: drop type from the SELECT / dict -> None -> red."""
+    await _wp(geo, "w-9", "1号充电站", 31.2, 121.5, 100, wtype="dock")
+    await _wp(geo, "w-8", "返航终点站", 31.2, 121.5, 100, wtype="home")
+    await geo.commit()
+    p = await read_geo_objects(geo)
+    assert {w["geo_id"]: w["type"] for w in p["waypoints"]} == {"w-9": "dock", "w-8": "home"}
+
+
+@pytest.mark.asyncio
 async def test_route_points_from_path_points_in_order(geo):
     await _seed(geo)
     p = await read_geo_objects(geo)

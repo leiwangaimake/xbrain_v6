@@ -65,12 +65,16 @@ async def _read_waypoints(conn) -> List[Dict[str, Any]]:
     # operator deliberately saved (18 F06), shown as labelled dots. v1.5 PLAN A:
     # route vertices are INLINE on routes now, so EVERY waypoint row is a keypoint
     # (no assoc exclusion). lat/lon are emitted for the frontend to project.
+    # type (poi / dock / home, set from the name at record time, 99 U119) rides
+    # along since 2026-11-12: the HMI draws a charging point as a numbered
+    # yellow disc and the return-home point as a green one (17 S6.10.2 U6).
     cur = await conn.execute(
-        "SELECT geo_id, name, rtk_lat, rtk_lon, yaw_deg, rev, state "
+        "SELECT geo_id, name, rtk_lat, rtk_lon, yaw_deg, rev, state, type "
         "FROM waypoints WHERE state<>'deleted' AND tombstone=0 ORDER BY geo_id")
     rows = await cur.fetchall()
     return [{"geo_id": r[0], "name": r[1], "lat": r[2], "lon": r[3],
-             "yaw_deg": r[4], "rev": r[5], "state": r[6]} for r in rows]
+             "yaw_deg": r[4], "rev": r[5], "state": r[6], "type": r[7]}
+            for r in rows]
 
 
 async def _read_docks(conn) -> List[Dict[str, Any]]:
