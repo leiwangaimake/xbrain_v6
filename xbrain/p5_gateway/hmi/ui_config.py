@@ -96,6 +96,9 @@ def build_ui_config(hmi_web: Mapping[str, Any], *,
         # U9 robot mark (colour, size; user 2026-11-11). Optional like goto:
         # hmi.js markStyle keeps presentation fallbacks.
         "robot": dict(hmi_web.get("robot") or {}),
+        # U10 recording-trail flow effect (user 2026-11-12). Optional like
+        # goto / robot: hmi.js teachFlowCfg keeps the same fallbacks.
+        "teach": dict(hmi_web.get("teach") or {}),
         # Site display timezone for the footer clock (common.timezone). null ->
         # frontend uses the browser zone.
         "timezone": site_timezone,

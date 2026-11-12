@@ -453,6 +453,10 @@ body.controls-offline .goto-send { opacity: 0.35; pointer-events: none; }
 
 .teach-trail { fill: none; stroke: var(--teach-color); stroke-linejoin: round;
                stroke-linecap: round; vector-effect: non-scaling-stroke; }
+/* U10 flow (user 2026-11-12): colour, width and glow are set per frame by
+   hmi.js teachFlowTick from hmi.web.teach.flow; these are the static parts. */
+.teach-flow  { fill: none; stroke-linejoin: round; stroke-linecap: round;
+               vector-effect: non-scaling-stroke; pointer-events: none; }
 /* 2026-11-12 (user): the width comes from route.recorded.line (hmi.js passes
    it to lineStroke), solid like a recorded route.
    ~~stroke-width: 2; stroke-dasharray: 6 4~~ and the ~~.teach-point~~ dots and

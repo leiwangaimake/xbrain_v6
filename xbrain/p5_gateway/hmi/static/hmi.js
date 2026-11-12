@@ -647,6 +647,70 @@
   let teachSeq = 0;           // 见过的最大 last_point.seq
   let teachSession = null;    // 当前会话 id, 变了就重来
 
+  // U10 flow effect (17 S6.10.2, user 2026-11-12): a short bright segment runs
+  // along the recording polyline from its start to the robot, one trip per
+  // period_s, looping. It lives in its own layer (#teachFlowLayer) and is moved
+  // by requestAnimationFrame, NOT redrawn by renderTeach: renderTeach clears
+  // #teachLayer on every snapshot (2 Hz), which would restart a CSS animation
+  // twice a second. Lengths are SCREEN px (converted with the current metres-
+  // per-pixel), so the segment looks the same at every zoom.
+  // Defaults mirror configs/p5_gateway.yaml hmi.web.teach.flow (UI values may
+  // default, 17 S6.10.2); the yaml wins once P5 serves it.
+  let teachFlowPts = [];       // the polyline the flow runs on (frame coords)
+  let teachFlowRunning = false;  // a rAF loop is scheduled
+  function teachFlowCfg() {
+    const f = ((cfg.teach || {}).flow) || {};
+    return { color: f.color || "#ffffff", width: f.width_px || 4,
+             length: f.length_px || 60, period: f.period_s || 1.4 };
+  }
+  // <teach-flow>
+  // The bright segment for one frame, PURE (cut out and run under node by
+  // tests/p5_gateway/hmi/test_teach_flow_js.py): pts = the polyline in frame
+  // metres, mpp = metres per screen pixel, lengthPx / periodS from the config,
+  // nowMs = the animation clock. The head runs 0 -> total + seg, so the
+  // segment enters at the start and leaves at the robot instead of popping in
+  // or out mid-line. Returns [] when there is nothing to draw.
+  function teachFlowSegment(pts, mpp, lengthPx, periodS, nowMs) {
+    if (!pts || pts.length < 2 || !(mpp > 0) || !(periodS > 0)) return [];
+    let total = 0;                           // polyline length, map metres
+    for (let i = 1; i < pts.length; i++) total += Math.hypot(pts[i][0] - pts[i - 1][0], pts[i][1] - pts[i - 1][1]);
+    const seg = lengthPx * mpp;              // the bright segment, map metres
+    const head = ((nowMs / 1000) % periodS) / periodS * (total + seg);
+    const a0 = Math.max(0, head - seg), a1 = Math.min(total, head);
+    const out = [];
+    let acc = 0;
+    // a1 > a0 is also what returns [] for a zero-length line (all points on
+    // one spot): total = 0 clamps a1 to 0, so no edge is walked.
+    for (let i = 1; i < pts.length && a1 > a0; i++) {
+      const p = pts[i - 1], q = pts[i];
+      const sl = Math.hypot(q[0] - p[0], q[1] - p[1]);
+      const s0 = acc, s1 = acc + sl;
+      if (sl > 0 && s1 >= a0 && s0 <= a1) {  // this edge carries part of the segment
+        const f0 = Math.max(0, (a0 - s0) / sl), f1 = Math.min(1, (a1 - s0) / sl);
+        if (!out.length) out.push([p[0] + (q[0] - p[0]) * f0, p[1] + (q[1] - p[1]) * f0]);
+        out.push([p[0] + (q[0] - p[0]) * f1, p[1] + (q[1] - p[1]) * f1]);
+      }
+      acc = s1;
+    }
+    return out.length >= 2 ? out : [];
+  }
+  // </teach-flow>
+  function teachFlowTick(now) {
+    const el = $("teachFlow");
+    if (teachFlowPts.length < 2) {           // recording ended / paused
+      el.setAttribute("points", ""); teachFlowRunning = false; return;
+    }
+    const fc = teachFlowCfg();
+    const svg = $("mapSvg"), cw = svg.clientWidth || 1;
+    const mpp = (parseFloat((svg.getAttribute("viewBox") || "").split(/\s+/)[2]) || baseVB[2]) / cw;
+    const out = teachFlowSegment(teachFlowPts, mpp, fc.length, fc.period, now);
+    el.setAttribute("points", out.map((p) => p[0] + "," + p[1]).join(" "));
+    el.style.stroke = fc.color;
+    el.style.strokeWidth = fc.width + "px";
+    el.style.filter = "drop-shadow(0 0 4px " + fc.color + ")";  // the glow
+    requestAnimationFrame(teachFlowTick);
+  }
+
   const TEACH_STATE_CN = {
     recording: "录制中", paused: "已暂停", finalizing: "待命名",
     arming: "准备中", closed: "已结束", idle: "无录制",
@@ -690,6 +754,13 @@
       const pts = livePts.map((p) => p[0] + "," + p[1]).join(" ");
       $("teachLayer").appendChild(
         polyline("teach-trail", pts, ((cfg.route || {}).recorded || {}).line));
+    }
+    // U10 flow (user 2026-11-12, chose "流光" from a demo): only while
+    // actually recording -- paused / finalizing keep the still pink line.
+    teachFlowPts = (teach.state === "recording" && livePts.length >= 2) ? livePts : [];
+    if (teachFlowPts.length && !teachFlowRunning) {
+      teachFlowRunning = true;
+      requestAnimationFrame(teachFlowTick);
     }
     badge.hidden = false;
     $("teachDot").className = "teach-dot " + teach.state;

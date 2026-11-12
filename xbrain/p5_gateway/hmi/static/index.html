@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>XBRAIN_V6 GPS 网格地图 HMI</title>
-<link rel="stylesheet" href="hmi.css?v=teach-1">
+<link rel="stylesheet" href="hmi.css?v=teach-2">
 </head>
 <body>
 <main class="hmi">
@@ -85,6 +85,7 @@
         <g id="realtimeTrajectoryLayer"></g>
         <!-- 录制中的轨迹(11 S12A.5). 会话结束即清空, 交给 geo.db 的权威几何. -->
         <g id="teachLayer"></g>
+        <g id="teachFlowLayer"><polyline id="teachFlow" class="teach-flow" points=""></polyline></g>
         <g id="keypointLayer"></g>
         <g id="robotLayer"></g>
         <g id="eventLayer"></g>
@@ -187,6 +188,6 @@
     </footer>
   </section>
 </main>
-<script src="hmi.js?v=teach-1"></script>
+<script src="hmi.js?v=teach-2"></script>
 </body>
 </html>
