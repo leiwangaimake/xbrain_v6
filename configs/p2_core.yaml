@@ -365,6 +365,10 @@ ptz:
 health:
   publish_rate_hz: 1
   recover_hold_s: 5.0
+  # 2026-11-12 (HMI event list): an item's new state must last this long before
+  # event/{warn|fault}/health reports the change (one event per change; a single
+  # 1 Hz sample of a flapping item is not two events). Missing -> p2 refuses to start.
+  change_event_hold_s: 3.0
   # cam_rgbd monitoring thresholds (R-2 / 14 S8.1). Read via cfg.get(..., None)
   # so a product frozen before these keys existed (2026-09-18) degrades
   # cam_rgbd to DEGRADED rather than crashing p2; once the freeze line
