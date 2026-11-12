@@ -99,7 +99,13 @@ from xbrain.p4_agent.runtime.voice_turn import SESSION_OF_CHANNEL  # channel -> 
 #: arming checks; measured 2026-11-11 indoors, P3 then refused (no rtk_fixed)
 #: and nothing but cmd/teach/ack carried it, so a cloud client opened its
 #: keyboard on a recording that never started.
-_RESULT_TO_TURN = frozenset({"start", "finish", "discard"})  # started / saved / dropped
+#: 2026-11-12: + mark_once (F06 / F10). Measured 2026-11-11 22:29: "保存当前位置
+#: 为2号充电站" read "好的,记录这个点" / accepted in voice_turn and in commx,
+#: P3 refused it (E_GEO_INVALID dock_off_route), the TTS device was down, and
+#: the refusal reached nobody. The record says "已记录X" (accepted) or why not
+#: (rejected + reject_code); the new geo_id is on manifest, not in the record
+#: (11 S8.7.6 has no field for it).
+_RESULT_TO_TURN = frozenset({"start", "finish", "discard", "mark_once"})  # started / saved / dropped / stored
 #: The layer value of such a record (the user-ruled extra field of 11 S8.7.6):
 #: tells "the result of an earlier turn" apart from a turn of its own.
 TEACH_RESULT_LAYER = "teach_result"  # voice_turn.layer of the result record
@@ -318,8 +324,9 @@ class AckSpeaker:  # one per process
                 self._pending.popitem(last=False)  # drop the oldest
 
     def _note_results(self, pairs: Iterable[Tuple[str, bytes]]) -> None:
-        """99 U162 / U165: remember a recording start / finish / discard with the turn's own
-        voice_turn record, so its result can be published as a second record."""
+        """99 U162 / U165: remember a recording start / finish / discard, or a
+        point capture (mark_once, 2026-11-12), with the turn's own voice_turn
+        record, so its result can be published as a second record."""
         pairs = list(pairs)  # walked twice
         turn = next(((k, _json(d)) for k, d in pairs
                      if k.endswith("/state/voice_turn")), None)  # the record
@@ -337,9 +344,9 @@ class AckSpeaker:  # one per process
 
     def on_ack_frames(self, data: bytes) -> "list":
         """Every (key, frame) to publish for one ack: the spoken answer (as
-        on_ack), and for a recording start / finish / discard the result as a
-        second state/voice_turn record (99 U162 / U165). [] when there is
-        nothing new."""
+        on_ack), and for a recording start / finish / discard or a capture the
+        result as a second state/voice_turn record (99 U162 / U165). [] when
+        there is nothing new."""
         ack = _body(_json(data))  # S7.7 Ack shape
         if not isinstance(ack, dict) or ack.get("result") == "duplicate":
             return []  # nothing new

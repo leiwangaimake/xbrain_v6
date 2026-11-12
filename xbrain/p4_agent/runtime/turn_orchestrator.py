@@ -1451,7 +1451,9 @@ class TurnOrchestrator:
         if (entry.name in _CAPTURE_INTENTS and llm_slots is None
                 and not _said_after_keyword(entry, text)):
             spoken = _F_REASON_CN["a keypoint needs a name"]
-            return TurnDecision(kind="reply", intent_id=entry.id,
+            # 2026-11-12: "denied" -> verdict rejected, as U165 made every
+            # recording refusal; nothing goes to P3, so no teach_result follows.
+            return TurnDecision(kind="denied", intent_id=entry.id,
                                 intent_name=entry.name, route=entry.route,
                                 auth=eff_auth, level=eff_auth, layer=layer,
                                 reply_text=spoken, tts_text=spoken)
@@ -1658,7 +1660,12 @@ class TurnOrchestrator:
                 # taken) is "denied" -> verdict rejected, like every other
                 # recording refusal (_rec_reply); it read "accepted" before.
                 # The other F-class refusals keep "reply" (not in this ruling).
-                return TurnDecision(kind="denied" if entry.name in _REC_STARTS else "reply",
+                # 2026-11-12: + the point captures F06 / F10 (bad name length,
+                # no pose snapshot): their result now comes back as a
+                # teach_result record (ack_speech), so a refusal before sending
+                # must not read "accepted" either.
+                refused = entry.name in _REC_STARTS or entry.name in _CAPTURE_INTENTS
+                return TurnDecision(kind="denied" if refused else "reply",
                                     intent_id=entry.id,
                                     intent_name=entry.name, route=entry.route,
                                     auth=eff_auth, level=eff_auth, layer=layer,

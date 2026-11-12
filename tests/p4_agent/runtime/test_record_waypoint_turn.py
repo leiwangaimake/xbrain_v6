@@ -188,3 +188,18 @@ def test_a_name_over_twelve_characters_is_refused():
     teach, spoken = _turn("记录当前位置为" + name, _named(name))  # said, too long
     assert teach is None  # 16 S8.0.4: refused, not cut
     assert spoken == "名字要两到十二个字, 请换个名字"  # said why
+
+
+def test_a_name_over_twelve_characters_is_a_denied_turn():
+    """2026-11-12: the length refusal is "denied" (verdict rejected), not a
+    reply that reads accepted. MUTATION: drop _CAPTURE_INTENTS from the
+    F-class refusal kind -> "reply" -> red."""
+    name = "一二三四五六七八九十一二三"  # 13 characters
+    with open(os.path.join(_CONFIGS, "intents.yaml"), encoding="utf-8") as fh:
+        reg = load_intent_registry(yaml.safe_load(fh))  # this tree's registry
+    with open(os.path.join(_CONFIGS, "chitchat.yaml"), encoding="utf-8") as fh:
+        cc = ChitchatResponder(yaml.safe_load(fh))  # chitchat presets
+    orch = build_orchestrator(reg, cc, tier2_fn=_named(name), pose_snap_fn=_Snaps())
+    d = orch.handle_turn("记录当前位置为" + name, OrchestratorSession(), 1000,
+                         channel="mic_local")  # one mic turn
+    assert d.kind == "denied" and d.tts_text == "名字要两到十二个字, 请换个名字"

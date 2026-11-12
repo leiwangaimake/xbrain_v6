@@ -629,3 +629,46 @@ def test_a_finish_that_kept_its_data_says_so():
     assert rec["verdict"] == "rejected" and rec["reject_code"] == "E_NAME_CONFLICT"  # the real code, not E_TEACH_GEOMETRY
     assert rec["reply_text"] == ("1号路径没有保存: 名字已被占用. 录制数据还在, "
                                  "请说保存为新的名字, 或者放弃录制")
+
+
+# -- 2026-11-12: a point capture's result as a second state/voice_turn --------
+# Measured 2026-11-11 22:29: "保存当前位置为2号充电站" read accepted in
+# voice_turn while P3 refused it (dock 13.5 m off every route) and the speaker
+# was dead. The capture now publishes its result like a recording does.
+def _cap_turn(spoke=True):
+    """The frames of one F06 turn with its voice_turn record."""
+    pairs = _turn(cmd_id="c-m", name="2号充电站", spoke=spoke)  # cmd/teach (+ speech)
+    pairs.append((_VT_KEY, _b({"turn_id": "vt-2", "session": "cloud", "channel": "cloud",
+                               "asr_raw": "保存当前位置为2号充电站",
+                               "asr_text": "保存当前位置为2号充电站", "corrections": [],
+                               "bypass": None, "intent": "record_waypoint", "slots": {},
+                               "auth_level": "L1a", "verdict": "accepted",  # sent, not stored
+                               "reject_code": None, "reply_text": "好的,记录这个点",
+                               "reply_kind": "stream", "layer": "long_phrase",
+                               "ts_mono": 1.0})))
+    return pairs  # in publish order
+
+
+def test_a_stored_capture_is_published_as_a_second_voice_turn():
+    """MUTATION: drop mark_once from _RESULT_TO_TURN -> no record -> red."""
+    sp = AckSpeaker()  # fresh
+    sp.note_turn(_cap_turn(spoke=False))  # a silent cloud text turn
+    out = sp.on_ack_frames(_b({"cmd_id": "c-m", "result": "accepted", "code": "OK",
+                               "detail": {"applied": {"geo_id": "w-7", "name": "2号充电站"},
+                                          "warn": []}}))  # P3 stored it
+    (rec,) = _turns(out)  # the only place a silent turn's result goes
+    assert rec["verdict"] == "accepted" and rec["layer"] == "teach_result"
+    assert rec["reply_text"] == "已记录2号充电站" and rec["intent"] == "record_waypoint"
+    assert rec["turn_id"] != "vt-2" and rec["reply_kind"] == "none"  # its own record
+
+
+def test_a_refused_capture_is_published_as_rejected():
+    """The 2026-11-11 case. MUTATION: verdict always accepted -> red."""
+    sp = AckSpeaker()  # fresh
+    sp.note_turn(_cap_turn())  # spoke "好的,记录这个点"
+    out = sp.on_ack_frames(_b({"cmd_id": "c-m", "result": "rejected", "code": "E_GEO_INVALID",
+                               "detail": {"reason": "dock_off_route", "distance_m": 13.5}}))
+    assert [k for k, _ in out] == ["cmd/audio/speak", _VT_KEY]  # speech, then record
+    (rec,) = _turns(out)
+    assert rec["verdict"] == "rejected" and rec["reject_code"] == "E_GEO_INVALID"
+    assert rec["reply_text"] == "2号充电站没有记录, 充电桩和充电站必须在某条路径5米以内"

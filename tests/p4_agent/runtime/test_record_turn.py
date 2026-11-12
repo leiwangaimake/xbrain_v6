@@ -301,3 +301,14 @@ def test_the_status_answer_stays_a_reply(teach):
     MUTATION: refuse the idle status too -> red."""
     d, _frames = _turn("录了几个点", teach)
     assert d.kind == "reply"
+
+
+# 2026-11-12: a point capture refused before anything is sent (no name) reads
+# "rejected" too -- its accepted result now comes back as a teach_result
+# record, so an "accepted" refusal would look like a capture in flight.
+@pytest.mark.parametrize("text", ["记录当前位置", "把这里记为"])
+def test_a_capture_without_a_name_is_denied(text):
+    """MUTATION: kind "reply" for the no-name capture refusal -> red."""
+    d, frames = _turn(text)
+    assert not frames and d.kind == "denied"  # nothing sent, verdict rejected
+    assert d.tts_text == "这个点没有记录, 因为没有说名字. 请说: 把这里记为某某点"  # said why
