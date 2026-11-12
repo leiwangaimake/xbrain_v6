@@ -70,6 +70,15 @@ class DeviceHealthBridge:
         # device as ok is the fail-silent shape -- so the fact of having been
         # sampled is recorded here rather than inferred from the monitor.
         self._sampled: set = set()
+        # 2026-11-12: devices whose reported state the samples have CONFIRMED
+        # (a run of up_threshold ups or down_threshold downs agreeing with the
+        # monitor). Until then states() says None. Found live: after a p2
+        # restart with the payload unplugged, the monitor's start-up "up" made
+        # the four payload devices read ok for 3 heartbeats (15 s), so health
+        # reported ok -> fail on every restart, and a TTS failing in that window
+        # was taken for an online speaker that cannot play (99 U166).
+        self._run: dict = {}  # device -> (last sample, how many in a row)
+        self._confirmed: set = set()
 
     def register(self, device_id: str,
                  offline_detail: Optional[dict] = None) -> None:
@@ -97,15 +106,23 @@ class DeviceHealthBridge:
             return
         self._sampled.add(device_id)
         mon.observe(is_up)
+        last, n = self._run.get(device_id, (None, 0))
+        n = n + 1 if last == is_up else 1
+        self._run[device_id] = (is_up, n)
+        if is_up == mon.reported_up and n >= (self._up_thr if is_up else self._down_thr):
+            self._confirmed.add(device_id)
 
     def states(self) -> dict:
-        """{device_id: True | False | None} -- up, down, or never sampled.
+        """{device_id: True | False | None} -- up, down, or not yet known.
 
         None is what keeps an unplumbed device out of the health summary as
         UNKNOWN instead of ok. GATED-HW devices (payload / ptz until their
-        clients expose a reachability check) live in that state for now.
+        clients expose a reachability check) live in that state for now. A
+        sampled device also stays None until its samples confirm a state (see
+        _confirmed) -- the monitor's start-up "up" is a debounce default, not
+        a reading.
         """
-        return {dev: (mon.reported_up if dev in self._sampled else None)
+        return {dev: (mon.reported_up if dev in self._confirmed else None)
                 for dev, mon in self._monitors.items()}
 
     def _on_transition(self, device_id: str, offline: bool) -> None:

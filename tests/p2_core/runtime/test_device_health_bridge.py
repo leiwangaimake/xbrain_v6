@@ -183,3 +183,29 @@ def test_this_bridge_publishes_no_dedup_key_so_it_needs_no_window():
         "a dedup_key appeared; 11 S6.2 gives this event neither a key nor a "
         "window, and a key WITHOUT a window is silently merged by p5")
     assert "dedup_window_s" not in ev
+
+
+def test_the_bridge_reports_a_link_only_once_samples_confirm_it():
+    """2026-11-12: the monitor starts "up" by design; states() used to report
+    that after the first sample, so an unplugged payload read ok for 15 s after
+    every p2 restart. MUTATION: report reported_up after one sample -> True
+    while the samples say down -> red; never confirm -> stays None -> red."""
+    b = DeviceHealthBridge(rid="r", emit=lambda ev: None, now_iso=lambda: "t",  # silent emit
+                           eid_gen=lambda d, o: "e", now_wall_s=lambda: 0.0)  # fixed stamps
+    b.register("payload_speaker")  # one device, thresholds down 3 / up 2
+    for n, sample in enumerate([False, False], 1):  # two downs: not yet confirmed
+        b.observe("payload_speaker", sample)  # debounce running
+        assert b.states()["payload_speaker"] is None, n  # not "up", not yet "down"
+    b.observe("payload_speaker", False)  # third down: monitor flips
+    assert b.states()["payload_speaker"] is False  # confirmed offline
+    b.observe("payload_speaker", True)  # one up: debounce
+    assert b.states()["payload_speaker"] is False  # still the confirmed state
+    b.observe("payload_speaker", True)  # second up: monitor flips back
+    assert b.states()["payload_speaker"] is True  # confirmed online
+    up = DeviceHealthBridge(rid="r", emit=lambda ev: None, now_iso=lambda: "t",  # fresh
+                            eid_gen=lambda d, o: "e", now_wall_s=lambda: 0.0)  # bridge
+    up.register("payload_speaker")  # starts "up" internally
+    up.observe("payload_speaker", True)  # one up
+    assert up.states()["payload_speaker"] is None  # one sample is not a confirmation
+    up.observe("payload_speaker", True)  # two ups
+    assert up.states()["payload_speaker"] is True  # confirmed
