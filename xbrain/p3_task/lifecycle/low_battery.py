@@ -38,6 +38,14 @@ U146), replacing 15 S8.2 / S8.2A's 30 % CHG-10/11 trigger and its
     reading is at / above the trigger, not charging, and at least
     cold_swap_min_rise_pct above the soc the record holds -> treated as a swap,
     same 80 % split;
+  * a hot swap the presence rule missed (99 U171, user ruling 2026-11-12):
+    in the low or interrupted phase, not charging, soc at / above the
+    trigger and at least cold_swap_min_rise_pct above the lowest not-charging
+    soc of this episode -> treated as a swap, same 80 % split. Measured
+    2026-11-11 21:40-21:41: a hot swap read 14 -> 100 in one step with no
+    `present: false` frame long enough, and the episode kept alarming every
+    2 s at 100 % until 22:51. The base resets to the current soc on every
+    charging frame, so what a charger adds is never read as a swap;
   * if remain_mile_km cannot cover the drive to the target -> the alarm says
     unreachable (still driving toward it);
   * at or below stop_soc_pct (5) -> stop and lie down;
@@ -245,6 +253,9 @@ class LowBatteryMonitor:  # the episode state machine
         self._restored_soc: Optional[float] = None  # the record's soc; set by restore() until judged
         self._restored = False  # the episode came back from memory; first soc not judged yet
         self.last_cold_swap = False  # the last swap end was judged cold (detail.cold_swap)
+        # 99 U171: the lowest not-charging soc of this episode, what a swap's
+        # rise is measured from; reset to the current soc while charging.
+        self._rise_base: Optional[float] = None
 
     @property
     def low(self) -> bool:
@@ -264,6 +275,7 @@ class LowBatteryMonitor:  # the episode state machine
         self._absent_since, self._swap_pending = {}, False
         self._restored = True  # the first frame with a soc is judged for a cold swap
         self._restored_soc = _num(last_soc)
+        self._rise_base = self._restored_soc  # U171 measures from the record too
 
     def snapshot(self) -> Dict[str, Any]:
         """Every mutable fact, so the wiring can roll a frame back when its
@@ -271,7 +283,7 @@ class LowBatteryMonitor:  # the episode state machine
         return {"phase": self.phase, "stopped": self.stopped, "last_alarm": self._last_alarm,
                 "absent_since": dict(self._absent_since), "swap_pending": self._swap_pending,
                 "restored": self._restored, "restored_soc": self._restored_soc,
-                "last_cold_swap": self.last_cold_swap,
+                "last_cold_swap": self.last_cold_swap, "rise_base": self._rise_base,
                 "charging": (self.charging.stable, self.charging.raw, self.charging._since)}
 
     def rollback(self, snap: Mapping[str, Any]) -> None:
@@ -282,6 +294,7 @@ class LowBatteryMonitor:  # the episode state machine
         self._absent_since, self._swap_pending = dict(snap["absent_since"]), snap["swap_pending"]
         self._restored, self._restored_soc = snap["restored"], snap["restored_soc"]
         self.last_cold_swap = snap["last_cold_swap"]
+        self._rise_base = snap["rise_base"]
         self.charging.stable, self.charging.raw, self.charging._since = snap["charging"]
 
     def _enter(self, phase: str) -> None:  # a phase change inside an episode
@@ -295,6 +308,7 @@ class LowBatteryMonitor:  # the episode state machine
         self.phase, self.stopped, self._last_alarm = PHASE_IDLE, False, None
         self._absent_since, self._swap_pending = {}, False  # presence history belongs to one episode
         self._restored, self._restored_soc = False, None
+        self._rise_base = None
 
     def _track_presence(self, power: Mapping[str, Any], now_s: float) -> None:  # 99 U154 swap evidence
         """Record when a slot went empty; a slot that is filled again after
@@ -327,6 +341,7 @@ class LowBatteryMonitor:  # the episode state machine
             if soc is None or soc >= self._trigger or raw or stable is not False:
                 return out  # no episode starts
             self.phase = PHASE_LOW  # a new episode
+            self._rise_base = soc  # U171: the rise of a later swap is measured from here
             self._track_presence(power, now_s)  # a slot already empty now counts when it is filled
             out.append("low")
         else:
@@ -348,7 +363,17 @@ class LowBatteryMonitor:  # the episode state machine
             if self._swap_pending and soc is not None:
                 self._swap_pending = False  # judged on the soc of the refill, once
                 hot = soc >= self._trigger
-            if hot or cold:  # a swap (99 U154 / U157)
+            rise = False  # 99 U171: a large rise without charging is a swap
+            if soc is not None:
+                if raw or stable is not False or self.phase == PHASE_CHARGING:
+                    self._rise_base = soc  # on the charger (or not yet known): a rise from here is the charge
+                else:
+                    rise = (self._rise_base is not None
+                            and self.phase in (PHASE_LOW, PHASE_INTERRUPTED)
+                            and soc >= self._trigger
+                            and soc - self._rise_base >= self._cold_rise)
+                    self._rise_base = soc if self._rise_base is None else min(self._rise_base, soc)
+            if hot or cold or rise:  # a swap (99 U154 / U157 / U171)
                 full = soc >= self._swap_resume  # U157: high enough to resume at once
                 self.last_cold_swap = cold and not hot  # for the cleared report
                 self._end_episode()

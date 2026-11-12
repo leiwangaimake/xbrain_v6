@@ -170,11 +170,49 @@ def test_a_swap_closes_the_episode_once_the_level_is_back():  # pulled, refilled
 
 
 def test_soc_back_without_a_swap_does_not_close():  # a wobble is not a swap
-    """MUTATION: drop the presence condition -> 60 % closes it -> red."""
+    """A small rise is a wobble, not a swap. (Until 2026-11-12 this case fed
+    19 -> 60 % and expected the episode to stay open; 99 U171 makes such a
+    rise a swap, see the next test.) MUTATION: drop the rise threshold ->
+    19 -> 28 closes -> red."""
     m = _mon()
     m.update(_packs(19.0, (True, 19.0)), 0.0)  # an episode
-    got = m.update(_packs(60.0, (True, 60.0)), 1.0)
+    got = m.update(_packs(28.0, (True, 28.0)), 1.0)  # +9, below cold_swap_min_rise_pct 10
     assert not {"swapped", "swapped_partial"} & set(got) and m.low  # never pulled out
+
+
+# -- 99 U171 (user ruling 2026-11-12): a large rise without charging is a swap ------
+def test_a_hot_swap_seen_only_as_a_jump_closes_the_episode():
+    """Measured 2026-11-11 21:40-21:41: 14 -> 100 % in one step, no long enough
+    present:false, and the episode alarmed until 22:51. MUTATION: no rise
+    rule -> still low -> red."""
+    m = _mon()
+    assert m.update(_packs(14.0, (True, 14.0)), 0.0) == ["low", "alarm"]
+    assert m.update(_packs(100.0, (True, 100.0)), 1.0) == ["swapped"]  # >= swap_resume 80
+    assert not m.low and not m.last_cold_swap
+
+
+def test_a_rise_is_measured_from_the_lowest_soc_of_the_episode():
+    """19 -> 12 -> 23: +4 from the start but +11 from the low -> a swap.
+    MUTATION: measure from the episode start instead of the minimum -> red."""
+    m = _mon()
+    m.update(_power(19.0), 0.0)  # episode starts at 19
+    assert m.update(_power(12.0), 1.0) == []  # drained further
+    assert m.update(_power(23.0), 2.0) == ["swapped_partial"]  # 20 <= 23 < 80
+
+
+def test_what_a_charger_adds_is_not_a_swap():
+    """Charged 15 -> 40 then unplugged: interrupted, not swapped. MUTATION:
+    keep the base at the episode low while charging -> 40 - 15 reads as a
+    swap -> red."""
+    m = _mon()
+    m.update(_power(15.0), 0.0)  # low
+    assert "charging" in _plug(m, _power(16.0, charging=True), 1.0)
+    m.update(_power(40.0, charging=True), 2.0)  # charged up on the dock
+    got = _plug(m, _power(40.0), 3.0)  # unplugged at 40
+    assert got[0] == "interrupted" and m.low  # the U157 interrupted phase, alarm on
+    # the first frame IN the interrupted phase is where a stale base (15) bites
+    got = m.update(_power(40.0), 4.0)
+    assert not {"swapped", "swapped_partial"} & set(got) and m.low
 
 
 @pytest.mark.parametrize("soc,want", [(19.0, None), (20.0, "swapped_partial"),
@@ -393,7 +431,13 @@ def test_a_cold_swap_is_judged_on_the_first_reading_after_a_restore(last, soc, w
     got = m.update(_power(soc), 0.6)  # flag confirmed not charging: judged now
     if want is None:
         assert m.low and not {"swapped", "swapped_partial"} & set(got)
-        assert m.update(_power(69.0), 3.0) == ["alarm"]  # only the first reading counts
+        # 99 U171: a LATER large rise now ends it too -- as a running swap,
+        # never as a cold one (the cold rule judges the first reading only).
+        later = m.update(_power(69.0), 3.0)
+        if last is None:  # no soc on record: nothing to measure from yet
+            assert later == ["alarm"]
+        else:
+            assert later == ["swapped_partial"] and m.last_cold_swap is False
     else:
         assert got == want and not m.low and m.last_cold_swap is cold
 
