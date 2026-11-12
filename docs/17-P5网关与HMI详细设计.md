@@ -1462,7 +1462,7 @@ Zenoh key 映射与 `geo` 的 **W4-F** 硬拒规则，一律**以 `11` §12.1.1 
 | 地图 | 位置点、路径、围栏、充电桩、当前位姿与航向 |
 | ★ 点击导航 | ★ **2026-11-10 起（`99` U155）只能点路径上的点（路径线上的圆点）或关键点**：点击按屏幕像素就近吸附（`hmi.web.goto.snap_px`，关键点优先），关键点发 `goto{waypoint_id}`，路径点发该点精确 `lat/lon`（P5 带 `hmi.goto.arrive_radius_m`）；点到别处弹窗「导航位置不正确」并说明正确位置。两步确认（选中 → 确认前往）；目标点为固定屏幕直径（`hmi.web.goto.pin_diameter_px`）、纯色无边、粉 ↔ 白呼吸的圆点，**到达或失败才消失**，失败弹窗显示目标经纬度 ＋「导航任务失败」＋ ×；回执回显任务号与坐标（CMD-30）。<br>~~「点击位置点或路径上任意位置 → 发 `goto`（HMI-10）」~~ —— **被替代的表述**（生效区间 v0.x ~ 2026-11-10）。★ **为何不再成立**：「路径上任意位置」被用户收窄为路径点与关键点；且照原句实现的只发 `lat/lon`、不带到点半径，P3 不收无半径的坐标 goto，**这一功能从未走通**（`99` U155）。 |
 | ★ 速度门可视化 | 显示当前档位、`limiter`、降速原因（HMI-07） |
-| 事件流 | 按 severity 着色，alarm/fault 置顶 |
+| ★ 事件列表 | ★ **2026-11-12 起为底部居中的上拉抽屉**（用户设计，规则见 §6.10.1C）：显示系统全部上报事件、故障与状态（含 P2 设备健康变化，每次变化一条）；按 severity 着色，告警/故障与「持续中」的低电量 / 定位丢失 / 云端断链置顶；中文文字按事件类型映射。<br>~~「事件流 \| 按 severity 着色，alarm/fault 置顶」~~ —— **被替代的表述**（生效区间 v0.x ~ 2026-11-12）。★ **为何不再成立**：原实现只有地图上的常驻红点（`.alarm-dot`）与一个 50 条的内存环，从未有列表；50 条装不下每 2 s 一条的低电告警两分钟以上，且 P5 重启即清空（2026-11-12 record.db 实测：31.5 k 行中 2 万行是低电告警）。 |
 | ★ 链路状态 | 显著位置显示 `estop_path`，见 §6.3 |
 | 资源占用 | ⚠️ HMI 不得影响实时链路（HMI-06）—— 前端轻量化，避免大量 DOM 更新 |
 | ★ 域⑤ 持有者 | ★ **只读**显示当前占用云台的源（`state/arbitration` / `state/mode.ptz.owner`）—— ★ 回答 `11` §7A.5.3「我点了云台为什么不动」。★★ **只显示，不提供「点」** —— `ptz` 上行属排除区 R-W9（§6.2 / §6.7） |
@@ -1746,6 +1746,8 @@ dead-man 会在「按住不动」的过程中触发一次 `Stop`** —— ★ �
 | 12 | .alarm-dot 的 r=2.4 / fill=var(--danger) / stroke=var(--text) stroke-width=2；.alarm-event-label 的 font-size:4.5 | 无。半径、颜色、描边、标签相对偏移、层级（位于 #trajectoryLayer 内）全部是渲染参数。 | 不适用 | —（前端本地） | — |
 | 13 | （跨组备注，防漏报）#alarmLayer 内的 .alarm-region 多边形 ＋ .alarm-label「报警区域」—— 与 E 组同名但不是事件点 | 静态几何：多边形顶点序列（lat/lon）＋ 名称。属地理要素，非事件。 | 变化即发 + 0.1 Hz（geo_manifest：11 §12.1.6 逐字「变更 + 0.1 Hz」） | REST GET /api/fences/active · GET /api/geo/manifest；Zenoh cmd/geo 写入侧由 p3_task 唯一落库 | FenceSet.polygons[] = { poly_id, role: allow&#124;forbid&#124;speed_limit&#124;warning, name, winding, hard_enforce, vertices[{lat,lon}] } |
 
+★★ **2026-11-12 订正（事件列表抽屉，§6.10.1C）**：本表 #1、#4、#8、#9、#12 描述的地图常驻报警点 `.alarm-dot` **已删除**（用户裁决，推荐 8）—— 事件改在底部抽屉里列出，点击才在地图上闪烁其位置。#8「历史留痕」不再经 REST 分页拉取，而是 P5 启动时从 record.db 回填最新 2000 行折叠为 200 条；#4 的「一点一事件 / 计次」由 P5 事件环的合并规则承担（`count` / `first_ts`）；#11「画在谁的位置上」现定为：事件自带 `pos` 优先，否则为事件到达 P5 时机器人的位置（`pos_src`）。表内原文保留以便对账。
+
 #### 6.8.6 F · 多机与链路（12 项）
 
 | # | UI 元素 | 必须提供的数据 | 刷新率 | 我方 key | 字段 |
@@ -1918,6 +1920,23 @@ dead-man 会在「按住不动」的过程中触发一次 `Stop`** —— ★ �
 | 数据缺失 | `state/power` 超过 3 s 未更新（`POWER_STALE_AFTER_MS`，三个周期）、或该槽缺条目 / `present` 非布尔 ⇒ **「未知」**（灰、无填充）。🚫 不保留旧数字 |
 | 悬停 | 显示电量、温度、电压与是否充电 |
 | 实现 | `data_readers.battery_group`（快照顶层 `battery`）· P5 `_power_if_fresh` · `hmi.js` `batteryCellView` / `renderBattery`。断言：`tests/p5_gateway/hmi/test_battery_group.py`、`test_battery_view_js.py` |
+
+#### 6.10.1C ★★★ 事件列表抽屉（2026-11-12 · 用户设计 ＋ 八条推荐「按推荐来」）
+
+| 项 | 规则 |
+|---|---|
+| 位置与风格 | 地图**底部居中**，与右侧「历史任务」面板同一风格（深蓝底、圆角、淡青边）。★ 不挡左下角坐标块与右上任务面板 |
+| 收起态 | 一条：`事件` ＋ 告警数徽标（「持续中」族数 ＋ 置顶告警/故障数；为 0 显示「无告警」）＋ 最新一条（时间 ＋ 中文文字）。点击展开 |
+| 展开态 | 约半个地图高；筛选按钮 **告警/故障 · 警告 · 信息 · 全部**（默认全部）；上方置顶区，下方按时间倒序的滚动列表。★ **10 s 无鼠标移动或再点标题即收回**（同历史任务面板）；新事件到达不打断阅读（保持滚动位置） |
+| 着色 | `fault` 红、`alarm` 橙红、`warn` 黄、`info` 蓝灰（左边条 ＋ 文字） |
+| 置顶 | ① **「持续中」族**（推荐 5）：低电量（`charging` 的 `low_battery` / `low_battery_no_target` / `low_battery_unreachable` / `low_battery_stop` / `battery_charging` / `charge_interrupted` / `return_target_missing`，以 `low_battery_cleared` 结束）、定位丢失（`rtk_lost` → `heading_recovered`）、云端断链（`cloud_lost` / `cloud_down` / `cloud_degraded` → `cloud_up`）。每族一条，标「持续中 自 <首次时刻>」。★★ **低电量族另有静默判据**：该告警持续期间每 2 s 重复一次，**30 s 未再出现即视为已停**（无需等到 `low_battery_cleared`）—— ★ 起因是实测：2026-11-12 12:36 起的低电告警在 12:52 整机重启后仍被判「持续中」。比较用 P5 快照的 `server_ts`（机器人时钟，与事件 `ts` 同源），🚫 不用浏览器时钟。定位丢失 / 云端断链是单次跳变，只按起止配对。② 最近 10 min 内的告警/故障（不含已在「持续中」里的族），最多 5 条 |
+| 合并（推荐 5） | P5 事件环对**完全相同的重复**（`cat`、`sev`、`title`、`detail.type`（或 `kind`）都相同）在 10 s 内折叠成一条：计次、保留首次时刻，显示「首次 - 最近  N 次」。★ 任务事件的 `title` 带任务号，两个任务不会合并 |
+| 条数与回填（推荐 7） | 列表保留最新 **200** 条（合并后）。★ P5 启动时从 record.db **只读**最新 2000 行、按到达顺序重放同一合并规则得到初始列表 ⇒ P5 重启列表不丢。record.db 不可读则列表从空开始，P5 照常启动 |
+| 中文文字（推荐 6） | 按 `cat` ＋ `detail.type`（或 `kind`）映射（`hmi.js` `eventText`）；带上电量、充电站名、设备名、任务号等细节。★ **未映射的类型显示原英文标题**，🚫 不丢弃、不猜 |
+| 设备健康变化（推荐 4） | P2 每个健康项状态变化一条（`event/{warn\|fault}/health`，`11` §6.2 `health` 行注、`14` §8.1A）：显示「<设备> <原状态> -> <新状态>」 |
+| 位置与闪烁（推荐 8） | 🚫 **地图不再画常驻事件红点**（`.alarm-dot` 已删）。点击带位置的事件 ⇒ 该位置红白闪烁 3 s，位置在视野外时先平移过去。位置来源：事件自带 `pos` 优先；否则为**事件到达 P5 时机器人的新鲜位置**（`pos_src: "robot"`，位姿超过 1.5 s 未更新则无位置）—— ★ 截至 2026-11-12 **没有任何生产方给事件盖位置**（record.db `location_lat` 全为空）。⚠️ 点击闪烁尚未在有定位时实机验证 |
+| 数据 | 快照 `events` 组每条：`eid` `title` `sev` `cat` `code` `src` `detail`（序列化超过 512 B 时只留 `type` / `kind` 与 `truncated`）`ts` `first_ts` `count` `pos` `pos_src`；快照顶层 `server_ts`（P5 墙钟，仅显示用） |
+| 实现 | P5 `hmi/event_ring.py`（合并 ＋ 位置 ＋ 回填折叠）· `event/recent.py`（record.db 只读）· `data_readers.events_group` · `hmi.js` `<event-text>` 块（`eventText` / `activeFamilies` / `pinnedAlarms` / `eventPasses`）与 `renderEvents` / `drawEventDrawer`。断言：`tests/p5_gateway/hmi/test_event_ring.py`、`test_event_drawer_js.py`；P2 侧 `tests/p2_core/health/test_change_events.py` |
 
 #### 6.10.2 ★★★ 配置化需求（用户 2026-08-12）—— `hmi.web.*` 键
 
