@@ -41,6 +41,7 @@ _CONFIGS = os.path.join(os.path.dirname(__file__), "..", "..", "..", "configs") 
 _ITEMS = [  # catalogue: one route, one fence, one keypoint
     {"geo_id": "r-1", "type": "route", "name": "1号路径", "state": "active", "rev": 1},
     {"geo_id": "f-1", "type": "fence", "name": "东门围栏", "state": "active", "rev": 1},
+    {"geo_id": "f-2", "type": "fence", "name": "营区活动区域围栏", "state": "draft", "rev": 1},
     {"geo_id": "w-1", "type": "waypoint", "name": "1号测试点", "state": "active", "rev": 1},
 ]
 _RECORDING = {"session": {"session_id": "ts-1", "state": "recording", "kind": "route",
@@ -100,7 +101,7 @@ def test_not_a_recording_sentence(text):  # F06 keeps 记录
 
 # -- starting -----------------------------------------------------------------
 @pytest.mark.parametrize("text,kind,name", [("现在开始录制2号路径", "route", "2号路径"),
-                                            ("开始录制北门围栏", "fence", "北门围栏")])
+                                            ("开始录制北门禁止区域围栏", "fence", "北门禁止区域围栏")])
 def test_a_named_start_sends_the_name(text, kind, name):  # start
     """MUTATION: send only name_hint -> no start.name -> red."""
     d, frames = _turn(text)  # idle
@@ -113,7 +114,10 @@ def test_a_named_start_sends_the_name(text, kind, name):  # start
     ("开始录制路径", "录制指令要带上完整名称"),  # bare type word
     ("开始录制", "录制指令要带上完整名称"),  # nothing at all
     ("现在开始录制1号路径", "已经有叫1号路径的路径了"),  # taken route
-    ("开始录制东门围栏", "已经有叫东门围栏的围栏了"),  # taken fence
+    ("开始录制营区活动区域围栏", "已经有叫营区活动区域围栏的围栏了"),  # taken fence
+    # 99 U176: the type comes from the name -- none, or two, is refused here
+    ("开始录制东门围栏", "围栏名字里要说明类型"),  # no type keyword
+    ("开始录制活动区域禁止区域围栏", "围栏名字里要说明类型"),  # two of them
     ("开始录制特别特别特别特别特别长的路径", "名字要两到十二个字"),  # 14 characters
 ])
 def test_bad_starts_are_answered_not_asked(text, said):  # no second question

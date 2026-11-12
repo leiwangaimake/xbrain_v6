@@ -63,6 +63,7 @@ from xbrain.p3_task.state.geo_events import (  # noqa: F401  (re-export)
     GEO_EVENT_WARN,
 )
 from xbrain.p3_task.state.geo_rev import content_hash
+from xbrain.p3_task.teach.validate import ring_within  # 99 U176 inside the activity area
 
 #: 11 S6.2 event/{sev}/geo detail.type closed set, info half + warn half. These
 #: are the audit trail of who changed the map; S7.10 is explicit that the event
@@ -148,6 +149,40 @@ async def _current_row(conn, table: str, pk_col: str, geo_id: str):
         f"SELECT rev, content_hash, state, created_by, updated_by, updated_ms "
         f"FROM {table} WHERE {pk_col}=?", (geo_id,))
     return await cur.fetchone()
+
+
+def _ring(geom_json: str):
+    """The [(lat, lon)] ring of a fence geom_json, or None if unreadable."""
+    try:
+        return [(float(a), float(b)) for a, b in json.loads(geom_json)["points"]]
+    except (ValueError, KeyError, TypeError):
+        return None
+
+
+async def fence_activation_refusal(conn, fence_id: str) -> Optional[Dict[str, Any]]:
+    """99 U176 (user 2026-11-12: "其他围栏都必须在活动区域内, 否则无意义"):
+    the refusal detail for enabling this fence, or None. A fence other than
+    the activity area (allow) is enabled only inside an ENABLED activity area:
+    without one the FenceSet is not even broadcast (S9A.1A FS-5A), so the
+    "enabled" fence would do nothing while the operator was told it took
+    effect. The allow itself is not checked here (the S9A.1A trigger keeps it
+    to one)."""
+    cur = await conn.execute(
+        "SELECT name, role, geom_json FROM fences WHERE fence_id=?", (fence_id,))
+    row = await cur.fetchone()
+    if row is None or row[1] == "allow":
+        return None
+    cur = await conn.execute(
+        "SELECT name, geom_json FROM fences WHERE role='allow' AND state='active' "
+        "AND tombstone=0")
+    allow = await cur.fetchone()
+    if allow is None:
+        return {"reason": "activity_area_inactive", "name": row[0]}
+    inner, outer = _ring(row[2]), _ring(allow[1])
+    if inner is None or outer is None or not ring_within(inner, outer):
+        return {"reason": "outside_activity_area", "name": row[0],
+                "activity_area": allow[0]}
+    return None
 
 
 def conflict_error(cmd: GeoCommand, row) -> GeoCommandError:
@@ -450,6 +485,10 @@ async def apply_set_state(cmd: GeoCommand, ctx: GeoContext,
                 f"{cmd.geo_id!r} is deleted; set_state cannot revive it")
         if cmd.base_rev != row[0] and not cmd.force:
             raise conflict_error(cmd, row)
+        if cmd.type == "fence" and target == "active" and row[2] != "active":
+            refusal = await fence_activation_refusal(conn, cmd.geo_id)
+            if refusal is not None:
+                raise GeoCommandError(E_GEO_INVALID, refusal["reason"], refusal)
         rev = row[0] + 1
         # The fence quota triggers fire on THIS update (S9A.1A: <= 5 active, at
         # most 1 allow), which is why activation is where they had to exist --

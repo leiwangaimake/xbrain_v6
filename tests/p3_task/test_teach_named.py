@@ -11,7 +11,8 @@ that names the mutant it kills:
   * start.name binds the session name; a name already used by a live route
     (or fence, for a fence session) is refused at start with E_NAME_CONFLICT;
   * finish on a named session saves under that name at once ("退出即保存")
-    -- a route row, or a draft forbid fence (saving is not enabling);
+    -- a route row, or a draft fence (saving is not enabling; 99 U176: its
+    role from the name);
   * geometry that cannot be saved closes the session as invalid_geometry
     with E_TEACH_GEOMETRY and the issues -- no finalizing left behind;
   * the max_duration auto-finish of a named session saves the same way;
@@ -112,7 +113,7 @@ async def test_a_named_finish_saves_the_route_at_once(rt):  # "退出即保存"
 @pytest.mark.asyncio  # async case
 async def test_a_named_fence_is_saved_as_a_draft(rt):  # same flow for fences
     """Saving is not enabling (S12A.7 constraint 1). MUTATION: commit active -> red."""
-    ack = await _start(rt, "东门围栏", kind="fence")  # named fence start
+    ack = await _start(rt, "营区活动区域围栏", kind="fence")  # named fence start (U176 typed)
     d = 20.0 * _DEG_PER_M  # 20 m in latitude
     dlon = d / math.cos(math.radians(_LAT))  # 20 m in longitude
     for i, (la, lo) in enumerate([(_LAT, _LON), (_LAT + d, _LON), (_LAT + d, _LON + dlon),
@@ -122,8 +123,8 @@ async def test_a_named_fence_is_saved_as_a_draft(rt):  # same flow for fences
     fin = await rt.handle(_cmd("c-fin", "finish", session_id=ack["detail"]["session_id"]),
                           now_mono_s=110.0, now_ms=2000)  # exit
     assert fin["result"] == "accepted" and fin["detail"]["activated"] is False  # not in force
-    cur = await rt._fence_conn.execute("SELECT role, state FROM fences WHERE name='东门围栏'")  # the row
-    assert await cur.fetchone() == ("forbid", "draft")  # 15 design
+    cur = await rt._fence_conn.execute("SELECT role, state FROM fences WHERE name='营区活动区域围栏'")  # the row
+    assert await cur.fetchone() == ("allow", "draft")  # U176 role from the name, still a draft
 
 
 @pytest.mark.asyncio  # async case
@@ -166,13 +167,13 @@ async def test_a_taken_name_is_refused_at_start(rt):  # bound at start
     """MUTATION: drop the start-time name check -> the session arms -> red."""
     await rt._geo_conn.execute(
         "INSERT INTO routes (geo_id, name, path_points, loop_mode, direction, total_len_m, rev,"
-        " content_hash, updated_ms) VALUES ('r-1', '1号路径', '[]', 'oneway', 'forward', 1.0, 1,"
+        " content_hash, updated_ms) VALUES ('r-1', '1号活动区域围栏', '[]', 'oneway', 'forward', 1.0, 1,"
         " 'h', 0)")  # a live route of that name
     await rt._geo_conn.commit()  # visible
-    ack = await _start(rt, "1号路径")  # same name
+    ack = await _start(rt, "1号活动区域围栏")  # same name
     assert ack["result"] == "rejected" and ack["code"] == E_NAME_CONFLICT  # refused
     assert not rt.active  # never armed
-    fence_ack = await _start(rt, "1号路径", kind="fence", t=101.0)  # a fence may share a route's name
+    fence_ack = await _start(rt, "1号活动区域围栏", kind="fence", t=101.0)  # a fence may share a route's name
     assert fence_ack["result"] == "accepted"  # different table
 
 

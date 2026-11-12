@@ -199,12 +199,22 @@ async def test_active_fence_lists_only_active_ones(ctx):
     await _seed(ctx)
     ack = await handle_geo_payload(_read("list"), ctx, now_ms=1)
     assert ack["detail"]["active_fence"] == [], "a saved fence is not enforced"
+    # 99 U176: a forbid fence is enabled only inside an enabled activity area,
+    # so the camp's allow fence (around _RING) is created and enabled first
+    big = [{"lat": _LAT - 0.001, "lon": _LON - 0.001}, {"lat": _LAT + 0.0015, "lon": _LON - 0.001},
+           {"lat": _LAT + 0.0015, "lon": _LON + 0.0015}, {"lat": _LAT - 0.001, "lon": _LON + 0.0015}]
     await handle_geo_payload(
-        {"cmd_id": "ss-1", "action": "set_state", "type": "fence",
-         "geo_id": "f-north", "origin": "cloud", "base_rev": 1,
-         "obj": {"state": "active"}}, ctx, now_ms=2)
+        {"cmd_id": "s-a", "action": "upsert", "type": "fence", "geo_id": "f-camp",
+         "origin": "cloud", "base_rev": 0,
+         "obj": {"name": "camp", "geom": {"role": "allow", "outer": big}}}, ctx, now_ms=2)
+    for gid in ("f-camp", "f-north"):
+        on = await handle_geo_payload(
+            {"cmd_id": "ss-" + gid, "action": "set_state", "type": "fence",
+             "geo_id": gid, "origin": "cloud", "base_rev": 1,
+             "obj": {"state": "active"}}, ctx, now_ms=2)
+        assert on["result"] == "accepted", on
     after = await handle_geo_payload(_read("list"), ctx, now_ms=3)
-    assert after["detail"]["active_fence"] == ["f-north"]
+    assert sorted(after["detail"]["active_fence"]) == ["f-camp", "f-north"]
 
 
 @pytest.mark.asyncio

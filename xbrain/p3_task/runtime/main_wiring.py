@@ -144,6 +144,7 @@ def run_voice_loop_wiring(stop_flag: dict,
                           teach_min_dist_m: Optional[float] = None,
                           teach_record_duration_s: Optional[float] = None,
                           teach_record_warn_before_s: Optional[list] = None,
+                          teach_fence_speed_limit_mps: Optional[float] = None,
                           rtk_lost_sustain_s: Optional[float] = None,
                           rtk_recover_sustain_s: Optional[float] = None,
                           low_battery: Optional[Dict[str, float]] = None) -> int:
@@ -175,6 +176,9 @@ def run_voice_loop_wiring(stop_flag: dict,
     the recording's only limit, handled the same way. teach_record_warn_before_s
     is teach.record_warn_before_s (99 U163): the time-left warnings, None in
     tests (no warnings).
+    teach_fence_speed_limit_mps is teach.fence_speed_limit_mps (99 U176): the
+    ceiling of a recorded 限速区域 fence; None refuses that one kind of
+    recording by key name.
 
     rtk_lost_sustain_s / rtk_recover_sustain_s are p3_task.yaml rtk_loss.*
     (11 S3.3.3, 99 U142): how long single / no_fix must last before the task
@@ -195,6 +199,7 @@ def run_voice_loop_wiring(stop_flag: dict,
                teach_min_dist_m=teach_min_dist_m,
                teach_record_duration_s=teach_record_duration_s,
                teach_record_warn_before_s=teach_record_warn_before_s,
+               teach_fence_speed_limit_mps=teach_fence_speed_limit_mps,
                rtk_lost_sustain_s=rtk_lost_sustain_s,
                rtk_recover_sustain_s=rtk_recover_sustain_s,
                low_battery=low_battery))
@@ -211,6 +216,7 @@ async def _amain(stop_flag: dict, heartbeat_period_s: float,
                  teach_min_dist_m: Optional[float] = None,
                  teach_record_duration_s: Optional[float] = None,
                  teach_record_warn_before_s: Optional[list] = None,
+                 teach_fence_speed_limit_mps: Optional[float] = None,
                  rtk_lost_sustain_s: Optional[float] = None,
                  rtk_recover_sustain_s: Optional[float] = None,
                  low_battery: Optional[Dict[str, float]] = None) -> int:
@@ -741,6 +747,7 @@ async def _amain(stop_flag: dict, heartbeat_period_s: float,
                                  min_dist_m=teach_min_dist_m,
                                  record_duration_s=teach_record_duration_s,
                                  record_warn_before_s=teach_record_warn_before_s,  # 99 U163
+                                 fence_speed_limit_mps=teach_fence_speed_limit_mps,  # 99 U176
                                  snap_max_age_ms=teach_snap_max_age_ms,
                                  route_membership_m=route_membership_m)  # 99 U146
             if teach_snap_max_age_ms is None:

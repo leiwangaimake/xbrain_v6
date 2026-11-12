@@ -73,7 +73,9 @@ from xbrain.p3_task.teach.session import (
     check_arming,
     clamp_limits,
 )
+from xbrain.common.geo.roles import fence_role_for_name  # 99 U176 type from name
 from xbrain.p3_task.teach.validate import (
+    check_activity_area,  # 99 U176 inside the activity area
     merge_degenerate,
     validate_fence,
     validate_route,
@@ -108,8 +110,14 @@ class TeachRuntime:
                  snap_max_age_ms: Optional[int] = None,
                  route_membership_m: Optional[float] = None,
                  record_duration_s: Optional[float] = None,
-                 record_warn_before_s: Optional[Sequence[float]] = None) -> None:
+                 record_warn_before_s: Optional[Sequence[float]] = None,
+                 fence_speed_limit_mps: Optional[float] = None) -> None:
         self._task_conn = task_conn
+        # 99 U176: the speed ceiling given to a recorded 限速区域 fence
+        # (p3_task.yaml teach.fence_speed_limit_mps). A real zone's limit, so no
+        # default (CLAUDE.md 3.1): None refuses to START such a recording, by
+        # key name, rather than saving a fence FV-13 would reject.
+        self._fence_speed_limit_mps = fence_speed_limit_mps
         # 99 U146: a 充电桩 / 充电站 point must lie within this of a route
         # (common.geo.route_membership_m); None = tests of the teach path alone.
         self._route_membership_m = route_membership_m
@@ -452,6 +460,14 @@ class TeachRuntime:
                                              self._record_duration_s))
                              if v is None]})
         name = cmd.start.get("name") or ""
+        if name and cmd.start["kind"] == "fence":
+            # 99 U176: the fence's type comes from its name, and a fence other
+            # than the activity area needs one to sit in. Refused HERE, before
+            # anything is recorded, not after a lap that could never be saved.
+            refusal = await self._fence_start_refusal(name)
+            if refusal is not None:
+                code, detail = refusal
+                return teach_ack(cmd.cmd_id, "rejected", code, detail)
         if name:
             # 99 U133: a named start binds the name now, so a taken one is
             # refused before the operator records anything under it. Only
@@ -563,7 +579,11 @@ class TeachRuntime:
         session = self._session
         if session is None or not session.name or session.state != "finalizing":
             return {"saved": False, "reason": "no_named_session"}
-        validation = self._validate(session, activate=False)
+        role = layout = None
+        if session.kind == "fence":  # 99 U176: checked again, the library may have changed
+            role = fence_role_for_name(session.name)
+            layout = await self._fence_layout()
+        validation = self._validate(session, activate=False, role=role, layout=layout)
         if not validation.ok:
             session.apply("discard")
             session.close_reason = "invalid_geometry"
@@ -597,16 +617,58 @@ class TeachRuntime:
         detail["kind"] = session.kind
         return detail
 
-    def _validate(self, session: TeachSession, *, activate: bool):
+    async def _fence_start_refusal(self, name: str):
+        """99 U176: (code, detail) refusing a fence recording start, or None."""
+        role = fence_role_for_name(name)
+        if role is None:  # no type keyword, or two
+            return E_GEO_INVALID, {"reason": "fence_type_missing", "name": name}
+        allow, _others = await self._fence_layout()
+        if role == "allow" and allow is not None:  # FS-5A: one activity area
+            return E_GEO_INVALID, {"reason": "activity_area_exists", "name": name,
+                                   "existing": allow[0]}
+        if role != "allow" and allow is None:  # nothing for it to sit in
+            return E_GEO_INVALID, {"reason": "activity_area_missing", "name": name}
+        if role == "speed_limit" and self._fence_speed_limit_mps is None:
+            return E_TEACH_STATE, {"reason": "recording_config_missing",
+                                   "missing": ["teach.fence_speed_limit_mps"]}
+        return None
+
+    async def _fence_layout(self):
+        """(activity area as (name, ring, state) or None, [(name, ring)] of the
+        other fences) from fence.db, live rows only. The active allow wins if there
+        were ever two; a draft one counts too (it is recorded before it is
+        enabled, and the other fences are recorded against it)."""
+        cur = await self._fence_conn.execute(
+            "SELECT name, role, state, geom_json FROM fences "
+            "WHERE tombstone=0 AND state<>'deleted' ORDER BY fence_id")
+        allow, others = None, []
+        for name, role, state, geom in await cur.fetchall():
+            try:
+                ring = [(float(a), float(b)) for a, b in json.loads(geom)["points"]]
+            except (ValueError, KeyError, TypeError):
+                continue  # an unreadable row: not used as a reference
+            if role == "allow":
+                if allow is None or state == "active":
+                    allow = (name or "", ring, state)
+            else:
+                others.append((name or "", ring))
+        return allow, others
+
+    def _validate(self, session: TeachSession, *, activate: bool,
+                  role: Optional[str] = None, layout=None):
         points = self._recorder.latlon_points()
         if session.kind == "fence":
             robot_at = None
             pose = self._pose or {}
             if pose.get("lat") is not None and pose.get("lon") is not None:
                 robot_at = (float(pose["lat"]), float(pose["lon"]))
-            return validate_fence(
+            v = validate_fence(
                 points, dropped_by_quality=self._recorder.dropped_by_quality,
                 robot_at=robot_at, activate=activate)
+            if layout is not None:  # 99 U176, at save time
+                check_activity_area(v, merge_degenerate(points), role=role,
+                                    activity_area=layout[0], enclosed=layout[1])
+            return v
         return validate_route(
             points, dropped_by_quality=self._recorder.dropped_by_quality)
 
@@ -615,7 +677,21 @@ class TeachRuntime:
         """S12A.7: validate AGAIN (the object library may have changed since
         finish), then commit through the existing writers."""
         activate = bool(cmd.save["activate"]) and session.kind == "fence"
-        validation = self._validate(session, activate=activate)
+        role = layout = None
+        if session.kind == "fence":  # 99 U176: type from the save name
+            role = fence_role_for_name(cmd.save["name"])
+            if role is None:
+                raise TeachStateError(E_GEO_INVALID, "fence name declares no type",
+                                      {"reason": "fence_type_missing",
+                                       "name": cmd.save["name"]})
+            layout = await self._fence_layout()
+        validation = self._validate(session, activate=activate, role=role,
+                                    layout=layout)
+        if (activate and role not in (None, "allow") and layout[0] is not None
+                and layout[0][2] != "active"):
+            # 99 U176: enabled now, it would sit in an area not yet in force
+            # (the FenceSet is not even broadcast without an active allow)
+            validation.add("activity_area_inactive", activity_area=layout[0][0])
         if not validation.ok:
             raise TeachStateError(
                 E_TEACH_GEOMETRY, "geometry validation failed",
@@ -644,14 +720,21 @@ class TeachRuntime:
             geo_id = await self._mint_id(self._fence_conn, "fences", "f-", name)
             await self._ensure_name_free(self._fence_conn, "fences", name,
                                          overwrite)
-            # A recorded fence is a forbid zone by default: the operator drove
-            # around something to exclude it. An allow (keep-in) fence is the
-            # camp boundary and is set deliberately through cmd/geo, where the
-            # S9A.1A "exactly one allow" invariant is easier to reason about.
+            # 99 U176: the role comes from the name (活动区域 allow, 报警区域
+            # warning, 限速区域 speed_limit, 禁止区域 forbid). ~~A recorded fence
+            # is a forbid zone by default ... an allow fence is set through
+            # cmd/geo~~ superseded: nothing could create the activity area FS-5A
+            # needs, so no recorded fence ever took effect.
             # state='draft': saving is not enabling (S12A.7 constraint 1).
-            await commit_fence(self._fence_conn, fence_id=geo_id, role="forbid",
+            role = fence_role_for_name(name)
+            if role is None:
+                raise TeachStateError(E_GEO_INVALID, "fence name declares no type",
+                                      {"reason": "fence_type_missing", "name": name})
+            speed = self._fence_speed_limit_mps if role == "speed_limit" else None
+            await commit_fence(self._fence_conn, fence_id=geo_id, role=role,
                                points=points, now_ms=now_ms, name=name,
-                               state="draft", created_by="teach")
+                               state="draft", created_by="teach",
+                               speed_limit_mps=speed)
             total_len = self._recorder.length_m
         session.apply("save")
         session.close_reason = "saved"

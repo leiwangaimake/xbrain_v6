@@ -3,7 +3,7 @@ Copyright (c) 2026 Hachist Robotics
 Author: wanglei@hachist.com
 上海哈船智能船舶技术有限公司
 File: roles.py
-Brief: The name -> role rule for waypoints: 返航终点站 is home, 充电桩 / 充电站 is dock (99 U119)
+Brief: The name -> role rules: waypoints (返航终点站 home, 充电桩 / 充电站 dock, 99 U119) and recorded fences (99 U176)
 
 Description:
 The user ruled on 2026-11-05 (99 U119) that the operator names the two role
@@ -12,6 +12,14 @@ waypoint whose name contains 充电桩 or 充电站 is a charging point. P3 stor
 the type from this rule; P4 uses it to answer "返航" without a home point and
 to recognise a named dock goto. Moved here from p3_task/geo/waypoint_kind.py
 the same day (99 U128) so both processes read one rule.
+
+99 U176 (user 2026-11-12): a RECORDED fence takes its 11 S9A.1A role from a
+keyword in its name -- 活动区域 -> allow, 报警区域 -> warning, 限速区域 ->
+speed_limit, 禁止区域 -> forbid ("现在开始录制营区活动区域围栏"). Until then
+every recorded fence was a forbid zone and nothing could create the one
+activity area FS-5A requires, so no recorded fence ever took effect. A name
+with none of the keywords, or with two, has no role: the recording is refused
+up front, never guessed.
 
 Traps:
   * Matching 返航终点 as a substring would make 返航终点站2 or 旧返航终点站 a
@@ -42,3 +50,18 @@ def waypoint_type_for_name(name: str) -> Optional[str]:
     if is_dock_name(name):  # 充电桩 / 充电站 anywhere
         return "dock"  # a charging point
     return None  # the name says nothing about the type
+
+
+#: 99 U176: the keyword a recorded fence's name must carry, and its S9A.1A role.
+FENCE_ROLE_KEYWORDS = (("活动区域", "allow"), ("报警区域", "warning"),
+                       ("限速区域", "speed_limit"), ("禁止区域", "forbid"))
+#: How each role is said, for replies (the keyword itself).
+FENCE_ROLE_WORDS = {role: word for word, role in FENCE_ROLE_KEYWORDS}
+
+
+def fence_role_for_name(name: str) -> Optional[str]:
+    """The role a fence name declares (99 U176), or None when it names no type
+    or more than one -- the caller refuses, it never picks one."""
+    hits = {role for word, role in FENCE_ROLE_KEYWORDS if word in (name or "")}
+    return hits.pop() if len(hits) == 1 else None  # exactly one type, or none
+

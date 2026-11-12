@@ -173,11 +173,37 @@ def test_a_refused_geo_command_says_why():  # geo
     assert _said(out)[1] == "这个对象刚被别处修改过, 请再说一遍"  # the reason
 
 
+@pytest.mark.parametrize("detail,text", [  # 99 U176 enabling refused
+    ({"reason": "activity_area_inactive", "name": "东门报警区域围栏"},
+     "东门报警区域围栏没有启用: 活动区域围栏还没有启用, 其它围栏要先启用活动区域才能生效"),
+    ({"reason": "outside_activity_area", "name": "北门禁止区域围栏",
+      "activity_area": "营区活动区域围栏"},
+     "北门禁止区域围栏没有启用: 不在活动区域营区活动区域围栏内"),
+])
+def test_a_refused_fence_activation_says_why(detail, text):  # F15
+    """MUTATION: by code only -> "这个对象没有改成功" -> red."""
+    sp = AckSpeaker()  # fresh
+    sp.note_turn(_sent("cmd/geo", {"cmd_id": "g-2", "action": "set_state"}))
+    out = sp.on_ack(_b({"cmd_id": "g-2", "result": "rejected", "code": "E_GEO_INVALID",
+                        "detail": detail}))
+    assert _said(out)[1] == text  # the reason
+
+
 @pytest.mark.parametrize("code,detail,text", [  # 99 U133 start refusals
     ("E_NAME_CONFLICT", {}, "1号路径这个名字已经有了, 请换个名字再录制"),  # taken meanwhile
     ("E_TEACH_QUALITY", {"reason": "fix_quality"}, "现在不能开始录制: 定位不是RTK固定解"),  # check 3
     ("E_UNHEALTHY", {"reason": "no_nonvoice_estop"}, "现在不能开始录制: 没有可用的非语音急停通道"),
     ("E_BUSY", {"reason": "task_running"}, "有任务正在执行, 现在不能开始录制"),  # check 2
+    # 99 U176: the fence's type and the activity area
+    ("E_GEO_INVALID", {"reason": "activity_area_missing"},
+     "还没有活动区域围栏, 请先录制活动区域围栏, 其它围栏都必须在活动区域里面"),
+    ("E_GEO_INVALID", {"reason": "activity_area_exists", "existing": "营区活动区域围栏"},
+     "已经有活动区域围栏营区活动区域围栏了, 只能有一个活动区域, 没有开始录制"),
+    ("E_TEACH_STATE", {"reason": "recording_config_missing",
+                       "missing": ["teach.fence_speed_limit_mps"]},
+     "现在不能录制限速区域围栏: 限速值没有配置"),  # MUTATION: generic config sentence -> red
+    ("E_TEACH_STATE", {"reason": "recording_config_missing", "missing": ["teach.sample_hz"]},
+     "现在不能开始录制: 录制参数没有配置"),  # the U132 keys keep theirs
 ])
 def test_a_refused_recording_start_says_why(code, detail, text):  # start
     """Until U133 a refused start was silent after "好的,开始录制X".
@@ -207,6 +233,10 @@ def test_an_accepted_recording_start_adds_nothing():  # start accepted
       "saved": False, "close_reason": "invalid_geometry", "name": "2号路径",
       "issues": [{"code": "too_few_points"}]}},
      "录制已退出, 2号路径没有保存: 录到的点不足两个"),
+    ({"result": "rejected", "code": "E_TEACH_GEOMETRY", "detail": {  # 99 U176
+      "saved": False, "close_reason": "invalid_geometry", "name": "北门禁止区域围栏",
+      "issues": [{"code": "outside_activity_area", "activity_area": "营区活动区域围栏"}]}},
+     "录制已退出, 北门禁止区域围栏没有保存: 围栏不在活动区域内"),
 ])
 def test_a_recording_exit_says_what_was_saved(ack, text):  # finish
     """MUTATION: say nothing for finish -> the operator never hears the result -> red."""

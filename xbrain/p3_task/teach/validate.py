@@ -41,7 +41,14 @@ from xbrain.p3_task.teach.sampling import haversine_m
 #: rather than a severity field per code so the question the caller actually
 #: asks -- "may this be saved" -- is one membership test.
 BLOCKING_ISSUES = frozenset({"too_few_points", "too_few_vertices",
-                             "self_intersect", "area_too_small"})
+                             "self_intersect", "area_too_small",
+                             # 99 U176: every other fence must lie inside the
+                             # one activity area (allow), and an activity area
+                             # must enclose the fences already there
+                             "outside_activity_area", "activity_area_missing",
+                             "activity_area_excludes", "fence_type_missing",
+                             # and enabling one needs that area enabled
+                             "activity_area_inactive"})
 ADVISORY_ISSUES = frozenset({"degenerate_edge", "auto_closed",
                              "close_gap_large", "robot_outside",
                              "outside_active_fence", "low_quality_ratio"})
@@ -156,6 +163,32 @@ def point_in_ring(point: Tuple[float, float],
     return inside
 
 
+def check_activity_area(v: Validation, points: Sequence[Tuple[float, float]], *,
+                        role: Optional[str],
+                        activity_area: Optional[Tuple[str, Sequence[Tuple[float, float]]]],
+                        enclosed: Sequence[Tuple[str, Sequence[Tuple[float, float]]]] = ()) -> None:
+    """99 U176 (user 2026-11-12: "其他围栏都必须在活动区域内, 否则无意义"),
+    added to a fence's validation:
+      * an activity area (role allow) must enclose every fence already there
+        (`enclosed`, name + ring) -> activity_area_excludes;
+      * any other fence needs the activity area (`activity_area`, name + ring)
+        -> activity_area_missing, and must lie inside it -> outside_activity_area.
+    All three are blocking, as is a name declaring no type (role None,
+    fence_type_missing): such a fence has no role to be saved under."""
+    if role is None:
+        v.add("fence_type_missing")
+        return
+    if role == "allow":
+        outside = [name for name, ring in enclosed if not ring_within(ring, points)]
+        if outside:
+            v.add("activity_area_excludes", fences=outside)
+        return
+    if activity_area is None:
+        v.add("activity_area_missing")
+    elif not ring_within(points, activity_area[1]):
+        v.add("outside_activity_area", activity_area=activity_area[0])
+
+
 def validate_route(points: Sequence[Tuple[float, float]], *,
                    dropped_by_quality: int = 0) -> Validation:
     """S12A.7 for a recorded route."""
@@ -166,6 +199,26 @@ def validate_route(points: Sequence[Tuple[float, float]], *,
     _add_degenerate(v, points)
     _add_low_quality(v, len(points), dropped_by_quality)
     return v
+
+
+def ring_within(inner: Sequence[Tuple[float, float]],
+                outer: Sequence[Tuple[float, float]]) -> bool:
+    """99 U176: does ring `inner` lie entirely inside ring `outer`? Every inner
+    vertex inside (ray casting) AND no inner edge crossing an outer edge -- a
+    vertex test alone passes a ring whose edge cuts across a concave notch of
+    the outer one. Lat/lon plane, the same camp-scale argument as
+    _segments_intersect (inside / crossing are affine-invariant)."""
+    if len(inner) < 3 or len(outer) < 3:
+        return False  # not rings: nothing can be said to be inside
+    if not all(point_in_ring(p, outer) for p in inner):
+        return False  # a vertex outside
+    n, m = len(inner), len(outer)
+    for i in range(n):
+        a1, a2 = inner[i], inner[(i + 1) % n]
+        for j in range(m):
+            if _segments_intersect(a1, a2, outer[j], outer[(j + 1) % m]):
+                return False  # an edge leaves and comes back
+    return True
 
 
 def validate_fence(points: Sequence[Tuple[float, float]], *,

@@ -96,6 +96,7 @@ from xbrain.p4_agent.slots.name_slots import (
     name_length_ok,
 )
 from xbrain.common.geo import HOME_WAYPOINT_NAME  # 99 U128 B08 pre-check
+from xbrain.common.geo.roles import fence_role_for_name  # 99 U176 fence type
 from xbrain.p4_agent.slots.ptp_slots import PtpParse, parse_ptp
 from xbrain.p4_agent.registry.time_expr import (
     TimeExpr,
@@ -251,8 +252,11 @@ _PTP_CN = {
 #: 99 U133 recording replies (ASCII punctuation, Chinese words). {name} is the
 #: recording's name, {what} 路径 / 围栏.
 _REC_CN = {
-    "noname": "录制指令要带上完整名称, 比如: 现在开始录制1号路径, 或: 现在开始录制东门围栏",
+    "noname": "录制指令要带上完整名称, 比如: 现在开始录制1号路径, 或: 现在开始录制营区活动区域围栏",
     "name_length": "名字要两到十二个字, 请换个名字再录制",
+    # 99 U176: a fence's type comes from its name
+    "fence_type": ("围栏名字里要说明类型: 活动区域, 报警区域, 限速区域或禁止区域, "
+                   "比如: 现在开始录制营区活动区域围栏"),
     "taken": "已经有叫{name}的{what}了, 请换个名字再录制",
     "ack_start": "好的,开始录制{name}. 请用键盘控制机器人移动, 说退出录制结束并保存",
     "busy_start": "正在录制{name}, 不能开始新的录制. 要结束请说退出录制",
@@ -1917,6 +1921,10 @@ class TurnOrchestrator:
             name = name.strip()
             if not name_length_ok(name):
                 return merged, _REC_CN["name_length"]
+            if want == "fence" and fence_role_for_name(name) is None:
+                # 99 U176: no type keyword (or two) -- nothing to save it as.
+                # P3 refuses it too (fence_type_missing); said here first.
+                return merged, _REC_CN["fence_type"]
             manifest = manifest_from_state(state.get("state/geo/manifest"))
             if manifest is not None and any(
                     it.get("type") == want and it.get("state", "active") != "deleted"

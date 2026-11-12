@@ -194,7 +194,14 @@ _REC_START_BY_REASON = {
     "state_unavailable": "现在不能开始录制: 拿不到健康, 电量或遥控状态",  # caches missing
     "no_nonvoice_estop": "现在不能开始录制: 没有可用的非语音急停通道",  # check 7
     "recording_config_missing": "现在不能开始录制: 录制参数没有配置",  # U132 keys
+    # 99 U176: a fence's type comes from its name, and every fence but the
+    # activity area must sit inside the one activity area
+    "fence_type_missing": "围栏名字里要说明类型: 活动区域, 报警区域, 限速区域或禁止区域",  # no keyword
+    "activity_area_exists": "已经有活动区域围栏{existing}了, 只能有一个活动区域, 没有开始录制",  # FS-5A
+    "activity_area_missing": "还没有活动区域围栏, 请先录制活动区域围栏, 其它围栏都必须在活动区域里面",  # order
 }
+#: 99 U176: teach.fence_speed_limit_mps unset -- only 限速区域 is refused.
+_REC_START_NO_SPEED_LIMIT = "现在不能录制限速区域围栏: 限速值没有配置"  # the other kinds still record
 _REC_START_QUALITY = "现在不能开始录制: 定位不是RTK固定解"  # check 3
 _REC_START_UNHEALTHY = "现在不能开始录制: 设备状态不允许移动"  # check 4
 _REC_START_OTHER = "{name}没有开始录制"  # any other code
@@ -207,6 +214,12 @@ _REC_ISSUE = {  # S12A.7 blocking issue codes, in words
     "too_few_vertices": "围栏顶点不足三个",
     "self_intersect": "围栏边线自相交",
     "area_too_small": "围栏面积太小",
+    # 99 U176
+    "fence_type_missing": "围栏名字里没有说明类型",  # the save name has no keyword
+    "activity_area_missing": "还没有活动区域围栏, 请先录制活动区域围栏",  # nothing to sit in
+    "outside_activity_area": "围栏不在活动区域内",  # vertex outside or an edge crossing
+    "activity_area_excludes": "已有的围栏没有全部在这个活动区域里面",  # a new area too small
+    "activity_area_inactive": "活动区域围栏还没有启用",  # save-and-enable before the area
 }
 _REC_FINISH_OTHER = "录制没有正确结束"  # any other refusal
 #: 99 U165: a finish whose write failed with the data kept (U163 retained):
@@ -251,6 +264,11 @@ _GEO_REFUSED = {
     E_NOT_FOUND: "没找到这个对象",  # deleted meanwhile
 }
 _GEO_OTHER = "这个对象没有改成功"  # any other code
+#: 99 U176: enabling a fence outside an enabled activity area, by detail.reason.
+_GEO_BY_REASON = {
+    "activity_area_inactive": "{name}没有启用: 活动区域围栏还没有启用, 其它围栏要先启用活动区域才能生效",  # order
+    "outside_activity_area": "{name}没有启用: 不在活动区域{activity_area}内",  # names the area
+}
 
 #: cmd/motion/intent/ack: E_BUSY is told apart by detail.reason.
 _MOTION_BUSY = {
@@ -717,6 +735,10 @@ def _sentence(key: str, cmd: Dict[str, Any], ack: Dict[str, Any]) -> Optional[st
         verb = _TASK_VERB.get(cmd.get("action"), "执行")  # the refused action
         return _TASK_REFUSED.get(code, _TASK_OTHER).format(verb=verb)  # by code
     if key == CMD_GEO:
+        if detail.get("reason") in _GEO_BY_REASON:  # 99 U176 activation refusal
+            return _GEO_BY_REASON[detail["reason"]].format(  # P3 puts both names in detail
+                name=detail.get("name") or "这个围栏",  # the fence asked for
+                activity_area=detail.get("activity_area") or "")  # the area it is outside of
         return _GEO_REFUSED.get(code, _GEO_OTHER)  # by code
     if code == E_BUSY:
         return _MOTION_BUSY.get(detail.get("reason"), _MOTION_OTHER)  # by reason
@@ -731,8 +753,12 @@ def _start_sentence(cmd: Dict[str, Any], ack: Dict[str, Any], detail: Dict[str, 
         return None  # the turn already said it
     name = (cmd.get("start") or {}).get("name") or ""  # the name said
     reason = detail.get("reason")  # told apart below
+    if (reason == "recording_config_missing"  # 99 U176: told apart by the key P3 names
+            and "teach.fence_speed_limit_mps" in (detail.get("missing") or [])):  # the U176 key
+        return _REC_START_NO_SPEED_LIMIT  # 99 U176: only this kind is refused
     if reason in _REC_START_BY_REASON:  # a reason with its own sentence
-        return _REC_START_BY_REASON[reason]  # by reason
+        return _REC_START_BY_REASON[reason].format(  # by reason
+            existing=detail.get("existing") or "")  # U176 the activity area there
     if code == E_TEACH_QUALITY:  # check 3: not rtk_fixed
         return _REC_START_QUALITY  # the fix
     if code == E_UNHEALTHY:  # check 4: health forbids motion

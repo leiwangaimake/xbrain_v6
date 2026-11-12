@@ -384,13 +384,13 @@ async def test_saved_fence_is_a_draft_not_active(rt):
     await rt.handle(_cmd("finish", session_id=sid), now_mono_s=110.0,
                     now_ms=2000)
     save = await rt.handle(
-        _cmd("save", session_id=sid, save={"name": "north zone"}),
+        _cmd("save", session_id=sid, save={"name": "north 活动区域"}),  # 99 U176 typed
         now_mono_s=111.0, now_ms=2100)
     assert save["result"] == "accepted", save
     assert save["detail"]["activated"] is False
     cur = await rt._fence_conn.execute(
-        "SELECT role, state FROM fences WHERE name='north zone'")
-    assert await cur.fetchone() == ("forbid", "draft")
+        "SELECT role, state FROM fences WHERE name='north 活动区域'")
+    assert await cur.fetchone() == ("allow", "draft")
 
 
 @pytest.mark.asyncio
