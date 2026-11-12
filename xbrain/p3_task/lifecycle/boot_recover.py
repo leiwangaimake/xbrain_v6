@@ -34,6 +34,16 @@ What it does NOT do:
   * look at any other state. ready / scheduled / suspended rows are already
     what they say and the scheduler handles them.
 
+A second start-up step (99 U170, user ruling 2026-11-12): every live link-loss
+return_home (task_id rh-*, 11 S4.6.4 F-5) is CANCELLED before anything else.
+Measured 2026-11-10 / 11-11: with no cloud link, a P3 restart found the rh-*
+left over from before the restart and dispatched it at once -- before the
+positioning judgement had run, and towards a home point 15 km away. The
+ruling: clear that kind of task at boot. F-5 still injects a new one if the
+cloud link is (still) at L3 for a NEW outage; for the outage it was already
+injected for, the rh-{gw}-{epoch} row exists (now cancelled) and
+maybe_inject_return_home refuses a second one, so nothing is re-sent at boot.
+
 Traps:
   * Suspending only the FIRST running row. The single-running invariant is
     the scheduler's, and the rows here are exactly the ones written when that
@@ -46,7 +56,7 @@ Traps:
 
 from __future__ import annotations  # postponed annotations
 
-from typing import List  # the suspended ids
+from typing import List, Tuple  # the suspended / cancelled ids
 
 from xbrain.p3_task.state.machine import apply_transition, validate_suspend_fields  # the graph
 
@@ -84,4 +94,48 @@ async def suspend_unclosed_running(dao, conn, now_mono_ms: int) -> List[str]:
     return running
 
 
-__all__ = ["suspend_unclosed_running", "BOOT_SUSPEND_KIND", "BOOT_SUSPEND_REASON"]
+#: 99 U170: the reason the cancelled link-loss returns carry on their 11 S6.2
+#: task event (free text by S6.2, see state/task_events.py).
+BOOT_CLEAR_REASON = "boot_clear_link_loss_return"
+
+#: The live states a link-loss return_home can be in (lifecycle/link_loss._LIVE).
+_RH_LIVE = ("pending", "scheduled", "blocked", "ready", "running", "suspended")
+
+
+async def cancel_link_loss_returns(conn, now_mono_ms: int) -> List[Tuple[str, str]]:
+    """99 U170: cancel every live link-loss return_home (rh-*) at start-up.
+
+    Returns [(task_id, from_state)] -- empty when there is none, and then no
+    transaction is opened. Runs BEFORE suspend_unclosed_running, so a rh-*
+    left running is cancelled rather than suspended. Each cancel goes through
+    the state machine first (every live state has a cancel arrow, 15 S4.4);
+    the terminal columns are written like an operator cancel: finished_at now,
+    suspend fields cleared, duration_sec NULL (the row started in an earlier
+    boot, and 15 S9.5 forbids a wall-clock difference across boots).
+    """
+    cur = await conn.execute(
+        "SELECT task_id, state FROM tasks WHERE task_type='return_home' "
+        "AND task_id LIKE 'rh-%%' AND state IN (%s) ORDER BY task_id"
+        % ",".join("'%s'" % s for s in _RH_LIVE))
+    rows = [(r[0], r[1]) for r in await cur.fetchall()]
+    if not rows:
+        return []  # nothing to clear: no transaction opened
+    for _tid, state in rows:  # legality checked before anything is written
+        apply_transition(state, "cancel")
+    await conn.execute("BEGIN IMMEDIATE")
+    try:
+        for task_id, _state in rows:
+            await conn.execute(
+                "UPDATE tasks SET state='cancelled', suspend_kind=NULL, "
+                "suspend_reason=NULL, updated_ms=?, duration_sec=NULL, "
+                "finished_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE task_id=?",
+                (now_mono_ms, task_id))
+        await conn.commit()
+    except Exception:
+        await conn.rollback()  # all or nothing, the caller logs it
+        raise
+    return rows
+
+
+__all__ = ["suspend_unclosed_running", "cancel_link_loss_returns",
+           "BOOT_SUSPEND_KIND", "BOOT_SUSPEND_REASON", "BOOT_CLEAR_REASON"]

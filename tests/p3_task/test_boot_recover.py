@@ -92,3 +92,56 @@ async def test_the_live_loop_dispatches_after_a_dead_running_row(tmp_path, monke
         assert {"type": "unclean_shutdown", "task_id": "t-dead"} in [e["detail"] for e in events]
     finally:
         await stop_p3(stop, loop)  # never leave the loop running
+
+
+
+# -- 99 U170: live link-loss returns are cancelled at start-up -----------------
+from xbrain.p3_task.lifecycle.boot_recover import cancel_link_loss_returns  # noqa: E402
+from xbrain.p3_task.lifecycle.link_loss import build_return_home_row  # noqa: E402
+
+
+def _rh(task_id, seq):
+    """An F-5 return_home row as maybe_inject_return_home writes it (pending)."""
+    return build_return_home_row(task_id, seq, priority=95, level=3, disconnected_s=1900.0,
+                                 link_epoch=1, gw_start_mono=seq, now_mono_ms=0,
+                                 trace_id="tr-" + task_id)
+
+
+@pytest.mark.asyncio
+async def test_live_link_loss_returns_are_cancelled_and_committed(db):
+    """Measured 2026-11-11: a P3 restart dispatched the leftover rh-* at once.
+    MUTATION: skip the clear -> rh rows stay live -> red; clear every
+    return_home (not only rh-*) -> the low-battery one is cancelled -> red;
+    drop the commit -> the second connection still reads live -> red."""
+    conn, path = db
+    dao = TasksDAO(conn)
+    for row in (_rh("rh-1-1", 1), _rh("rh-2-1", 2), _rh("rh-3-1", 3), _rh("rh-4-1", 4),
+                goto_row("t-q", "ready", 5)):
+        await dao.insert(row)
+    lb = _rh("lb-a-1", 6)  # a low-battery return: same type, not a link-loss one
+    await dao.insert(lb)
+    await conn.execute("UPDATE tasks SET state='suspended', suspend_kind='passive', "
+                       "suspend_reason='unclean_shutdown' WHERE task_id='rh-2-1'")
+    await conn.execute("UPDATE tasks SET state='running' WHERE task_id='rh-3-1'")
+    await conn.execute("UPDATE tasks SET state='cancelled' WHERE task_id='rh-4-1'")
+    await conn.commit()
+    cleared = await cancel_link_loss_returns(conn, 1000)
+    assert cleared == [("rh-1-1", "pending"), ("rh-2-1", "suspended"), ("rh-3-1", "running")]
+    async with aiosqlite.connect(path) as other:  # only committed rows are visible here
+        cur = await other.execute("SELECT task_id, state, suspend_kind, finished_at "
+                                  "FROM tasks ORDER BY task_id")
+        got = {r[0]: r[1:] for r in await cur.fetchall()}
+    for tid in ("rh-1-1", "rh-2-1", "rh-3-1"):
+        assert got[tid][0] == "cancelled" and got[tid][1] is None and got[tid][2]
+    assert got["rh-4-1"][0] == "cancelled" and got["lb-a-1"][0] == "pending"
+    assert got["t-q"][0] == "ready"  # nothing else touched
+
+
+@pytest.mark.asyncio
+async def test_no_link_loss_return_opens_no_transaction(db):
+    """MUTATION: BEGIN before the empty check -> in_transaction stays set -> red."""
+    conn, _path = db
+    await TasksDAO(conn).insert(goto_row("t-q", "ready", 1))
+    await conn.commit()
+    assert await cancel_link_loss_returns(conn, 1000) == []
+    assert not conn.in_transaction

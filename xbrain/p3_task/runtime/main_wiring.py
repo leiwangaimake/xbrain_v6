@@ -1477,7 +1477,25 @@ async def _amain(stop_flag: dict, heartbeat_period_s: float,
             # the publishers exist: the task transition (state/task + 11 S6.2
             # event) and the 11 S9.14 system event "补发给云端".
             from xbrain.p3_task.lifecycle.boot_recover import (
-                BOOT_SUSPEND_REASON, suspend_unclosed_running)
+                BOOT_CLEAR_REASON, BOOT_SUSPEND_REASON,
+                cancel_link_loss_returns, suspend_unclosed_running)
+            # 99 U170 (user ruling 2026-11-12): clear every live link-loss
+            # return_home BEFORE the running-row recovery and before the first
+            # scheduler tick -- a P3 restart used to dispatch the leftover rh-*
+            # at once, ahead of the positioning judgement.
+            try:
+                _rh_cleared = await cancel_link_loss_returns(conn, _now_mono_ms())
+            except Exception as exc:      # noqa: BLE001
+                _rh_cleared = []
+                _logger.error("p3 INIT link-loss return clear failed, a leftover "
+                              "rh-* may be dispatched: %s", exc)
+            for _tid, _from in _rh_cleared:
+                _logger.warning("p3 INIT: link-loss return %s (%s) cancelled at "
+                                "start-up (99 U170)", _tid, _from)
+                await _make_publish(
+                    state_pub, _emit_task_event, _publish_task_state,
+                    fetch_terminal=_fetch_terminal_facts)(
+                        _tid, _from, "cancelled", BOOT_CLEAR_REASON)
             try:
                 _dead = await suspend_unclosed_running(dao, conn, _now_mono_ms())
             except Exception as exc:      # noqa: BLE001
