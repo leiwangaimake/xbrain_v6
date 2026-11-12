@@ -1934,7 +1934,7 @@ dead-man 会在「按住不动」的过程中触发一次 `Stop`** —— ★ �
 | 条数与回填（推荐 7） | 列表保留最新 **200** 条（合并后）。★ P5 启动时从 record.db **只读**最新 2000 行、按到达顺序重放同一合并规则得到初始列表 ⇒ P5 重启列表不丢。record.db 不可读则列表从空开始，P5 照常启动 |
 | 中文文字（推荐 6） | 按 `cat` ＋ `detail.type`（或 `kind`）映射（`hmi.js` `eventText`）；带上电量、充电站名、设备名、任务号等细节。★ **未映射的类型显示原英文标题**，🚫 不丢弃、不猜 |
 | 设备健康变化（推荐 4） | P2 每个健康项状态变化一条（`event/{warn\|fault}/health`，`11` §6.2 `health` 行注、`14` §8.1A）：显示「<设备> <原状态> -> <新状态>」 |
-| 位置与闪烁（推荐 8） | 🚫 **地图不再画常驻事件红点**（`.alarm-dot` 已删）。点击带位置的事件 ⇒ 该位置红白闪烁 3 s，位置在视野外时先平移过去。位置来源：事件自带 `pos` 优先；否则为**事件到达 P5 时机器人的新鲜位置**（`pos_src: "robot"`，位姿超过 1.5 s 未更新则无位置）—— ★ 截至 2026-11-12 **没有任何生产方给事件盖位置**（record.db `location_lat` 全为空）。⚠️ 点击闪烁尚未在有定位时实机验证 |
+| 位置与闪烁（推荐 8） | 🚫 **地图不再画常驻事件红点**（`.alarm-dot` 已删）。点击带位置的事件 ⇒ 该位置红白闪烁 3 s，位置在视野外时先平移过去。位置来源：事件自带 `pos` 优先；否则为**事件到达 P5 时机器人的新鲜位置**（`pos_src: "robot"`，位姿超过 1.5 s 未更新则无位置）—— ★ 截至 2026-11-12 **没有任何生产方给事件盖位置**（record.db `location_lat` 全为空）。★ 2026-11-12 14:18 有定位时实机验证：点击带位置的事件，闪烁圈出现、3 s 后移除 |
 | 数据 | 快照 `events` 组每条：`eid` `title` `sev` `cat` `code` `src` `detail`（序列化超过 512 B 时只留 `type` / `kind` 与 `truncated`）`ts` `first_ts` `count` `pos` `pos_src`；快照顶层 `server_ts`（P5 墙钟，仅显示用） |
 | 实现 | P5 `hmi/event_ring.py`（合并 ＋ 位置 ＋ 回填折叠）· `event/recent.py`（record.db 只读）· `data_readers.events_group` · `hmi.js` `<event-text>` 块（`eventText` / `activeFamilies` / `pinnedAlarms` / `eventPasses`）与 `renderEvents` / `drawEventDrawer`。断言：`tests/p5_gateway/hmi/test_event_ring.py`、`test_event_drawer_js.py`；P2 侧 `tests/p2_core/health/test_change_events.py` |
 
