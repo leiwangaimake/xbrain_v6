@@ -282,8 +282,12 @@
     charging: "充电", rtk: "定位", comm: "通信", motion: "运动", task: "任务",
     arbitration: "仲裁", payload: "载荷", ptz: "云台", health: "健康", system: "系统",
     geo: "地图", perception: "感知", bit: "自检", chassis: "底盘", teach: "录制",
-    fence: "围栏", intrusion: "入侵", audio: "音频", voice: "语音",
+    fence: "围栏",
   };
+  // ~~intrusion / audio / voice (and a planned mode_change)~~ removed 2026-11-12
+  // (user): no process publishes events of these categories (grep of every
+  // event/ publish in xbrain/), so their wording could never be shown. A new
+  // producer adds its row here together with its first event.
   const EV_SEV_CN = { fault: "故障", alarm: "告警", warn: "警告", info: "信息" };
   // health/summary item names (p2 health/items.py ITEMS) and payload devices.
   const EV_DEVICE_CN = {
@@ -422,6 +426,34 @@
     }).sort((a, b) => (b.latest.ts || 0) - (a.latest.ts || 0));
   }
 
+  // Recommendation 5, second half: when a continuous alarm ends, its entries
+  // become normal records carrying the end time. items -> an array aligned with
+  // items: null for a non-family entry, else {state: "live" | "ended", endTs}.
+  // The episode ends at its end event (rtk heading_recovered, comm cloud_up,
+  // low_battery_cleared); a repeating family (low battery) that fell silent past
+  // repeatS ended at its last occurrence. An end event itself gets null -- it is
+  // the record of the ending, not part of the episode.
+  function familyStatus(items, nowS) {
+    const out = (items || []).map(() => null);
+    const order = (items || []).map((it, i) => i)
+      .sort((a, b) => ((items[a].ts || 0) - (items[b].ts || 0)));
+    const open = {};                         // fam -> [index, ...] of the open episode
+    for (const i of order) {
+      const f = eventFamily(items[i]); if (!f) continue;
+      if (f.role === "start") { (open[f.fam] = open[f.fam] || []).push(i); continue; }
+      for (const j of open[f.fam] || []) out[j] = { state: "ended", endTs: items[i].ts };
+      delete open[f.fam];
+    }
+    for (const fam of Object.keys(open)) {
+      const idx = open[fam];
+      const lastTs = Math.max.apply(null, idx.map((j) => items[j].ts || 0));
+      const r = EV_FAMILIES[fam].repeatS;
+      const silent = r && typeof nowS === "number" && nowS - lastTs > r;
+      for (const j of idx) out[j] = silent ? { state: "ended", endTs: lastTs } : { state: "live", endTs: null };
+    }
+    return out;
+  }
+
   // Alarm / fault entries of the last windowS, newest first, at most max, minus
   // the families already pinned as "持续中".
   function pinnedAlarms(items, nowS, active, windowS, max) {
@@ -432,6 +464,14 @@
       const f = eventFamily(it);
       return !(f && fams.indexOf(f.fam) >= 0);
     }).sort((a, b) => b.ts - a.ts).slice(0, max);
+  }
+
+  // Drawer width while dragging an edge (wireEventDrawerResize): centred, so the
+  // width changes by twice the drag; never under the default, never past maxW.
+  const EV_MIN_W = 560;                    // = .event-drawer default width
+  function evDrawerWidth(startW, startX, x, side, maxW) {
+    const dx = side === "right" ? x - startX : startX - x;
+    return Math.max(EV_MIN_W, Math.min(maxW, startW + 2 * dx));
   }
 
   // chip filter: "alarm" = alarm + fault, "warn", "info", "all"
@@ -887,13 +927,19 @@
     return (n && n.month === g.month && n.day === g.day) ? hms : `${g.month}-${g.day} ${hms}`;
   }
 
-  function evRowHTML(ev, idx, extraCls, timeHTML) {
+  function evRowHTML(ev, idx, extraCls, timeHTML, tagHTML) {
     const t = eventText(ev);
     const cnt = (ev.count || 1) > 1 ? `<span class="ev-count">${ev.count} 次</span>` : "";
     const cls = `ev-row sev-${esc(ev.sev || "info")}${ev.pos ? " has-pos" : ""}${extraCls || ""}`;
     return `<div class="${cls}" data-ev="${idx}"${ev.pos ? ' title="点击在地图上闪烁位置"' : ""}>` +
       `<span class="ev-time">${timeHTML}</span><span class="ev-cat">${esc(t.cat)}</span>` +
-      `<span class="ev-text">${esc(t.text)}</span>${cnt}</div>`;
+      `<span class="ev-text">${esc(t.text)}</span>${tagHTML || ""}${cnt}</div>`;
+  }
+  // A continuous-alarm entry: "first - end" plus 已结束, or 持续中 while live.
+  function evFamilyTime(ev, st) {
+    const start = typeof ev.first_ts === "number" ? ev.first_ts : ev.ts;
+    if (st.state === "live") return { time: `${fmtEvTime(start)} 起`, tag: `<b class="ev-state live">持续中</b>` };
+    return { time: `${fmtEvTime(start)} - ${fmtEvTime(st.endTs)}`, tag: `<b class="ev-state ended">已结束</b>` };
   }
   function evTimeRange(ev) {
     const many = (ev.count || 1) > 1 && typeof ev.first_ts === "number" && ev.first_ts !== ev.ts;
@@ -936,10 +982,15 @@
         `<b class="ev-live-tag">持续中</b> 自 ${fmtEvTime(a.since)}`)).join("") +
       pins.map((ev) => evRowHTML(ev, ref(ev), " ev-pin", evTimeRange(ev))).join("");
     const keep = $("eventList").scrollTop;      // new rows must not jump the reader
-    const rows = evItems.filter((ev) => eventPasses(ev, evFilter))
-      .sort((a, b) => (b.ts || 0) - (a.ts || 0));
+    const fst = familyStatus(evItems, nowS);
+    const rows = evItems.map((ev, i) => [ev, fst[i]]).filter(([ev]) => eventPasses(ev, evFilter))
+      .sort((a, b) => (b[0].ts || 0) - (a[0].ts || 0));
     $("eventList").innerHTML = rows.length
-      ? rows.map((ev) => evRowHTML(ev, ref(ev), "", evTimeRange(ev))).join("")
+      ? rows.map(([ev, st]) => {
+          if (!st) return evRowHTML(ev, ref(ev), "", evTimeRange(ev));
+          const ft = evFamilyTime(ev, st);
+          return evRowHTML(ev, ref(ev), "", ft.time, ft.tag);
+        }).join("")
       : `<div class="task-empty">${evAvailable ? "暂无事件" : "事件源不可用"}</div>`;
     $("eventList").scrollTop = keep;
   }
@@ -1001,6 +1052,42 @@
     }, { passive: false });
     box.addEventListener("mousedown", (e) => e.stopPropagation());
     document.addEventListener("mousemove", () => { if (evExpanded) armEventIdle(); });
+    wireEventDrawerResize(box);
+  }
+
+  // Left / right edge drag (user 2026-11-12, like the history panel's edges).
+  // The drawer stays centred, so the width grows by twice the drag and the
+  // dragged edge follows the cursor. The default width is the minimum (the
+  // history panel's rule); the width is remembered in localStorage.
+  const EV_WIDTH_KEY = "xbrain_hmi_event_width";
+  function wireEventDrawerResize(box) {
+    try {
+      const w = parseInt(localStorage.getItem(EV_WIDTH_KEY) || "0", 10);
+      if (w >= EV_MIN_W) box.style.width = w + "px";
+    } catch (e) { /* absent / blocked -> CSS default */ }
+    for (const side of ["left", "right"]) {
+      const h = document.createElement("div");
+      h.className = "rz-handle rz-" + side;
+      h.addEventListener("mousedown", (e) => {
+        e.preventDefault(); e.stopPropagation();       // no text select, no map pan
+        const startX = e.clientX, startW = box.offsetWidth;
+        const maxW = (box.parentElement || document.body).clientWidth - 24;
+        const onMove = (ev) => {
+          box.style.width = evDrawerWidth(startW, startX, ev.clientX, side, maxW) + "px";
+        };
+        const onUp = () => {
+          document.removeEventListener("mousemove", onMove);
+          document.removeEventListener("mouseup", onUp);
+          document.body.style.userSelect = "";
+          try { localStorage.setItem(EV_WIDTH_KEY, String(box.offsetWidth)); }
+          catch (err) { /* not remembered, no throw */ }
+        };
+        document.body.style.userSelect = "none";
+        document.addEventListener("mousemove", onMove);
+        document.addEventListener("mouseup", onUp);
+      });
+      box.appendChild(h);
+    }
   }
 
   // -- task panel (17 S6.8.4): current + history, five fields each ----------

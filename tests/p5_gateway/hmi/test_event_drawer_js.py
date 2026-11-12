@@ -130,6 +130,48 @@ def test_a_low_battery_episode_that_stopped_repeating_is_not_live():
     assert _node(fams % "1031") == ["rtk"]  # 31 s silent: stopped; rtk does not age
 
 
+def test_an_ended_episode_carries_its_end_time():
+    """Recommendation 5, second half (user 2026-11-12: "全部做完"): rtk / comm
+    start rows get the end event's ts; a silent low-battery episode ends at its
+    last occurrence; a live one has no end; end events and others get null.
+    MUTATION: endTs = the start's own ts -> red; silence not ending a repeating
+    family -> red; an end not closing the open episode -> red."""
+    items = [  # index: 0 rtk start, 1 rtk end, 2 charging (silent), 3 comm start, 4 task
+        {"cat": "rtk", "ts": 100.0, "detail": {"type": "rtk_lost"}},  # lost at 100
+        {"cat": "rtk", "ts": 160.0, "detail": {"type": "heading_recovered"}},  # back at 160
+        {"cat": "charging", "ts": 900.0, "first_ts": 800.0, "detail": {"type": "low_battery"}},  # last at 900
+        {"cat": "comm", "ts": 950.0, "detail": {"kind": "cloud_down"}},  # still down
+        {"cat": "task", "ts": 960.0, "title": "task t-1 started", "detail": {"kind": "started"}},  # not a family
+    ]
+    got = _node("familyStatus(%s, 1000)" % json.dumps(items))  # nowS 1000: charging silent 100 s
+    assert got == [{"state": "ended", "endTs": 160.0}, None,  # rtk closed by its end
+                   {"state": "ended", "endTs": 900.0},  # silent -> ended at last occurrence
+                   {"state": "live", "endTs": None}, None]  # comm open, task untouched
+    live = _node("familyStatus(%s, 910)[2]" % json.dumps(items))  # 10 s after: still repeating
+    assert live == {"state": "live", "endTs": None}  # not ended yet
+
+
+def test_the_drawer_widens_both_ways_and_never_below_default():
+    """User 2026-11-12: left / right edge drag like the history panel. Centred,
+    so the width moves twice the drag. MUTATION: 1x drag -> the edge lags the
+    cursor -> red; no minimum -> shrinks below the default -> red; left edge
+    sign flipped -> dragging it out narrows -> red."""
+    got = _node("[evDrawerWidth(560, 500, 550, 'right', 2000),"  # right edge out 50
+                " evDrawerWidth(560, 500, 450, 'left', 2000),"  # left edge out 50
+                " evDrawerWidth(560, 500, 400, 'right', 2000),"  # right edge in
+                " evDrawerWidth(560, 500, 2000, 'right', 900)]")  # past the cap
+    assert got == [660, 660, 560, 900]  # twice the drag, floor, cap
+
+
+def test_categories_without_a_producer_are_not_mapped():
+    """User 2026-11-12: drop the wording of event kinds nothing publishes
+    (intrusion / audio / voice; mode switching was never mapped). An event of
+    such a cat would still show, under its raw cat and title. MUTATION: the
+    rows back in EV_CAT_CN -> red."""
+    for cat in ("intrusion", "audio", "voice", "mode_change"):  # no producer in xbrain/
+        assert _text({"cat": cat, "title": "x"}) == {"cat": cat, "text": "x"}  # raw, not dropped
+
+
 def test_pinned_alarms_skip_live_families_old_ones_and_infos():
     """MUTATION: no family exclusion -> the low-battery alarm pinned twice -> red;
     no window -> yesterday's fault pinned forever -> red."""

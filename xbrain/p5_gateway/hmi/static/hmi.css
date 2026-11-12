@@ -260,6 +260,8 @@ body { margin: 0; overflow: hidden; background: var(--bg); color: var(--ink);
    靠光标提示; 左下角画个小 L 记号增强可发现性. */
 .rz-handle { position: absolute; z-index: 5; }
 .rz-left   { left: 0; top: 0;    width: 7px;  height: 100%; cursor: ew-resize; }
+/* the event drawer's right edge (2026-11-12): centred, so it widens both ways */
+.rz-right  { right: 0; top: 0;   width: 7px;  height: 100%; cursor: ew-resize; }
 .rz-bottom { left: 0; bottom: 0; width: 100%; height: 7px;  cursor: ns-resize; }
 .rz-corner { left: 0; bottom: 0; width: 15px; height: 15px; cursor: nesw-resize; z-index: 6; }
 .rz-corner::after { content: ""; position: absolute; left: 3px; bottom: 3px;
@@ -473,7 +475,7 @@ body.controls-offline .goto-send { opacity: 0.35; pointer-events: none; }
    opens the body to about half the map height. Severity colours: fault / alarm
    red-orange, warn yellow, info blue-grey. */
 .event-drawer { left: 50%; bottom: 10px; transform: translateX(-50%);
-  width: 560px; max-width: calc(100% - 420px); padding: 0; overflow: hidden;
+  width: 560px; max-width: calc(100% - 24px); padding: 0; overflow: hidden;
   display: flex; flex-direction: column; border-color: rgba(91,192,235,.38);
   font-family: var(--font-plan-family); font-size: var(--font-plan-size); }
 .event-drawer.expanded { height: 50%; min-height: 240px; }
@@ -515,6 +517,10 @@ body.controls-offline .goto-send { opacity: 0.35; pointer-events: none; }
 .ev-count { flex: 0 0 auto; color: var(--muted); font-size: .85em; }
 .ev-live-tag { color: #fff; background: var(--danger); padding: 0 6px; border-radius: 3px;
   font-weight: 700; margin-right: 4px; }
+/* list rows of a continuous alarm (recommendation 5): live red, ended grey */
+.ev-state { flex: 0 0 auto; font-size: .8em; padding: 0 6px; border-radius: 3px; }
+.ev-state.live { color: #fff; background: var(--danger); }
+.ev-state.ended { color: var(--muted); border: 1px solid rgba(176,176,176,.45); }
 /* The teach badge sets display: grid, which beat the hidden attribute: it was
    always on screen (found 2026-11-12). hidden must win. */
 .teach-badge[hidden] { display: none; }
