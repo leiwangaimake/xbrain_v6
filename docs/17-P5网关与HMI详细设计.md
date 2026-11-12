@@ -1443,9 +1443,10 @@ Zenoh key 映射与 `geo` 的 **W4-F** 硬拒规则，一律**以 `11` §12.1.1 
 
 | 端点 | 返回 |
 |---|---|
-| `GET /api/routes` | 路径与位置点列表 |
-| `GET /api/fences` | 电子围栏多边形。<br>★★★ **v1.1 补（S15）**：几何的来源是 **`cmd/fence` 订阅**（P5 是真订阅者，见 **§6.9**）；★★ **未同步时 🚫 不得返回 `200` ＋ 空集**，必须显式 `E_DEGRADED` —— 见 **§6.9 `P5F-2`**。★ 同一约束适用于 `GET /api/fences/{fence_set_id}` 与 `GET /api/fences/active`（`11` §9A.11 的三端点） |
-| `GET /api/docks` | 充电桩列表 |
+| `GET /api/routes` | 路径与位置点列表。★ 2026-11-12 起 `{available, routes:[{geo_id,name,points,kind}], waypoints:[{geo_id,name,type,geom}]}`，来自 P5 的 `state/geo/objects` 缓存（`11` §7.10A，与地图同源；P5 不读 geo.db）；无新鲜广播时 `available:false`。~~「等 geo.db，恒 `available:false`」~~ —— 被替代：P5 从不读 geo.db，广播缓存早已存在，只是本端点没读它 |
+| ★ `GET /api/hmi/snapshot` | ★ 2026-11-12 补登记：与 WS 首帧 `state_snapshot` 同一份 §6.8 A..F 快照（`data_readers.build_snapshot`）；WS 断开时前端每秒拉它，保持画面与急停判据（§6.3） |
+| `GET /api/fences` | ★ 2026-11-12 起按 `11` §9A.11：**`FenceSet` 摘要列表** `{fences:[{fence_set_id, rev, name, active, polygons, vertices, updated_ts}]}`（P5 只持有当前生效的那一套，故恒一行、`active:true`；`polygons` / `vertices` 为个数），几何本身在 `/api/fences/active`。~~「电子围栏多边形」且同步后恒回 `{fences:[]}`~~ —— 被替代：同步后回空集让客户端分不清「没有围栏」与「有围栏」，正是 P5F-2 要防的形状。<br>★★★ **v1.1 补（S15）**：几何的来源是 **`cmd/fence` 订阅**（P5 是真订阅者，见 **§6.9**）；★★ **未同步时 🚫 不得返回 `200` ＋ 空集**，必须显式 `E_DEGRADED` —— 见 **§6.9 `P5F-2`**。★ 同一约束适用于 `GET /api/fences/{fence_set_id}` 与 `GET /api/fences/active`（`11` §9A.11 的三端点） |
+| `GET /api/docks` | 充电桩列表。★ 2026-11-12 起为 `type = dock` 的关键点（`99` U119，`11` §7.10A GO-6），同一缓存；旧 docks 表不列（为空且仍是 ENU，GO-1）|
 | `GET /api/events?since=&sev=&cat=&limit=` | 历史事件查询（分页） |
 | ★ `GET /api/tasks?scope=&limit=&before=` | ★★★ **v1.3 新增（2026-08-17 · §6.8.4 任务面板）**：当前/历史任务卡片。P5 **不读 P3 task.db**（平面隔离），转发自 P3 `query/tasks` queryable（`11` §12.2A）。`scope ∈ {current, history}`（缺省 current）；`limit` 钳制 `[1,500]`；`before` 键集分页游标。回复 `{tasks:[TaskCard], has_more, next_before}`，TaskCard 出字段 1/2/3/5（`巡逻点` targets 待关键点层）。★ Zenoh `get()` 阻塞 → 路由经 `asyncio.to_thread` 调，不阻塞事件环 |
 | `GET /api/health` | 健康度快照 |
@@ -1983,7 +1984,7 @@ dead-man 会在「按住不动」的过程中触发一次 `Stop`** —— ★ �
 | ★ 实时行走轨迹（巡逻中） | route realtime | **实线** | ★ **亮黄 `#ffd400`** | `4.8` | `route.realtime.line` |
 | ★ 关键点 / 路径点 | keypoint / route point | ★ 关键点见 §6.10.2 U6 圆饼。~~路径点：v1.4 圆点（非缩放，半径 ~3.5 屏幕 px，`.geo-dot`），颜色 = 该路径线色~~ —— **被替代的表述**（v1.4 ~ 2026-11-12）。★ **为何不再成立**：用户 2026-11-12 要求路径只用折线表示，采样点圆点（已录制路径与实时轨迹）均不再画；点击导航仍按屏幕像素吸附到最近的路径采样点（采样间距约 0.55 m，远小于 `snap_px` 14 px 对应的距离） | — | — | `waypoint.*`（§6.10.2 U6） |
 
-★★★ **图例菜单（左上角，★ v1.4 六项）**：已录制路径 · 实时行走轨迹 · 活动区域 · 报警区域 · ★ **限速区域** · ★ **禁止区域**。★ v1.4：区域色块由镂空 border 改**实心填充矩形**（`.legend-mark` background 实色）；路径色块为填充细条。
+★★★ **图例菜单（左上角，★ 现七项；~~v1.4 六项~~ —— 被替代：2026-11 起多了「录制中(近似)」，实测 index.html 7 个 legend-row）**：已录制路径 · 实时行走轨迹 · ★ 录制中(近似) · 活动区域 · 报警区域 · ★ **限速区域** · ★ **禁止区域**。★ v1.4：区域色块由镂空 border 改**实心填充矩形**（`.legend-mark` background 实色）；路径色块为填充细条。
 ★★★ **名称标签（★ v1.4）**：围栏名后显**周长**、路径名后显**长度**，格式 `名称 (N m)`；关键点名无长度。★ **v1.5（方案 A）**：路径点是 WGS84 `{lat,lon}`，长度在 **`toXY` 投影后的屏幕米**上算欧氏距离（`segLen(rproj)`），围栏(ENU 米)仍直接算 —— 二者投影后同为米。颜色**统一亮白 `#ffffff` + 粗体**（不再按图层线色）；字号 = **任务内容字号**（`--font-plan-size`，即 `font.plan.size_px`，非硬编码 12）；**非缩放**（不随地图缩放变），且**去重叠**（见 §6.10.2C）。
 
 ★★★ **实时黄色轨迹的显隐（用户 2026-08-13）**：巡逻**执行中**始终显示黄色轨迹；**巡逻完成后**是否继续显示由 `route.realtime.show_after_complete`（bool，默认 `true`）控制 —— 前端据 `plan` 是否有 `running` 计划判「执行中」，无则视为完成，`false` 时隐藏黄色轨迹。
@@ -2020,7 +2021,7 @@ dead-man 会在「按住不动」的过程中触发一次 `Stop`** —— ★ �
   - **② `heading_valid` 有效（L1 或 L2）**：**实时转盘**（转 `−罗盘度`）把当前航向送到顶部固定指针下，🚫 不转指针。
   - **③ 两路航向都丢（进入 L3，`heading_valid=false` 但曾有效）**：**停转，冻结在航向消失前的最后有效刻度**，🚫 **不回正北**、不置灰。★ 契约 **H-2**（`11` §3.3.5：`heading_valid==false` 时 `heading_rad` **仍可携带最后已知值**）为此背书；★ 前端另行记住 `lastHeadingCompass`（`renderHeading`），**不依赖上游是否兑现 H-2**，更稳。
 - **硬件门**：航向数据挂 `rtk_driver`（未建）+ `perception`（设计未写）+ `quadruped`（云深处）W4 `GATED-HW` ⇒ **现恒处①开机态**（正北略灰）；真数据到位后①→②→③自动切换。
-- **落地**：**左上角图例下方** `left:14px top:156px`（★ v1.4 由 `118px` 下移，让开 6 行图例）、`300px`（用户 2026-08-14：由 150px 放大一倍、并置于左上角图例之下）；`configs` 暂未把盘尺寸/黄色抽成 `hmi.web` 键（后续可配化，现硬编码于 hmi.css）。
+- **落地**：**左上角图例下方** `left:14px top:180px`（★ v1.4 由 `118px` 下移；~~`top:156px`，让开 6 行图例~~ —— **被替代的表述**：实测 `hmi.css` `.heading-dial` 为 `top: 180px`，图例现为 **7 项**（多了「录制中(近似)」，§6.10.2B 图例条），两列排布）、`300px`（用户 2026-08-14：由 150px 放大一倍、并置于左上角图例之下）；`configs` 暂未把盘尺寸/黄色抽成 `hmi.web` 键（后续可配化，现硬编码于 hmi.css）。
 
 #### 6.10.3 ★★★ 绑定与端口（NET-C9 —— 逐口显式绑定，🚫 禁 0.0.0.0）
 
@@ -2037,7 +2038,7 @@ dead-man 会在「按住不动」的过程中触发一次 `Stop`** —— ★ �
   - **按需历史**（任务历史 / 事件历史）：queryable / REST 全量拉 —— 任务走 `query/tasks`（§6.5 / `11` §12.2A），事件走 `/api/events`。
 - ★★★ **P5 🚫 不读 P3 三库**（`task.db` / `geo.db` / `fence.db`，`11` §7843 单写者铁律）。数据全经 Zenoh（订阅 / queryable / 广播）＋ P5 自有 `record.db`（事件）到手，**P5 只缓存 + 转发**。<br>⚠️★★★ **原文那句「后端数据读取方法读 P3 三库」是【错的】，已删** —— 它与 §7843 直接冲突，且正是 2026-08-18 实测「往 `geo.db` 插数据、HMI 却一条收不到」的根源（P5 根本不读 geo.db）。
 - ★ **geo 图层数据源**（替代原 `snapshot_inputs` 里 `routes` / `waypoints` **写死的 `None`**）：P5 订 `state/geo/objects` → `geo_cache`（照 `fence_cache`）→ 快照 `geo.{routes, waypoints, docks}` ＋ REST `/api/geo/*`；围栏仍走 `fence_cache`（`cmd/fence`）。
-- ⚠️★★★ **今日真数据现状（v1.4 · 2026-08-18 实测更新）**：<br>· ✅ **位姿/GPS/ENU/速度已实时**：`state/pose` 已在跑(single fix · 24 星 · cov 3.0m)，页脚 GPS 经纬、**ENU E/N**(经 §6.10.2C M-7 演示原点投影)、速度均显真值；<br>· ⚠️ **航向仍 LOSS**：无 RTK 双天线/COG(heading_valid=false)，仪表盘处①开机态(正北略灰)、页脚「航向 LOSS」——待 `rtk_driver` 双天线数据到位自动转②；<br>· ✅ 围栏/报警区、路线/关键点(录了就有)、任务当前+历史、模式/健康结构、事件文本均可显真值。<br>★ 原写「位姿/GPS/ENU 全空态/桩」已过时(pose 已接通)。
+- ⚠️★★★ **今日真数据现状（v1.4 · 2026-08-18 实测更新）**：<br>· ✅ **位姿/GPS/ENU/速度已实时**：`state/pose` 已在跑(single fix · 24 星 · cov 3.0m)，页脚 GPS 经纬、**ENU E/N**(经 §6.10.2C M-7 演示原点投影)、速度均显真值；<br>· ~~⚠️ **航向仍 LOSS**：无 RTK 双天线/COG(heading_valid=false)，仪表盘处①开机态(正北略灰)、页脚「航向 LOSS」——待 `rtk_driver` 双天线数据到位自动转②~~ —— **被替代的表述**（2026-08-18 ~ 2026-11）。★ **为何不再成立**：`rtk_driver` 已建并接通 UM982 双天线（`99` U151 / U152 起），实测页脚显示「航向 双天线INT」、仪表盘实时转动，掉线时按 L2（COG）/ L3 分级；<br>· ✅ 围栏/报警区、路线/关键点(录了就有)、任务当前+历史、模式/健康结构、事件文本均可显真值。<br>★ 原写「位姿/GPS/ENU 全空态/桩」已过时(pose 已接通)。
 - ★ 数据源缺时字段返回 `null`/空，前端按「无数据」态渲染（🚫 不编造，§3.1/§3.2）。
 
 ---
