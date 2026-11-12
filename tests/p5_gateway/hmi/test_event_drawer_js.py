@@ -69,6 +69,13 @@ def _text(ev: dict):
     ({"cat": "health", "detail": {"type": "health.item_changed", "device": "cam_rgbd",  # p2's new event
                                   "from": "ok", "to": "fail"}},  # a transition
      "健康", "深度相机 正常 -> 故障"),  # device and states in Chinese
+    ({"cat": "health", "detail": {"type": "health.item_changed", "device": "payload_speaker",  # U166
+                                  "from": "ok", "to": "fail", "reason": "playback failed: http 500"}},  # online
+     "健康", "扬声器 正常 -> 故障(播放失败)"),  # the alarm case says why
+    ({"cat": "health", "detail": {"type": "health.item_changed", "device": "payload_speaker",  # U166
+                                  "from": "fail", "to": "fail",  # a change of cause
+                                  "from_reason": "playback failed: x", "reason": "link down"}},  # then offline
+     "健康", "扬声器 故障(播放失败) -> 故障(离线)"),  # both causes shown
     ({"cat": "task", "title": "task t-20261112-003 failed", "detail": {"kind": "failed"}},  # id in title
      "任务", "任务 t-20261112-003 已失败"),  # id taken from the title
     ({"cat": "payload", "title": "payload_siren device_offline",  # device in title

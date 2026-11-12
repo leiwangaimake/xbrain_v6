@@ -361,9 +361,16 @@
       case "cloud_down": return word("云端连接断开");
       case "cloud_degraded": return word("云端连接不稳定");
       case "cloud_lost": return word("云端连接丢失");
-      case "health.item_changed":
+      case "health.item_changed": {
+        // 99 U166: a speaker fail says why -- online but cannot play (alarm)
+        // or offline (fault) -- since the state alone reads 故障 for both.
+        const why = (r) => typeof r !== "string" ? ""
+          : r.indexOf("playback failed") === 0 ? "(播放失败)"
+          : r.indexOf("link down") === 0 ? "(离线)" : "";
         return word(evDevice(d.device) + " " + (EV_HEALTH_STATE_CN[d.from] || d.from || "?") +
-                    " -> " + (EV_HEALTH_STATE_CN[d.to] || d.to || "?"));
+                    why(d.from_reason) + " -> " + (EV_HEALTH_STATE_CN[d.to] || d.to || "?") +
+                    why(d.reason));
+      }
       case "device_offline": return word(evDevice(first) + " 离线");
       case "device_online": return word(evDevice(first) + " 上线");
       case "hmi.session_closed": return word("HMI 会话关闭");
