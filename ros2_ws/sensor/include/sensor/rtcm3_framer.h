@@ -6,7 +6,7 @@
  * Brief: RTCM 3.x byte stream -> CRC-checked whole frames (11 S3.2A RTG-3)
  *
  * Description:
- * Both correction sources deliver a bare byte stream: the RPi bridge forwards the
+ * Both correction sources deliver a bare byte stream: the LAN bridge box forwards the
  * base station UART 1:1 and starts mid-stream (RTB-2), the NTRIP caster sends
  * frames after its reply header. This framer finds frame boundaries in that
  * stream and hands out only frames whose CRC-24Q checks, unchanged, so the bytes

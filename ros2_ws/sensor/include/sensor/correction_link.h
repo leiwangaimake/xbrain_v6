@@ -17,7 +17,7 @@
  *   (4) if this thread stops doing anything at all, the loop still publishes
  *       fix / heading / clock status; the receiver just loses corrections.
  *
- * Inside: a LAN source (primary, bare TCP to the RPi bridge, 11 S3.2A.1) and an
+ * Inside: a LAN source (primary, bare TCP to the bridge box, 11 S3.2A.1) and an
  * NTRIP source (backup, cold standby), each with its own Rtcm3Framer and
  * SourceHealth; one SourceSelector picks which source's frames go out (RTG-4).
  * The NTRIP source reports the robot's own fresh fix as GGA and rebuilds the
@@ -48,7 +48,7 @@ namespace sensor {
 
 struct LanSourceConfig {
   bool enabled;
-  std::string host;            // numeric IP of the RPi bridge (RTB-1)
+  std::string host;            // numeric IP of the LAN bridge box (RTB-1)
   int port;
   double connect_timeout_s;
   double read_timeout_s;       // streaming and silent this long -> reconnect

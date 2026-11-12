@@ -7,7 +7,7 @@
  *
  * Description:
  * SourceHealth answers "is this correction source usable right now". Bytes, or
- * an open TCP connection, do not count: the RPi bridge keeps the connection up
+ * an open TCP connection, do not count: the LAN bridge box keeps the connection up
  * when the base station UART dies (RTB-8), so a source is valid only while it
  * keeps delivering observation messages AND has delivered a station position
  * message (1005/1006) recently. Without the station message the receiver cannot

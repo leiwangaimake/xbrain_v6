@@ -7,7 +7,7 @@
  *
  * Description:
  * Real sockets on 127.0.0.1, no hardware, no internet, no commercial account:
- *   - LAN: a fake RPi bridge streams frames; they come out of takeFrames()
+ *   - LAN: a fake LAN bridge box streams frames; they come out of takeFrames()
  *     tagged as the primary;
  *   - NTRIP cold standby (LAN off): no position -> no dial at all (RTG-7); with
  *     a fresh position the link dials, sends a well-formed v1 request, reports

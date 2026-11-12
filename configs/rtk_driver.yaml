@@ -61,7 +61,7 @@ rtcm:                        # RTCM differential input (11 S3.2A); design in ros
   sink:
     queue_max_bytes: 16384   # main-thread write queue and network out queue cap (>= 1029)
     frame_max_age_s: 2.0     # a frame waiting longer than this is dropped
-  lan:                       # primary: customer-LAN base station via the RPi bridge (RTB)
+  lan:                       # primary: customer-LAN base station via the bridge box (RTB; Orange Pi Zero since 2026-11-09, was RPi)
     enabled: false           # no bridge on site yet
     host: null               # bridge static IP, numeric only (RTB-1)
     port: null               # bridge fixed port (RTB-1)
