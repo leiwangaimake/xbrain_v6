@@ -38,7 +38,7 @@ import re
 from typing import Any, Dict, List, Mapping, Optional, Sequence
 
 from xbrain.p4_agent.runtime import turn_labels  # 11 provenance closed sets
-from xbrain.p4_agent.slots.name_slots import canonical_name
+from xbrain.p4_agent.slots.name_slots import name_key
 
 #: 18 intent name -> (geo action, geo type, slot carrying the target).
 _GEO_INTENTS: Dict[str, tuple] = {
@@ -84,12 +84,13 @@ def resolve_geo_id(items: Sequence[Mapping[str, Any]], gtype: Optional[str],
     live = [i for i in items
             if i.get("state") != "deleted"
             and (gtype is None or i.get("type") == gtype)]
-    # Compared in canonical spelling (99 U109): "去一号测试点" must find the
-    # point a typed command saved as "1号测试点", and the reverse. An exact
-    # match is a canonical match, so nothing that resolved before stops now.
-    canon = canonical_name(text)
+    # Compared under name_key (99 U109 canonical spelling, widened by U177 to
+    # every Chinese numeral): "去一号测试点" finds "1号测试点", "四号路径一点"
+    # finds "4号路径1点". An exact match is a key match, so nothing that
+    # resolved before stops now.
+    canon = name_key(text)
     exact = [i for i in live
-             if canonical_name(str(i.get("name") or "")) == canon]
+             if name_key(str(i.get("name") or "")) == canon]
     if len(exact) == 1:
         return str(exact[0]["geo_id"])
     if len(exact) > 1:
@@ -108,6 +109,21 @@ def resolve_geo_id(items: Sequence[Mapping[str, Any]], gtype: Optional[str],
         if len(by_num) > 1:
             raise GeoRequestError(f"more than one object is numbered {num}")
     raise GeoRequestError(f"no {gtype or 'object'} named {text!r}")
+
+
+def objects_named(items: Sequence[Mapping[str, Any]], spoken: str
+                  ) -> List[Mapping[str, Any]]:
+    """Every live object of ANY type whose whole name matches `spoken` under
+    name_key (99 U177, user ruling 2026-11-12: a delete matches the full name
+    against the catalogue, whatever the object is). Tombstones are excluded,
+    as in resolve_geo_id. Names are unique per table, so more than one hit
+    means the same name in two tables -- the caller refuses that rather than
+    pick one."""
+    key = name_key(spoken or "")
+    if not key:
+        return []
+    return [i for i in items if i.get("state") != "deleted"
+            and name_key(str(i.get("name") or "")) == key]
 
 
 def to_geo_command(intent_name: str, *, slots: Mapping[str, Any], cmd_id: str,

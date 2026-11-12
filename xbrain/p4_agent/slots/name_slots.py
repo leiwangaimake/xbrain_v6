@@ -75,6 +75,30 @@ def canonical_name(name: str) -> str:
     return _CN_NUMBERED.sub(_digits, text)  # every run before 号
 
 
+#: Every Chinese integer numeral run, wherever it stands (name_key only).
+_CN_ANY = re.compile(r"([零一二两三四五六七八九十百千]+)")
+
+
+def name_key(name: str) -> str:
+    """The key two names are COMPARED under (99 U177, user ruling 2026-11-12:
+    "全字段匹配, 中文数字和阿拉伯数字等效").
+
+    canonical_name, then every remaining Chinese numeral run as digits too, so
+    "四号路径一点" and "4号路径1点" compare equal. Used for matching only, on
+    BOTH sides, and never stored: canonical_name stays the stored spelling and
+    keeps its narrower rule (only before 号) so a name such as "一楼大厅" is
+    saved as the operator said it. Symmetric conversion is why the wider rule
+    is safe here: "统一" becomes "统1" on both sides and still matches itself.
+    """
+    def _digits(m: "re.Match[str]") -> str:  # one numeral run
+        value = parse_number(m.group(1))  # the shared reader
+        if value is None or value != int(value):  # malformed: keep it
+            return m.group(1)  # left as written
+        return str(int(value))  # "十二" -> "12"
+
+    return _CN_ANY.sub(_digits, canonical_name(name))  # all runs, after canonical
+
+
 def ground_name(name: object, text: str) -> Optional[str]:
     """The canonical name when it was actually said, else None.
 

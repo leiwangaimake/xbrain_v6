@@ -82,15 +82,18 @@ def test_delete(text, name):
     assert got is not None and got.kind == "delete" and got.name == name
 
 
-@pytest.mark.parametrize("text,kind,name", [  # 99 U133: route / fence deletes by name
-    ("删除东门路线", "delete_route", "东门路线"), ("删除3号路径", "delete_route", "3号路径"),
-    ("把2号围栏删掉", "delete_fence", "2号围栏"),
+@pytest.mark.parametrize("text,name", [  # 99 U177: one delete kind, any object
+    ("删除东门路线", "东门路线"), ("删除3号路径", "3号路径"), ("把2号围栏删掉", "2号围栏"),
+    ("删除4号路径1点", "4号路径1点"), ("删除1号充电站", "1号充电站"),  # the 2026-11-12 cases
 ])
-def test_delete_of_a_route_or_fence_is_parsed_by_name(text, kind, name):
-    """F11 / F13 by name (still L2 at the orchestrator). MUTATION: take them
-    as a keypoint delete -> kind delete -> red."""
+def test_every_named_delete_is_one_kind_decided_by_the_catalogue(text, name):
+    """Until 2026-11-12 the parser guessed route / fence / keypoint from the
+    shape of the name (kinds delete_route / delete_fence / delete) and a
+    waypoint named "4号路径1点" or "1号充电站" fell through to the LLM. Now the
+    parse only carries the name; the orchestrator matches it against the
+    catalogue. MUTATION: restore the _keypoint guess -> "4号路径1点" -> None -> red."""
     got = parse_ptp(text)  # one parse
-    assert got is not None and got.kind == kind and got.name == name  # by name
+    assert got is not None and got.kind == "delete" and got.name == name  # by name only
 
 
 @pytest.mark.parametrize("text", ["删除路径", "删除围栏"])

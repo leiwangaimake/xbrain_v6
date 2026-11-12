@@ -231,6 +231,9 @@ _ROUTE_TAIL = ("路径", "路线", "线路", "环线", "线")  # how route names
 #: 99 U133 delete by name: the full-name tails (a bare 线 is too loose for a
 #: delete) and the fence tail. "删除1号路径" -> F11, "删除东门围栏" -> F13.
 _ROUTE_TAIL_FULL = ("路径", "路线", "线路", "环线")  # full route names
+#: 99 U177: "删除路径" / "删除围栏" name no object -- left to the keyword layer.
+#: ("删除航点" still parses: the orchestrator answers it with no_target.)
+_BARE_DELETE_WORDS = frozenset(_ROUTE_TAIL_FULL + ("围栏",))
 _FENCE_TAIL = "围栏"  # a fence name
 #: A route object that is really just a lap count or a place word.
 _LAPS_ONLY = re.compile("^" + _LOOPS + "$")  # "巡逻一圈": no route named
@@ -441,14 +444,18 @@ def parse_ptp(text: str) -> Optional[PtpParse]:
         m = _DEL_FRONT.match(t) or _DEL_BACK.match(t)  # either delete word order
         if m:  # a delete sentence
             name = _head(m.group("x"))  # the target
-            if _keypoint(name):  # a keypoint, not a route / fence
+            # 99 U177 (user ruling 2026-11-12): WHAT is deleted is decided by
+            # the catalogue, not by the shape of the name -- the orchestrator
+            # matches the whole name against every object type. Until then a
+            # name holding 路径 / 充电 ("4号路径1点", "1号充电站") was "not a
+            # keypoint" by _NOT_KEYPOINT and, not ending like a route either,
+            # fell to the LLM, which read it as a route delete: "没找到".
+            # ~~_keypoint(name) -> delete; ends with 围栏 -> delete_fence;
+            # ends with 路径... -> delete_route~~ (2026-11-05 ~ 2026-11-12).
+            if (name and not name.endswith("任务") and name not in _DEICTIC  # 任务: B07 / U144 / U174
+                    and name not in _BARE_DELETE_WORDS):  # a bare type word names nothing
                 return PtpParse("delete", name, when=when)
-            if name.endswith(_FENCE_TAIL) and len(name) > len(_FENCE_TAIL):  # "东门围栏"
-                return PtpParse("delete_fence", name, when=when)  # 99 U133: F13 by name
-            if (name.endswith(_ROUTE_TAIL_FULL)
-                    and name not in _ROUTE_TAIL_FULL):  # "1号路径", not bare "路径"
-                return PtpParse("delete_route", name, when=when)  # 99 U133: F11 by name
-            return None  # anything else: not ours
+            return None  # nothing named: not ours
         m = _Q_ROUTE_POINTS.match(t)  # G48 (U130)
         if m and when is None:  # a question carries no time
             return PtpParse("route_points", m.group("x"))  # which points are on route X

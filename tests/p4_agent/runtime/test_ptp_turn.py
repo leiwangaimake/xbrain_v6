@@ -98,7 +98,7 @@ def test_timed_goto_carries_not_before_ts(text, epoch, said):  # case body
 @pytest.mark.parametrize("text,said", [  # refusals
     ("去5号测试点", "没找到5号测试点, 可以问我有哪些位置点"),
     ("上午9点去1号测试点", "这个时间已经过了, 请换个时间"),
-    ("删除5号测试点", "没找到5号测试点, 可以问我有哪些位置点"),
+    ("删除5号测试点", "没找到叫5号测试点的航点, 路径或围栏, 没有删除"),  # 99 U177 wording
     ("删除航点", "没有说要删除哪个点, 没有删除"),
     ("下午3点删除1号测试点", "删除和改名不能定时, 请去掉时间再说一遍"),
     ("把1号测试点改名为1号测试点", "新名字和原来一样, 没有改名"),
@@ -341,3 +341,44 @@ def test_membership_without_geometry_says_so():  # case body
     guess. MUTATION: answer "no points" instead -> red."""
     assert "还没有加载好" in _turn("1号路径上有哪些航点", objects=None, member=5.0)[0].tts_text  # no data
     assert "还没有加载好" in _turn("1号路径上有哪些航点", objects=_OBJECTS, member=None)[0].tts_text  # no distance
+
+
+
+# -- 99 U177 (user ruling 2026-11-12): a delete matches the whole name, any type --
+_U177 = [
+    {"geo_id": "w-4", "type": "waypoint", "name": "4号路径起点", "state": "active", "rev": 1},  # the robot's two
+    {"geo_id": "w-4_1", "type": "waypoint", "name": "4号路径1点", "state": "active", "rev": 2},  # route-named points
+    {"geo_id": "r-5", "type": "route", "name": "5号路径", "state": "active", "rev": 4},  # a live route
+    {"geo_id": "r-4", "type": "route", "name": "4号路径", "state": "deleted", "rev": 9},  # a tombstone
+    {"geo_id": "f-1", "type": "fence", "name": "东门围栏", "state": "draft", "rev": 1},  # a fence
+    {"geo_id": "w-twin", "type": "waypoint", "name": "西门", "state": "active", "rev": 1},  # one name
+    {"geo_id": "r-twin", "type": "route", "name": "西门", "state": "active", "rev": 1},  # in two tables
+]
+
+
+@pytest.mark.parametrize("text,gtype,gid", [
+    ("删除4号路径1点", "waypoint", "w-4_1"),  # measured 2026-11-12: "没找到你说的那个对象"
+    ("删除4号路径起点", "waypoint", "w-4"),  # the other one
+    ("删除四号路径一点", "waypoint", "w-4_1"),  # Chinese numerals == digits, everywhere in the name
+    ("删除5号路径", "route", "r-5"),  # a route, by the same rule
+    ("把东门围栏删掉", "fence", "f-1"),  # a fence, by the same rule
+])
+def test_a_delete_matches_the_whole_name_whatever_the_object(text, gtype, gid):
+    """MUTATION: guess the type from the name (the pre-U177 _keypoint rule) ->
+    the route-named points go to the LLM fake, which raises -> red; compare
+    with canonical_name only -> "四号路径一点" not found -> red."""
+    d, frames = _turn(text, items=_U177)  # the robot's catalogue shape
+    geo = frames["cmd/geo"]  # 11 S7.9 command
+    assert d.kind == "dispatch" and geo["action"] == "delete"  # sent at once (U147)
+    assert (geo["type"], geo["geo_id"]) == (gtype, gid)  # the object the name names
+
+
+@pytest.mark.parametrize("text,said", [
+    ("删除4号路径", "没找到叫4号路径的航点, 路径或围栏, 没有删除"),  # only a tombstone has it
+    ("删除西门", "有2个对象都叫西门: 航点, 路径. 没有删除, 请先把其中一个改名"),  # two tables
+])
+def test_no_match_or_two_matches_deletes_nothing(text, said):
+    """MUTATION: delete the first of two hits -> a cmd/geo frame -> red;
+    count tombstones -> 4号路径 found -> red."""
+    d, frames = _turn(text, items=_U177)  # one turn
+    assert "cmd/geo" not in frames and d.tts_text == said  # said, nothing sent

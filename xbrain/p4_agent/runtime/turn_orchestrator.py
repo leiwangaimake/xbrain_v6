@@ -71,6 +71,7 @@ from xbrain.p4_agent.runtime.geo_request import (
     GeoRequestError,
     is_geo_intent,
     manifest_from_state,
+    objects_named,  # 99 U177 whole-name match across types
     resolve_geo_id,
     to_geo_command,
 )
@@ -206,6 +207,10 @@ _PTP_CN = {
     "not_found_route": "没找到{name}, 可以问我有哪些路径",  # U121 patrol
     "ack_goto": "好的,{when}去{name}",
     "ack_delete": "好的,删除{name}",
+    # 99 U177: a delete matched against the whole catalogue
+    "delete_not_found": "没找到叫{name}的航点, 路径或围栏, 没有删除",
+    "delete_ambiguous": "有{n}个对象都叫{name}: {types}. 没有删除, 请先把其中一个改名",
+    "delete_unsupported": "{name}是{type}, 不能用语音删除",
     "ack_activate": "好的,启用{name}",  # 99 U147: F15 runs at once, names the fence
     "ack_rename": "好的,把{name}改名为{new}",
     # 99 U121 named patrol; {how} is the lap phrase of _laps_cn (U131: P3
@@ -311,6 +316,11 @@ def _motion_held(state: Dict[str, Any]) -> bool:
 
 #: Type words that, said alone, name no keypoint ("删除航点").
 _BARE_TYPE_WORDS = frozenset({"航点", "点位", "关键点", "位置点", "这个点"})
+#: 99 U177: geo type (11 S7.10 manifest) -> (delete intent id, its target slot).
+_DELETE_BY_TYPE = {"waypoint": ("F12", "waypoint"), "route": ("F11", "route"),
+                   "fence": ("F13", "fence")}
+#: 99 U177: geo type -> the word said for it.
+_GEO_TYPE_CN = {"waypoint": "航点", "route": "路径", "fence": "围栏", "dock": "充电桩记录"}
 
 
 def _spoken_when(expr: Optional[TimeExpr]) -> str:
@@ -1323,27 +1333,11 @@ class TurnOrchestrator:
             return self._route_entry(self._registry.by_id("F15"), text, session,
                                      now_mono_ms, layer="ptp_rule",
                                      rule_slots={"fence": ptp.name})
-        if ptp.kind in ("delete_route", "delete_fence"):
-            # 99 U133: route / fence deletes by name. F11 / F13 are L2 and run
-            # at once with the ack naming what is deleted (99 U147).
-            fid = "F11" if ptp.kind == "delete_route" else "F13"
-            if ptp.when is not None:
-                return _reply(fid, "timed_geo")
-            self._turn_ptp_ack = _PTP_CN["ack_delete"].format(name=ptp.name)
-            return self._route_entry(
-                self._registry.by_id(fid), text, session, now_mono_ms,
-                layer="ptp_rule",
-                rule_slots={"route" if fid == "F11" else "fence": ptp.name})
         intent_id = "F12" if ptp.kind == "delete" else "F14"
         if ptp.when is not None:
             return _reply(intent_id, "timed_geo")
         if ptp.kind == "delete":
-            if not ptp.name or ptp.name in _BARE_TYPE_WORDS:
-                return _reply("F12", "no_target")
-            self._turn_ptp_ack = _PTP_CN["ack_delete"].format(name=ptp.name)
-            return self._route_entry(self._registry.by_id("F12"), text,
-                                     session, now_mono_ms, layer="ptp_rule",
-                                     rule_slots={"waypoint": ptp.name})
+            return self._delete_by_catalogue(ptp, text, session, now_mono_ms, _reply)
         new = canonical_name(ptp.new or "")
         if not name_length_ok(new):
             spoken = _F_REASON_CN["name length"]
@@ -1358,6 +1352,45 @@ class TurnOrchestrator:
         return self._route_entry(self._registry.by_id("F14"), text, session,
                                  now_mono_ms, layer="ptp_rule",
                                  rule_slots={"old": ptp.name, "new": new})
+
+    def _delete_by_catalogue(self, ptp: PtpParse, text: str, session,
+                             now_mono_ms: int, reply) -> TurnDecision:
+        """99 U177 (user ruling 2026-11-12): "全字段匹配, 无论删除的是什么,
+        只要名字匹配 (中文数字和阿拉伯数字等效) 就删除".
+
+        The spoken name is matched, whole, against every live object in
+        state/geo/manifest (geo_request.objects_named, name_key on both sides).
+        One hit -> the delete intent of ITS type (waypoint F12, route F11,
+        fence F13), sent with the stored name; none -> said so; the same name
+        in two tables -> said, nothing deleted (deleting a guess is not
+        recoverable from voice). L2, runs at once (99 U147)."""
+        if not ptp.name or ptp.name in _BARE_TYPE_WORDS:
+            return reply("F12", "no_target")
+        state = self._state_fn() if self._state_fn else {}
+        manifest = manifest_from_state(state.get("state/geo/manifest")
+                                       if isinstance(state, Mapping) else None)
+        if manifest is None or not manifest.get("items"):
+            spoken = _F_REASON_CN[CATALOGUE_UNAVAILABLE]  # no name space to match in
+            entry = self._registry.by_id("F12")
+            return TurnDecision(kind="reply", intent_id=entry.id, intent_name=entry.name,
+                                route=entry.route, auth=entry.auth, layer="ptp_rule",
+                                reply_text=spoken, tts_text=spoken)
+        hits = objects_named(manifest["items"], ptp.name)
+        if not hits:
+            return reply("F12", "delete_not_found", name=ptp.name)
+        if len(hits) > 1:
+            types = ", ".join(_GEO_TYPE_CN.get(str(h.get("type")), str(h.get("type")))
+                              for h in hits)
+            return reply("F12", "delete_ambiguous", n=len(hits), name=ptp.name, types=types)
+        hit = hits[0]
+        fid, slot = _DELETE_BY_TYPE.get(str(hit.get("type")), (None, None))
+        if fid is None:  # a type no voice delete exists for (e.g. a dock record)
+            return reply("F12", "delete_unsupported", name=ptp.name,
+                         type=_GEO_TYPE_CN.get(str(hit.get("type")), str(hit.get("type"))))
+        stored = str(hit.get("name") or ptp.name)  # the catalogue's own spelling
+        self._turn_ptp_ack = _PTP_CN["ack_delete"].format(name=stored)
+        return self._route_entry(self._registry.by_id(fid), text, session,
+                                 now_mono_ms, layer="ptp_rule", rule_slots={slot: stored})
 
     def _answer_membership(self, ptp: PtpParse, reply) -> TurnDecision:
         """G48 "X路径上有哪些航点" / G49 "X在哪条路径上" (99 U130): answered
