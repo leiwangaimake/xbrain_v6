@@ -403,8 +403,8 @@ def test_an_unfiltered_clear_says_the_queue_count():  # 99 U174
     MUTATION: speak the scheduled sentence for it -> "定时任务" -> red."""
     sp = AckSpeaker()  # fresh
     sp.note_turn(_sent("cmd/task", {"cmd_id": "c-2", "action": "clear_queue"}))  # no filter
-    out = sp.on_ack(_b({"cmd_id": "c-2", "result": "accepted", "code": "OK",
-                        "detail": {"cleared_ids": ["t-1"]}}))
+    out = sp.on_ack(_b({"cmd_id": "c-2", "result": "accepted", "code": "OK",  # P3 swept the queue
+                        "detail": {"cleared_ids": ["t-1"]}}))  # S7.2: cleared_ids is mandatory
     assert _said(out)[1] == "已取消1个排队中的任务"  # not the scheduled wording
 
 
@@ -641,14 +641,14 @@ def test_a_finish_that_kept_its_data_says_so():
 def _cap_turn(spoke=True):
     """The frames of one F06 turn with its voice_turn record."""
     pairs = _turn(cmd_id="c-m", name="2号充电站", spoke=spoke)  # cmd/teach (+ speech)
-    pairs.append((_VT_KEY, _b({"turn_id": "vt-2", "session": "cloud", "channel": "cloud",
-                               "asr_raw": "保存当前位置为2号充电站",
-                               "asr_text": "保存当前位置为2号充电站", "corrections": [],
-                               "bypass": None, "intent": "record_waypoint", "slots": {},
+    pairs.append((_VT_KEY, _b({"turn_id": "vt-2", "session": "cloud", "channel": "cloud",  # a cloud text turn
+                               "asr_raw": "保存当前位置为2号充电站",  # what the operator sent
+                               "asr_text": "保存当前位置为2号充电站", "corrections": [],  # the only link to the request
+                               "bypass": None, "intent": "record_waypoint", "slots": {},  # F06
                                "auth_level": "L1a", "verdict": "accepted",  # sent, not stored
-                               "reject_code": None, "reply_text": "好的,记录这个点",
-                               "reply_kind": "stream", "layer": "long_phrase",
-                               "ts_mono": 1.0})))
+                               "reject_code": None, "reply_text": "好的,记录这个点",  # the turn's own reply
+                               "reply_kind": "stream", "layer": "long_phrase",  # as the 11-11 record read
+                               "ts_mono": 1.0})))  # copied fields come from here
     return pairs  # in publish order
 
 
@@ -656,12 +656,12 @@ def test_a_stored_capture_is_published_as_a_second_voice_turn():
     """MUTATION: drop mark_once from _RESULT_TO_TURN -> no record -> red."""
     sp = AckSpeaker()  # fresh
     sp.note_turn(_cap_turn(spoke=False))  # a silent cloud text turn
-    out = sp.on_ack_frames(_b({"cmd_id": "c-m", "result": "accepted", "code": "OK",
-                               "detail": {"applied": {"geo_id": "w-7", "name": "2号充电站"},
+    out = sp.on_ack_frames(_b({"cmd_id": "c-m", "result": "accepted", "code": "OK",  # P3's teach ack
+                               "detail": {"applied": {"geo_id": "w-7", "name": "2号充电站"},  # AP-1 values
                                           "warn": []}}))  # P3 stored it
     (rec,) = _turns(out)  # the only place a silent turn's result goes
-    assert rec["verdict"] == "accepted" and rec["layer"] == "teach_result"
-    assert rec["reply_text"] == "已记录2号充电站" and rec["intent"] == "record_waypoint"
+    assert rec["verdict"] == "accepted" and rec["layer"] == "teach_result"  # stored, as a result record
+    assert rec["reply_text"] == "已记录2号充电站" and rec["intent"] == "record_waypoint"  # said from applied
     assert rec["turn_id"] != "vt-2" and rec["reply_kind"] == "none"  # its own record
 
 
@@ -669,12 +669,12 @@ def test_a_refused_capture_is_published_as_rejected():
     """The 2026-11-11 case. MUTATION: verdict always accepted -> red."""
     sp = AckSpeaker()  # fresh
     sp.note_turn(_cap_turn())  # spoke "好的,记录这个点"
-    out = sp.on_ack_frames(_b({"cmd_id": "c-m", "result": "rejected", "code": "E_GEO_INVALID",
-                               "detail": {"reason": "dock_off_route", "distance_m": 13.5}}))
+    out = sp.on_ack_frames(_b({"cmd_id": "c-m", "result": "rejected", "code": "E_GEO_INVALID",  # U146 refusal
+                               "detail": {"reason": "dock_off_route", "distance_m": 13.5}}))  # the measured gap
     assert [k for k, _ in out] == ["cmd/audio/speak", _VT_KEY]  # speech, then record
-    (rec,) = _turns(out)
-    assert rec["verdict"] == "rejected" and rec["reject_code"] == "E_GEO_INVALID"
-    assert rec["reply_text"] == "2号充电站没有记录, 充电桩和充电站必须在某条路径5米以内"
+    (rec,) = _turns(out)  # exactly one result record
+    assert rec["verdict"] == "rejected" and rec["reject_code"] == "E_GEO_INVALID"  # by code, not by text
+    assert rec["reply_text"] == "2号充电站没有记录, 充电桩和充电站必须在某条路径5米以内"  # the spoken reason
 
 
 
@@ -683,12 +683,12 @@ def test_a_refused_capture_is_published_as_rejected():
                                       ([], "现在没有排队中的任务")])
 def test_a_whole_queue_cancel_says_how_many_p3_cleared(ids, said):
     """MUTATION: no unfiltered branch -> accepted says nothing -> red."""
-    sp = AckSpeaker()
-    sp.note_turn([("cmd/task", _b({"cmd_id": "c-q", "action": "clear_queue",
-                                    "source": "local"})),
-                  ("cmd/audio/speak", _b({"schema": "p4_speak_v1",
-                                          "text": "好的,取消全部排队中的任务",
-                                          "source": "tts_local"}))])
-    out = sp.on_ack(_b({"cmd_id": "c-q", "result": "accepted", "code": "OK",
-                        "detail": {"cleared_ids": ids, "applied": {"cleared": len(ids)}}}))
-    assert _said(out)[1] == said
+    sp = AckSpeaker()  # fresh
+    sp.note_turn([("cmd/task", _b({"cmd_id": "c-q", "action": "clear_queue",  # the U174 frame:
+                                    "source": "local"})),  # no filter at all
+                  ("cmd/audio/speak", _b({"schema": "p4_speak_v1",  # the turn spoke, so the
+                                          "text": "好的,取消全部排队中的任务",  # answer is spoken
+                                          "source": "tts_local"}))])  # on the same source
+    out = sp.on_ack(_b({"cmd_id": "c-q", "result": "accepted", "code": "OK",  # P3 answered
+                        "detail": {"cleared_ids": ids, "applied": {"cleared": len(ids)}}}))  # its own count
+    assert _said(out)[1] == said  # P3's number, never the snapshot's
