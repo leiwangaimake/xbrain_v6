@@ -49,7 +49,7 @@ def test_a_held_change_is_reported_once():
     assert t.observe({"speaker": _it("fail", "fatal", "no ack")}, 3.9) == []  # 2.9 s: not yet
     assert t.observe({"speaker": _it("fail", "fatal", "no ack")}, 4.0) == [  # 3.0 s: due
         {"device": "speaker", "from": "ok", "to": "fail", "level": "fatal",  # the transition
-         "reason": "no ack"}]  # detail carried as reason
+         "from_reason": None, "reason": "no ack"}]  # detail carried as reason
     assert t.observe({"speaker": _it("fail", "fatal")}, 5.0) == []  # reported once only
     # and the recovery is a second change, measured from the reported fail
     t.observe({"speaker": _it("ok")}, 6.0)  # recovery hold starts
@@ -77,7 +77,7 @@ def test_a_different_new_state_restarts_the_hold():
     assert t.observe({"cam_rgbd": _it("fail")}, 5.9) == []  # 2.9 s on fail
     assert t.observe({"cam_rgbd": _it("fail")}, 6.0)[0] == {  # 3 s on fail
         "device": "cam_rgbd", "from": "ok", "to": "fail", "level": "optional",  # from the baseline
-        "reason": None}  # no detail given
+        "from_reason": None, "reason": None}  # no detail given
 
 
 def test_never_known_items_stay_silent_but_a_known_one_reports_unknown():
@@ -88,7 +88,7 @@ def test_never_known_items_stay_silent_but_a_known_one_reports_unknown():
     assert t.observe({"gpu": _it("unknown"), "cam": _it("ok")}, 0.0) == []  # cam baseline
     assert t.observe({"gpu": _it("ok"), "cam": _it("unknown")}, 1.0) == [  # cam lost
         {"device": "cam", "from": "ok", "to": "unknown", "level": "optional",  # reported
-         "reason": None}]  # gpu absent: its ok was a baseline
+         "from_reason": None, "reason": None}]  # gpu absent: its ok was a baseline
     # gpu's first KNOWN state (ok at t=1) was its silent baseline
     assert t.observe({"gpu": _it("ok"), "cam": _it("unknown")}, 2.0) == []  # steady
 
@@ -116,7 +116,8 @@ def test_event_shape_and_severity():
     assert (ev["sev"], ev["cat"], ev["channel"], ev["code"]) == (  # 11 S6.2 health row
         "fault", "health", "normal", "HEALTH_ITEM_CHANGED")  # fail -> fault
     assert ev["detail"] == {"type": EVENT_TYPE, "device": "speaker", "from": "ok",  # detail
-                            "to": "fail", "level": "fatal", "reason": "no ack"}  # whole
+                            "to": "fail", "from_reason": None,  # the cause being left
+                            "level": "fatal", "reason": "no ack"}  # whole
     assert (ev["eid"], ev["ts"], ev["src"]) == ("health-p2-abc-1", 123.0, "p2_core")  # ids
     assert EVENT_TYPE == "health.item_changed"  # the HMI eventText key
     back = health_change_event(dict(chg, **{"from": "fail", "to": "ok"}), eid="e", ts=1.0)  # recovery

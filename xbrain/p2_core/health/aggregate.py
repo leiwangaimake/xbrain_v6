@@ -345,9 +345,15 @@ def state_from_perception(perc: Optional[Mapping[str, Any]], *,
     return HealthState.OK, "fps_depth %.1f" % fps
 
 
+#: detail prefix of payload_speaker fail when the link is up but a TTS request
+#: failed (99 U166). change_events keys the event sev on it (alarm, not fault).
+PLAYBACK_FAILED = "playback failed"
+
+
 def refresh_health(agg: HealthAggregator, state_cache: Mapping[str, Any], *,
                    now_mono_s: float,
                    device_states: Optional[Mapping[str, Optional[bool]]] = None,
+                   speaker_playback_fail: Optional[str] = None,
                    critical_soc_pct: Optional[float] = None,
                    rx_mono: Optional[Mapping[str, float]] = None,
                    perception_min_fps_depth: Optional[float] = None,
@@ -388,6 +394,13 @@ def refresh_health(agg: HealthAggregator, state_cache: Mapping[str, Any], *,
     # the UNKNOWN it started in.
     for device, is_up in (device_states or {}).items():
         if is_up is None or device not in ITEMS:
+            continue
+        if device == "payload_speaker" and is_up and speaker_playback_fail:
+            # 99 U166: online but the last TTS request failed -> fail with the
+            # PLAYBACK_FAILED detail (event sev alarm); offline stays "link
+            # down" (fault). Same FAIL state, so the same speed effect.
+            agg.observe(device, HealthState.FAIL, now_mono_s=now_mono_s,
+                        detail="%s: %s" % (PLAYBACK_FAILED, speaker_playback_fail))
             continue
         agg.observe(device,
                     HealthState.OK if is_up else HealthState.FAIL,

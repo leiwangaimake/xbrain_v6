@@ -89,7 +89,22 @@ class SpeakerBusy(Exception):
 
 
 class SpeakerHwError(Exception):
-    """payload-service returned failure; speaker probably down."""
+    """payload-service returned failure; speaker probably down.
+
+    status: the HTTP status payload-service answered, None when there was no
+    HTTP answer (connect failure, timeout, bad body) -- 99 U166."""
+
+    def __init__(self, message: str, status: Optional[int] = None) -> None:
+        super().__init__(message)
+        self.status = status
+
+
+#: 99 U166: TTS replies that are NOT a speaker malfunction. 503 is
+#: payload-service's "device not reachable" (services/payload/api/rest.py,
+#: POST /tts) -- offline, which the link poll reports as fault; 409 is a mode
+#: conflict (an intercom or the deter loop owns the audio path). Anything else
+#: failing while the link is up is "online but cannot play" -> alarm.
+NOT_A_SPEAKER_FAULT = frozenset({503, 409})
 
 
 class SpeakerDomain:
@@ -124,6 +139,14 @@ class SpeakerDomain:
         self._gate_open = True
         self._gate_reason = "idle"
         self._speaking_source: Optional[str] = None
+        # 99 U166 (user 2026-11-12): the speaker's FUNCTION, apart from its
+        # link. The reason of the last TTS request payload-service failed, or
+        # None once one succeeded / nothing has been tried / the link went down
+        # (clear_playback_fault). p2 health turns it into payload_speaker fail
+        # "playback failed" -> event sev alarm while the link is up; a down
+        # link is offline -> fault. Plain attribute writes: read by the health
+        # tick on another thread, a stale read is one tick late, never torn.
+        self._playback_fail: Optional[str] = None
         # Announce idle-open initially.
         self._publish_gate(open_=True, reason="idle")
 
@@ -187,12 +210,14 @@ class SpeakerDomain:
             try:
                 est_ms = self._invoke_tts(text)
             except SpeakerHwError as exc:
+                self._note_playback_failure(exc)  # U166
                 self._publish_gate(open_=True, reason="idle")
                 if muted_here:
                     self._mic_pub.unmute()
                     muted_here = False
                 return {"ok": False, "code": E_UNHEALTHY,
                         "reason": str(exc)}
+            self._playback_fail = None  # U166: the speaker played
             # Playback is asynchronous on the device side; est_ms is the
             # TTS builder's estimate. Sleep the same window so the mute
             # is released only after the speaker has actually gone quiet.
@@ -249,11 +274,13 @@ class SpeakerDomain:
             try:
                 est_ms = self._invoke_tts(text)
             except SpeakerHwError as exc:
+                self._note_playback_failure(exc)  # U166
                 self._publish_gate(open_=True, reason="idle")
                 if self._mic_pub is not None:
                     self._mic_pub.unmute()
                 hub.release("speaker", source, req_id, "error", self._now())
                 return {"ok": False, "code": E_UNHEALTHY, "reason": str(exc)}
+            self._playback_fail = None  # U166: the speaker played
             end = time.monotonic() + est_ms / 1000.0
             while time.monotonic() < end:
                 # 11 S7A.4: renew at >= 2 Hz (we poll at 20 Hz) or the 1 s
@@ -291,6 +318,25 @@ class SpeakerDomain:
             time.sleep(PREEMPT_POLL_S)
         return False
 
+    def _note_playback_failure(self, exc: SpeakerHwError) -> None:
+        """99 U166: remember a failed TTS as a malfunction unless the reply says
+        offline (503) or busy in another mode (409) -- see NOT_A_SPEAKER_FAULT.
+        Found live 2026-11-12: the boot greeting got 503 "audio link is down"
+        while the link poll had not yet confirmed the outage, and was filed as
+        "online but cannot play"."""
+        if exc.status in NOT_A_SPEAKER_FAULT:
+            return
+        self._playback_fail = str(exc) or "tts error"
+
+    def playback_fault(self) -> Optional[str]:
+        """99 U166: why the last TTS request failed, or None (see __init__)."""
+        return self._playback_fail
+
+    def clear_playback_fault(self) -> None:
+        """99 U166: the link went down -- offline supersedes, and a reconnect
+        starts clean instead of reporting the outage as a playback failure."""
+        self._playback_fail = None
+
     def _invoke_tts(self, text: str) -> float:
         """Call the payload-service TTS endpoint. Kept as a separate
         method so tests can monkeypatch it without touching HTTP."""
@@ -308,7 +354,7 @@ class SpeakerDomain:
                 est_ms_per_sentence=self._cfg.est_ms_per_sentence,
             )
         except TtsClientError as exc:
-            raise SpeakerHwError(str(exc)) from exc
+            raise SpeakerHwError(str(exc), status=exc.status) from exc
 
     def audio_view(self) -> dict:
         """state/audio(11 S8.10)要的那几个量, 一次读出来.

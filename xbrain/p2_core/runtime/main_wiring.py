@@ -1380,6 +1380,8 @@ def run_voice_loop_wiring(mic_cfg: MicCaptureConfig,
                         refresh_health(
                             health_agg, state_cache, now_mono_s=now,
                             device_states=device_bridge.states(),
+                            # 99 U166: speaker function apart from its link
+                            speaker_playback_fail=speaker.playback_fault(),
                             critical_soc_pct=battery_soc,  # 99 U117
                             rx_mono=rx_mono,
                             perception_min_fps_depth=perception_cfg.min_fps_depth,
@@ -1712,6 +1714,10 @@ def run_voice_loop_wiring(mic_cfg: MicCaptureConfig,
                     # 放进 10 Hz 路径会把整个 p2 主循环拖成 1 Hz.
                     last_payload_audio = _audio
                     device_bridge.observe("payload_speaker", _audio)
+                    if _audio is False:
+                        # 99 U166: offline supersedes a playback failure, and
+                        # the reconnect must not replay it as one.
+                        speaker.clear_playback_fault()
                     device_bridge.observe("payload_siren", _audio)
                     device_bridge.observe("payload_strobe", _lights)
                     device_bridge.observe("payload_light", _lights)
