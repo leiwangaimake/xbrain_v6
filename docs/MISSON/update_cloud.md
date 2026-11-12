@@ -597,6 +597,7 @@ v2.0 §9.5 要求可靠事件断线后在原 key 上补发、复用 `eid`。**�
   - 说「退出录制 / 取消录制」的那一轮照常发一条，`verdict` 只表示指令已发出。
   - 机器人处理完后**再发一条**：新 `turn_id`，`layer="teach_result"`，`verdict` 为 `accepted`（已保存、已丢弃）或 `rejected`（未保存，`reject_code` 为原因码），`reply_text` 为结果句。
   - 第二条照抄原轮的 `channel`、`session`、`asr_raw`、`asr_text`、`intent`，没有请求 ID，请按 `asr_text` 和时间顺序对应。
+- **打点的结果**（U167，2026-11-12）：说「保存当前位置为X」的那一轮照常发一条（`verdict` 只表示指令已发出，`reply_text`「好的,记录这个点」）；机器人处理完后**再发一条** `layer="teach_result"`、`intent="record_waypoint"`：存下 `accepted`「已记录X」，被拒 `rejected` 加原因码与原因句（如 `E_GEO_INVALID`「X没有记录, 充电桩和充电站必须在某条路径5米以内」）。没说名字、名字长度不对时该轮直接 `rejected`，不再有第二条。新航点 ID 不在记录里，以 `state/geo/manifest` 同名 waypoint 的 `geo_id` 为准。**以第二条为准显示「创建成功」。** 录制期间说这句仍被拦截（§8.4）。
 - **录制到时提醒与自动收尾**（U163）：没有对应请求，机器人主动发。
   - `asr_raw = asr_text = ""`、`intent = null`、`layer = "teach_result"`；
   - `channel` 是发起录制的通道（云端发起为 `cloud`）；
