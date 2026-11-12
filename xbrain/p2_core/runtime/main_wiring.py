@@ -49,6 +49,7 @@ from xbrain.p2_core.audio.broadcast_rx import BroadcastSession, accept_chunk
 from xbrain.p2_core.audio.broadcast_sink import BroadcastPlaySink
 from xbrain.p2_core.boot.config_digest import ConfigDigestGuard, digest_fault_event
 from xbrain.p2_core.health.aggregate import HealthAggregator, refresh_health
+from xbrain.p2_core.health.change_events import HealthChangeTracker, health_change_event
 from xbrain.p2_core.health.factor import (
     FactorConfig,
     PerceptionHealthConfig,
@@ -152,7 +153,7 @@ def _stage_a_config() -> "tuple":
     this process needs from it -- the factor table and the config digest guard.
 
     (FactorConfig, PerceptionHealthConfig, battery critical_soc_pct,
-    ConfigDigestGuard).
+    ConfigDigestGuard, health change_event_hold_s).
 
     One load, deliberately. A second load_resolved() for the guard could see a
     DIFFERENT MANIFEST than the one the factor table came from, and since a
@@ -190,9 +191,14 @@ def _stage_a_config() -> "tuple":
     # U117 nothing read it and state_from_power always saw None ("critical
     # threshold not set" -> degraded -> factor 0.3 on every run).
     battery_soc = cfg.get("health.battery.critical_soc_pct")
+    # 2026-11-12: how long a health item's new state must last before its
+    # event/{sev}/health goes out (health/change_events.py). No default: a
+    # missing key raises like the factor keys above.
+    change_hold_s = cfg.get("health.change_event_hold_s")
     # Built from the ResolvedConfig object, not from a fresh MANIFEST read --
     # see ConfigDigestGuard.at_stage_a on why that distinction is the point.
-    return factor, perception, battery_soc, ConfigDigestGuard.at_stage_a(cfg)
+    return (factor, perception, battery_soc, ConfigDigestGuard.at_stage_a(cfg),
+            change_hold_s)
 
 
 def _now_mono_ms() -> int:
@@ -286,7 +292,12 @@ def run_voice_loop_wiring(mic_cfg: MicCaptureConfig,
         # change while the process runs (a config change goes through the
         # freeze line and a restart), and re-reading it at 1 Hz would put a
         # file read plus a sha256 verification in the publish path.
-        factor_cfg, perception_cfg, battery_soc, digest_guard = _stage_a_config()
+        (factor_cfg, perception_cfg, battery_soc, digest_guard,
+         change_hold_s) = _stage_a_config()
+        # 11 S6.2 health row "健康度变化": one event per item state change
+        # (2026-11-12, the HMI event list). eid boot-unique like _cfg_evt.
+        health_changes = HealthChangeTracker(change_hold_s)
+        _health_evt = {"boot": os.urandom(3).hex(), "seq": 0}
         _logger.info("p2 stage A: common_digest=%s", digest_guard.cached_digest)
         # Edge-triggered fault sequence for event/fault/bit. Same boot-token
         # rationale as _estop_boot below: record.db persists across restarts
@@ -1374,11 +1385,22 @@ def run_voice_loop_wiring(mic_cfg: MicCaptureConfig,
                             perception_min_fps_depth=perception_cfg.min_fps_depth,
                             perception_max_age_s=perception_cfg.max_age_s)
                         # 11 S3.0 信封. ts_sync 见 _clock_sync 的注释.
+                        _summary = health_agg.build_summary(factor_cfg)
                         health_pub.put(stamp_body(
-                            health_agg.build_summary(factor_cfg),
+                            _summary,
                             rid=_env_rid, boot=_env_boot,
                             seq=_next_seq(HEALTH_SUMMARY_TOPIC),
                             ts_sync=_clock_sync()))
+                        # 11 S6.2 health: the item changes that held long enough
+                        for _chg in health_changes.observe(_summary.get("items") or {}, now):
+                            _health_evt["seq"] += 1
+                            _hev = health_change_event(
+                                _chg, eid="health-p2-%s-%d" % (_health_evt["boot"],
+                                                               _health_evt["seq"]),
+                                # WALL-CLOCK-OK(record): 11 S6.1 Event.ts display stamp.
+                                ts=time.time())
+                            gen.put("event/%s/health" % _hev["sev"], json.dumps(
+                                _hev, ensure_ascii=False).encode("utf-8"))
                         # the grant, from the same aggregate (11 S3.6 body).
                         factor_body = build_health_factor(health_agg.states(), factor_cfg)
                         # 10 S3.3.3 Stage C criterion 3 / 10 S5.4.4 failure row:
