@@ -96,7 +96,12 @@ rtk_loss:
 #    已被 U157 取代, 2026-11-06 ~ 2026-11-10);
 #   导航到最近的 [在某条路径 route.membership_m 内的] 充电桩/充电站航点, 没有则
 #   去返航终点站; 续航 remain_mile_km 不够走到也照走, 上报 unreachable;
-#   soc_pct 降到 stop_soc_pct 及以下: 停止并趴下.
+#   soc_pct 降到 stop_soc_pct 及以下: 停止并趴下, 不再向目标充电点走, 告警继续.
+#   99 U172 (用户裁决 2026-11-12): stop_soc_pct 由 5 改为 10 -- 剩余电量走到
+#   10 % 就停住, 不再向目标充电站走 (旧值 5, 2026-11-05 ~ 2026-11-12).
+#   99 U171 (用户裁决 2026-11-12): 低电或充电中断阶段, 未充电, soc_pct >= trigger_soc_pct
+#   且比本轮低电不充电时的最低电量高 >= cold_swap_min_rise_pct, 按换电分档结束
+#   (11-11 21:41 热换电 14 -> 100 一步跳变, 在位规则没抓到, 告警刷到 22:51).
 #   99 U157 (用户裁决 2026-11-10): 底盘报告充电不再结束低电, 而是转为"充电中"告警
 #   (同样每 cloud_alarm_period_s 秒上报), 直到 soc_pct 达到 charge_full_soc_pct
 #   才结束; 换电后 soc_pct 不低于 swap_resume_soc_pct 立即结束. 低电期间被打断
@@ -114,7 +119,7 @@ rtk_loss:
 #   时 p3 拒绝启动 (EX_CONFIG 78).
 low_battery:
   trigger_soc_pct: 20.0
-  stop_soc_pct: 5.0
+  stop_soc_pct: 10.0
   cloud_alarm_period_s: 2.0
   charge_full_soc_pct: 100.0
   swap_resume_soc_pct: 80.0
@@ -123,6 +128,7 @@ low_battery:
   swap_absent_min_s: 5.0
   # 99 U157 (2026-11-11): P3 重启后恢复出低电阶段, 首个 soc_pct 比记录里的电量
   # 至少高出这么多个百分点, 才算关机期间换电 (冷换电); 防 19 -> 20 的抖动误判.
+  # 99 U171 (2026-11-12): 同一阈值也用于运行中的回升判换电 (比本轮最低不充电电量高这么多).
   cold_swap_min_rise_pct: 10.0
   # 15 S8.5 CD-1 (99 U157 2026-11-11 采纳): 充电标志去抖. 连续 charging 为真这么多秒
   # 才算开始充电; 连续为假这么多秒才算拔掉. 15 文档建议值, 待 T-CHG-3 实测抖动特性.
