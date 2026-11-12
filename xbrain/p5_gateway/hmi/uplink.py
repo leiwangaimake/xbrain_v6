@@ -65,11 +65,17 @@ nothing, and reads no clock (the rate limiter takes now_ms).
 from __future__ import annotations
 
 import math
+import time
 from dataclasses import dataclass
 from typing import Any, Dict, List, Optional
 
+from xbrain.common import errors
 from xbrain.common.enums import GEO_TYPE
 from xbrain.common.errors import (
+    RETRY_CONDITIONAL,
+    RETRY_NA,
+    RETRY_NO,
+    RETRY_YES,
     E_BUSY,
     E_CHANNEL_DENIED,
     E_CONFIG_INVALID,
@@ -84,6 +90,28 @@ from xbrain.common.errors import (
 #: and W8 is reserved. Adding a member here without amending S12.1.1 first is
 #: the thing F-8 exists to prevent.
 UPSTREAM_TYPES = frozenset({"estop", "goto", "geo", "task", "chassis_enable"})
+
+#: 11 S12.1.4 decision table, the EXCLUDED-zone row: types the HMI channel
+#: deliberately does not carry (teleop R-W13, teach R-W14, ptz R-W9, payload
+#: R-W10, voice_text R-W11, mode R-W8, config, fence). They answer
+#: E_CHANNEL_DENIED, kept apart from an unknown string (E_SCHEMA): "this channel
+#: will never carry that" versus "nobody knows that word". Until 2026-11-12 both
+#: answered E_SCHEMA.
+EXCLUDED_TYPES = frozenset({"teleop", "teach", "ptz", "payload", "voice_text",
+                            "mode", "config", "fence"})
+
+#: 11 S12.1.4: a downstream cmd/*/ack must be back within this long, or P5
+#: answers error / E_TIMEOUT itself (retry backoff, detail.item
+#: "downstream_ack"). A contract value ("2 s, to be tuned at T7"), not a tuning
+#: knob: the client's own ack-loss timer is 3 s precisely so that P5's
+#: E_TIMEOUT always arrives first.
+DOWNSTREAM_ACK_TIMEOUT_S = 2.0
+
+#: 11 S12.1.4 `retry`: S13.2's retryability column, machine-readable. The
+#: column comes from the code registry (codes.yaml), never a second table here.
+#: A success (n_a) is "never": an accepted request must not be resent.
+_RETRY_BY_CLASS = {RETRY_YES: "backoff", RETRY_CONDITIONAL: "after_condition",
+                   RETRY_NO: "never", RETRY_NA: "never"}
 
 #: The W4 ops the HMI may ask for, and the confirmation level each carries
 #: (S12.1.1 W4 row). refs is read-only. Any geo action outside this map -- force,
@@ -484,18 +512,62 @@ def _has_confirm(msg: Dict[str, Any], level: str) -> bool:
     return isinstance(confirm, dict) and confirm.get("level") == level
 
 
+def ack_message(code: str) -> str:
+    """The operator-facing `message` of an ack: the code's meaning from the
+    registry, cut before its engineering notes (" detail." / "(" / "----"),
+    e.g. E_TIMEOUT -> "超时". Unknown code -> the code itself."""
+    try:
+        text = errors.info(code).meaning
+    except KeyError:
+        return code
+    for cut in (" detail.", "(", "----", ". detail"):
+        i = text.find(cut)
+        if i > 0:
+            text = text[:i]
+    return text.strip().rstrip(".,:;") or code
+
+
 def ack_frame(req_id: Optional[str], req_type: str, result: str, code: str = "OK",
-              detail: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+              detail: Optional[Dict[str, Any]] = None,
+              retry: Optional[str] = None) -> Dict[str, Any]:
     """The downstream ack. 11 S12.1.1 names the W4 answer `geo_ack`, defined as
     an alias of `ack` with req_type="geo" -- so one shape is emitted with the
     type spelled out, rather than two shapes that can drift. req_id is None
     when the frame had none worth echoing (11 S12.1.4: unparseable frames and
-    an estop sent without one answer with req_id null)."""
+    an estop sent without one answer with req_id null).
+
+    2026-11-12: retry / message / server_ts added (11 S12.1.4 ack shape). The
+    contract treats a missing retry as an implementation defect read as
+    "never". retry defaults to the code's S13.2 class; a caller passes it only
+    where the S12.1.4 table pins another value (the downstream timeout is
+    backoff although E_TIMEOUT's class is conditional)."""
     frame: Dict[str, Any] = {"kind": "ack", "req_type": req_type,
                              "req_id": req_id, "result": result, "code": code}
     if detail is not None:
         frame["detail"] = detail
+    if retry is None:
+        try:
+            retry = _RETRY_BY_CLASS[errors.retryable(code)]
+        except KeyError:
+            retry = "never"  # fail-secure, the contract's reading of a missing retry
+    frame["retry"] = retry
+    frame["message"] = ack_message(code)
+    # WALL-CLOCK-OK(record): 11 S12.1.4 server_ts is display / audit only.
+    frame["server_ts"] = time.time()
     return frame
+
+
+def channel_denied(req_type: str) -> UplinkRefusal:
+    """11 S12.1.4: an excluded-zone type -- refused for good (retry never)."""
+    return UplinkRefusal(E_CHANNEL_DENIED,
+                         "type %r is not carried on the HMI channel" % (req_type,),
+                         {"gate": "G3", "reason": "channel_denied", "type": req_type})
+
+
+def downstream_timeout(req_type: str) -> Dict[str, Any]:
+    """The detail of the P5-made E_TIMEOUT when a downstream ack is late."""
+    return {"item": "downstream_ack", "type": req_type,
+            "timeout_s": DOWNSTREAM_ACK_TIMEOUT_S}
 
 
 def not_implemented(req_type: str) -> UplinkRefusal:

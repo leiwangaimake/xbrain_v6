@@ -269,12 +269,70 @@ def test_a_refused_frame_is_answered_and_never_forwarded():
 
 
 def test_unwhitelisted_type_is_answered_with_schema_error():
+    """An unknown string is E_SCHEMA (11 S12.1.4). ~~This case used teleop~~:
+    teleop is in the EXCLUDED zone, which the same table answers with
+    E_CHANNEL_DENIED (see the next case) -- the old expectation pinned the
+    defect. MUTATION: send flyaway on to a builder -> something is sent -> red."""
     provider = _Provider()
     with _client(provider).websocket_connect("/ws") as ws:
-        ws.send_json({"type": "teleop", "req_id": "r-9", "axes": {"vx": 1.0}})
+        ws.send_json({"type": "flyaway", "req_id": "r-9"})
         ack = _recv_ack(ws)
     assert ack["result"] == "rejected" and ack["code"] == E_SCHEMA
+    assert ack["retry"] == "never"
     assert provider.sent == []
+
+
+@pytest.mark.parametrize("mtype", sorted(uplink.EXCLUDED_TYPES))
+def test_excluded_types_are_channel_denied_not_schema(mtype):
+    """11 S12.1.4: the excluded zone answers E_CHANNEL_DENIED / retry never,
+    kept apart from an unknown string (2026-11-12; was E_SCHEMA). MUTATION:
+    drop the excluded-zone check -> E_SCHEMA -> red; let one through -> sent."""
+    provider = _Provider()
+    with _client(provider).websocket_connect("/ws") as ws:
+        ws.send_json({"type": mtype, "req_id": "r-x"})
+        ack = _recv_ack(ws)
+    assert (ack["result"], ack["code"], ack["retry"]) == ("rejected", E_CHANNEL_DENIED, "never")
+    assert ack["req_id"] == "r-x" and ack["detail"]["gate"] == "G3"
+    assert provider.sent == []
+
+
+def test_the_excluded_zone_is_the_tables_eight():
+    """11 S12.1.4 lists exactly these. MUTATION: drop one -> it reads as an
+    unknown word (E_SCHEMA) -> red."""
+    assert uplink.EXCLUDED_TYPES == {"teleop", "teach", "ptz", "payload",
+                                     "voice_text", "mode", "config", "fence"}
+    assert not (uplink.EXCLUDED_TYPES & uplink.UPSTREAM_TYPES)
+
+
+def test_ack_carries_retry_message_and_server_ts():
+    """11 S12.1.4 ack shape (2026-11-12). retry from the code's S13.2 class,
+    overridable where the table pins another; message from the registry, cut
+    before engineering notes. MUTATION: no retry -> red; conditional mapped to
+    backoff -> a client hammers a resource that needs a condition -> red; the
+    override ignored -> red."""
+    from xbrain.common.errors import E_TIMEOUT
+    ok = uplink.ack_frame("r", "geo", "accepted")
+    assert ok["retry"] == "never" and ok["message"] == "成功"
+    assert isinstance(ok["server_ts"], float) and ok["server_ts"] > 1.7e9
+    assert uplink.ack_frame("r", "geo", "rejected", E_SCHEMA)["retry"] == "never"
+    assert uplink.ack_frame("r", "geo", "rejected", E_BUSY)["retry"] == "after_condition"
+    t = uplink.ack_frame("r", "geo", "error", E_TIMEOUT, retry="backoff")
+    assert t["retry"] == "backoff" and t["message"] == "超时"
+
+
+def test_a_missing_downstream_ack_becomes_e_timeout_after_2_s():
+    """11 S12.1.4: no cmd/*/ack within 2 s -> P5 answers error / E_TIMEOUT /
+    backoff itself, detail.item downstream_ack. Until 2026-11-12 the request
+    waited for ever and the HMI button stayed disabled. MUTATION: drop the
+    timeout branch -> no ack ever -> red."""
+    from xbrain.common.errors import E_TIMEOUT
+    provider = _Provider(ack=None)  # the downstream never answers
+    with _client(provider).websocket_connect("/ws") as ws:
+        ws.send_json(_geo_frame())
+        ack = _recv_ack(ws, tries=200)  # 20 Hz pushes: up to 10 s
+    assert provider.sent  # it was forwarded
+    assert (ack["result"], ack["code"], ack["retry"]) == ("error", E_TIMEOUT, "backoff")
+    assert ack["req_id"] == "r-1" and ack["detail"]["item"] == "downstream_ack"
 
 
 def test_provider_without_the_uplink_seam_refuses_instead_of_failing():

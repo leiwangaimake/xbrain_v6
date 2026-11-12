@@ -144,6 +144,9 @@ CLOCK_STALE_AFTER_MS = 5000
 # user design 2026-11-12). Was 50, which held under two minutes of the 2 s
 # low-battery alarm. Kept as a name here for readers of this file.
 EVENT_RING = 200
+# Downstream acks waiting to be collected by a WS reader (uplink_acks). Far
+# above the 10 msg/s per-connection uplink limit times the 2 s ack window.
+UPLINK_ACKS_KEEP = 256
 DEFAULT_RTT_DEGRADE_MS = 200             # hmi.link_rtt_degrade_ms fallback (probe, not safety)
 DEFAULT_DOWN_MISSES = 3                   # hmi.link_down_misses fallback (17 S6.3)
 
@@ -1558,7 +1561,13 @@ def run_voice_loop_wiring(stop_flag: dict,
                 # stamped, so one bus key serves every origin without P5
                 # claiming acks that belong to another sender.
                 return
-            hmi_state.setdefault("uplink_acks", {})[cmd_id] = body
+            acks = hmi_state.setdefault("uplink_acks", {})
+            acks[cmd_id] = body
+            # An ack nobody collects any more (its request timed out at 2 s,
+            # 11 S12.1.4, or its tab closed) would stay for good; keep the
+            # newest UPLINK_ACKS_KEEP. Dicts keep insertion order.
+            while len(acks) > UPLINK_ACKS_KEEP:
+                acks.pop(next(iter(acks)))
 
         geo_ack_sub = gen.declare_subscriber(CMD_GEO_ACK_TOPIC, _on_uplink_ack)
         # W2/W7 answers. The SAME handler: an ack is routed by the "h-" cmd_id

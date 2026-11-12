@@ -51,7 +51,7 @@ from typing import Any, Callable, Dict, List, Optional, Protocol, Tuple
 
 from starlette.websockets import WebSocket, WebSocketDisconnect
 
-from xbrain.common.errors import E_INTERNAL, E_SCHEMA
+from xbrain.common.errors import E_INTERNAL, E_SCHEMA, E_TIMEOUT
 from xbrain.p5_gateway.hmi import data_readers, uplink
 from xbrain.p5_gateway.hmi.ui_config import build_ui_config
 from xbrain.p5_gateway.hmi.ws_protocol import RateLimitBucket
@@ -315,6 +315,15 @@ async def _uplink_reader(websocket, provider, bucket, pending,
                 None, "<invalid>", "rejected", E_SCHEMA,
                 {"reason": "frame is not JSON"}))
             continue
+        # 11 S12.1.4: an excluded-zone type is a deliberate "never on this
+        # channel" (E_CHANNEL_DENIED), not a malformed frame -- checked before
+        # the whitelist parse, which would call it an unknown type (E_SCHEMA).
+        if isinstance(msg, dict) and msg.get("type") in uplink.EXCLUDED_TYPES:
+            ref = uplink.channel_denied(str(msg.get("type")))
+            await websocket.send_json(uplink.ack_frame(
+                str(msg.get("req_id") or "") or None, str(msg.get("type")),
+                "rejected", ref.code, ref.detail))
+            continue
         try:
             env = uplink.parse_envelope(msg)
         except ValueError as exc:
@@ -362,9 +371,10 @@ async def _uplink_reader(websocket, provider, bucket, pending,
             continue
         sender(built.key, built.payload)
         # Answered later, when P3's cmd/geo/ack comes back through the poll in
-        # the send loop. Recorded as pending so a lost ack is visible as a
-        # request still waiting, rather than as one that was never sent.
-        pending[req_id] = req_type
+        # the send loop. Recorded as pending (with when it was sent) so a lost
+        # ack becomes the S12.1.4 E_TIMEOUT after 2 s instead of a button that
+        # stays disabled until the socket drops.
+        pending[req_id] = (req_type, _time.monotonic())
 
 
 def build_app(
@@ -627,7 +637,7 @@ def build_app(
             capacity=UPLINK_BURST, tokens=UPLINK_BURST,
             fill_rate_per_ms=UPLINK_RATE_PER_S / 1000.0,
             last_refill_ms=int(time.monotonic() * 1000))
-        pending: Dict[str, str] = {}          # req_id -> req_type
+        pending: Dict[str, Tuple[str, float]] = {}  # req_id -> (req_type, sent mono s)
         # The receive side runs as its own task: the send loop below sleeps
         # between pushes, and awaiting a frame inside it would stall the
         # snapshot stream for as long as the operator is not clicking.
@@ -676,9 +686,20 @@ def build_app(
                     if taker is not None:
                         ack = taker(req_id)
                     if ack is None:
+                        req_type, sent = pending[req_id]
+                        if time.monotonic() - sent >= uplink.DOWNSTREAM_ACK_TIMEOUT_S:
+                            # 11 S12.1.4: no downstream ack in 2 s -> P5 answers
+                            # error / E_TIMEOUT / backoff itself (2026-11-12;
+                            # until then the request waited for ever).
+                            pending.pop(req_id)
+                            await websocket.send_json(uplink.ack_frame(
+                                req_id, req_type, "error", E_TIMEOUT,
+                                uplink.downstream_timeout(req_type), retry="backoff"))
                         continue
+                    # A downstream ack is passed through unchanged (S12.1.4:
+                    # P5 must not rewrite it); retry follows its code's class.
                     await websocket.send_json(uplink.ack_frame(
-                        req_id, pending.pop(req_id),
+                        req_id, pending.pop(req_id)[0],
                         ack.get("result", "rejected"), ack.get("code", "OK"),
                         ack.get("detail")))
                 ticks += 1
