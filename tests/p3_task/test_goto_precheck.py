@@ -19,7 +19,7 @@ from __future__ import annotations
 import aiosqlite
 import pytest
 
-from xbrain.common.errors import E_DEGRADED, E_NOT_FOUND, E_OUT_OF_FENCE
+from xbrain.common.errors import E_BUSY, E_DEGRADED, E_NOT_FOUND, E_OUT_OF_FENCE
 from xbrain.p3_task.dao.tasks_dao import TasksDAO
 from xbrain.p3_task.ingest.goto_precheck import fence_refusal, hmi_goto_refusal
 from xbrain.p3_task.ingest.task_apply import TaskContext, handle_task_payload
@@ -180,5 +180,48 @@ async def test_an_hmi_goto_that_passes_is_stored_with_its_command_text():
         assert ack["result"] == "accepted" and ack["detail"]["task_id"]
         cur = await conn.execute("SELECT command_text FROM tasks")
         assert (await cur.fetchone())[0] == "HMI 点击前往 关键点 1号测试点"
+    finally:
+        await conn.close()
+
+
+
+# -- 99 U173 (user ruling 2026-11-12, HMI-11): an HMI goto never interrupts ---
+async def _with_running(conn):
+    """A voice goto already running (the robot is navigating)."""
+    from tests.p3_task.live_loop import goto_row  # noqa: PLC0415
+    await TasksDAO(conn).insert(goto_row("t-run", "running", 1, priority=40))
+    await conn.commit()
+
+
+@pytest.mark.asyncio
+async def test_an_hmi_goto_while_a_task_runs_is_refused_busy():
+    """Measured 2026-11-10: clicks queued behind the running task and ran one
+    after another. MUTATION: drop the running check -> accepted, queued -> red."""
+    async def allow(_task):
+        return None
+    conn, ctx = await _ctx(allow)
+    try:
+        await _with_running(conn)
+        ack = await handle_task_payload(_submit("hmi", waypoint_id="w-1"),
+                                        ctx, now_mono_ms=1, date_str="20261112")
+        assert ack["result"] == "rejected" and ack["code"] == E_BUSY
+        assert ack["detail"] == {"reason": "task_running", "task_id": "t-run"}
+        assert await _count(conn) == 1  # nothing queued behind it
+    finally:
+        await conn.close()
+
+
+@pytest.mark.asyncio
+async def test_a_voice_goto_while_a_task_runs_still_queues():
+    """Only the HMI click is refused. MUTATION: drop `source == "hmi"` -> the
+    voice goto is refused too -> red."""
+    async def allow(_task):
+        return None
+    conn, ctx = await _ctx(allow)
+    try:
+        await _with_running(conn)
+        ack = await handle_task_payload(_submit("voice", waypoint_id="w-1"),
+                                        ctx, now_mono_ms=1, date_str="20261112")
+        assert ack["result"] == "accepted" and await _count(conn) == 2
     finally:
         await conn.close()

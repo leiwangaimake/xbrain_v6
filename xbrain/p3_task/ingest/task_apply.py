@@ -276,6 +276,22 @@ async def _submit(cmd: TaskCommand, ctx: TaskContext, now_mono_ms: int,
         # while a recording runs -- the robot is the operator's keyboard's.
         raise TaskCommandError(E_BUSY, "a recording session is active",
                                {"reason": "teach_session_active"})
+    if (cmd.source == "hmi" and isinstance(cmd.task, dict)
+            and cmd.task.get("type") == "goto"):
+        # 99 U173 (user ruling 2026-11-12, HMI-11): an HMI click-to-goto never
+        # interrupts the task being run, and is not queued behind it either --
+        # measured 2026-11-10: queued clicks ran one after another (FIFO) and the
+        # robot drove to targets tapped minutes earlier. Something more urgent:
+        # the operator soft-estops (the running task is suspended) and taps the
+        # target again. HMI and voice share priority 40 < cloud 80 (15 S4.2), so
+        # a cloud job still preempts an HMI goto.
+        cur = await ctx.task_conn.execute(
+            "SELECT task_id FROM tasks WHERE state='running' LIMIT 1")
+        busy = await cur.fetchone()
+        if busy is not None:
+            raise TaskCommandError(
+                E_BUSY, "a task is running; an HMI goto does not interrupt it",
+                {"reason": "task_running", "task_id": busy[0]})
     if (ctx.goto_precheck is not None and cmd.source == "hmi"
             and isinstance(cmd.task, dict) and cmd.task.get("type") == "goto"):
         # 11 S12.1.2 W2: positioning failed / keypoint missing / target outside
