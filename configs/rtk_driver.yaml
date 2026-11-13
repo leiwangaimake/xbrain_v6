@@ -24,7 +24,10 @@ heading_stddev_deg: 1.0      # L1 heading 1sigma. ~0.35 m baseline bench ~1 deg;
                              # a config value until UNIHEADINGA per-solution cov is parsed
 gga_timeout_s: 1.0           # a GGA older than this -> fix stale (fix_is_lost)
 tra_timeout_s: 1.0           # a TRA older than this -> no dual-antenna heading
-rmc_timeout_s: 1.0           # an RMC older than this -> no COG
+rmc_timeout_s: 0.3           # an RMC older than this -> no COG. 99 U189 (2), user 2026-11-13:
+                             # was 1.0 -- before a UM982 USB drop the data freezes for up to ~1 s and
+                             # the frozen COG stayed valid while the robot turned; 0.3 s = 6 frames
+                             # at 20 Hz, normal RMC gaps stay under it. Stale -> P1 IMU bridge.
 sync_timeout_ms: 5000        # CLK-A3 envelope ts_sync fail-safe window (T-11 = 5 s)
 resolver:                    # 11 S3.3.1/S3.3.3 thresholds -- engineering defaults, T7-pending
   cov_thresh_rad: 0.02       # L1 admission: cov_rad <= this (~1.15 deg)
