@@ -149,8 +149,17 @@ ResolveResult HeadingResolver::update(const HeadingInputs& in, double now_s) {
   bool use_dual = false;
   bool use_cog = false;
   if (level_ == 1) {
-    use_dual = l1_ok || !cog_live;   // L1 as before unless COG can take over now
-    use_cog = !use_dual;
+    // 99 U189 (user ruling 2026-11-13): only a dual heading that passes L1
+    // admission is ever emitted. ~~use_dual = l1_ok || !cog_live~~ (U151,
+    // 2026-11-06 ~ 2026-11-13) kept the receiver heading VALID through the
+    // 0.5 s degrade dwell whenever COG was not live, and a heading reported
+    // with a failed baseline (TRA quality != NARROW_INT) can be anything:
+    // on 2026-11-13 one was 84 deg off during a slow turn, and P1's IMU
+    // bridge anchored on it and ran 74 deg wrong for 3.5 s. With neither
+    // source usable the tick now falls to the invalid
+    // shapes below, and P1 bridges from its last trusted heading.
+    use_dual = l1_ok;
+    use_cog = !l1_ok && cog_live;    // COG takes over at once when it is live
   } else if (level_ == 2) {
     use_cog = !l2_blind_;            // L2-active: COG
     use_dual = l2_blind_ && l1_ok;   // L2-blind: the dual antenna if usable now
@@ -181,7 +190,11 @@ ResolveResult HeadingResolver::update(const HeadingInputs& in, double now_s) {
     h.age_s = 0.0;
     last_valid_heading_rad_ = h.heading_rad;
     last_valid_mono_s_ = now_s;
-  } else if (level_ == 2) {
+  } else if (level_ == 2 || (level_ == 1 && !in.fix_is_lost)) {
+    // 99 U189: inside the L1 degrade dwell with no usable source and a fix
+    // that can COG, this is the L2-blind answer the dwell would give 0.5 s
+    // later anyway -- emitted now instead of a failed-baseline heading. It is
+    // NOT L1-shaped: P3's dock capture checks heading_level == 1.
     // L2-blind and no dual antenna: COG undefined at low speed -> heading_valid
     // FALSE, but stay level 2 and do NOT fire rtk_lost (11 S3.3.1 blind note).
     // Hold the last valid heading (H-2: heading_rad may carry the last known

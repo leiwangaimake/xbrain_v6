@@ -244,6 +244,52 @@ static void test_failed_baseline_falls_to_a_live_cog_at_once() {
   CHECK(!res.heading.yaw_capable);
 }
 
+// 99 U189: in L1, a failed baseline with COG NOT live (slow / turning on the
+// spot) must not leave the receiver heading valid for the 0.5 s dwell -- that
+// heading is garbage (2026-11-13: 84 deg off, and P1's bridge anchored on it).
+// The tick answers the L2-blind shape at once, holding the last VALID heading,
+// and the level dwell itself is unchanged. Mutation: the U151 line
+// use_dual = l1_ok || !cog_live -> valid dual_antenna at 30 deg -> red.
+static void test_failed_baseline_without_cog_is_invalid_at_once() {
+  HeadingResolver r(cfg());
+  double now = 0.0;
+  drive(r, l1_good(), now, 2.5, 0.1);             // L1 at 90 deg true (ENU 0)
+  HeadingInputs bad = l1_good();                  // receiver still reports a heading
+  bad.baseline_valid = false;                     // ... with a failed baseline
+  bad.heading_true_deg = 30.0;                    // ... that is wrong
+  bad.speed_mps = 0.2;                            // slow: COG not live
+  ResolveResult res = r.update(bad, now); now += 0.1;
+  CHECK(r.level() == 1);                          // the degrade dwell still runs
+  CHECK(!res.heading.heading_valid);              // never valid on a failed baseline
+  CHECK(res.heading.level == 2);                  // NOT L1-shaped (P3 dock capture
+  CHECK(res.heading.source == "cog");             //   checks heading_level == 1)
+  CHECK(!res.heading.yaw_capable);
+  CHECK(near(res.heading.heading_rad, 0.0, 1e-9));  // held last valid, not 30 deg
+  // A covariance failure is the same L1 admission failure (baseline fine).
+  HeadingResolver r2(cfg());
+  double now2 = 0.0;
+  drive(r2, l1_good(), now2, 2.5, 0.1);
+  HeadingInputs noisy = l1_good();
+  noisy.heading_cov_rad = 0.5; noisy.speed_mps = 0.2;
+  res = r2.update(noisy, now2);
+  CHECK(!res.heading.heading_valid);
+}
+
+// 99 U189: the same tick with the fix lost answers the L3 shape, not L2-blind
+// (the dwell would end in L3 dual_antenna_fail). Mutation: drop the
+// !fix_is_lost guard -> source "cog" at level 2 on a lost fix -> red.
+static void test_failed_baseline_on_a_lost_fix_is_l3_shaped() {
+  HeadingResolver r(cfg());
+  double now = 0.0;
+  drive(r, l1_good(), now, 2.5, 0.1);
+  HeadingInputs bad = l1_good();
+  bad.baseline_valid = false; bad.fix_is_lost = true; bad.speed_mps = 0.2;
+  ResolveResult res = r.update(bad, now);
+  CHECK(r.level() == 1);
+  CHECK(!res.heading.heading_valid);
+  CHECK(res.heading.level == 3 && res.heading.source == "none");
+}
+
 static void test_both_usable_keeps_the_level_preference() {
   // L2 active and the dual antenna usable again: COG until the 2 s recover
   // dwell promotes to L1, then dual antenna (preferred once stable). Mutation:
@@ -271,6 +317,8 @@ int main() {
   test_anti_chatter_dwell();
   test_cog_blind_falls_to_a_usable_dual_antenna_at_once();
   test_failed_baseline_falls_to_a_live_cog_at_once();
+  test_failed_baseline_without_cog_is_invalid_at_once();
+  test_failed_baseline_on_a_lost_fix_is_l3_shaped();
   test_both_usable_keeps_the_level_preference();
   if (g_failures == 0) {
     std::printf("ALL HEADING RESOLVER TESTS PASSED\n");
