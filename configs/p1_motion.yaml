@@ -84,6 +84,13 @@ fence:                                # 12 S7 clipping constants (fence/clip.py)
     rtk_float: ${common.fence.margin_by_fix.rtk_float}    #   no inset there (B6, fence_eval unavailable)
     dgps: ${common.fence.margin_by_fix.dgps}              # 99 U142: dgps now drives, so it is judged with its inset
   projection_iters: 3                                     # 11 S9A.8 POCS rounds (p1 private, 11 S9A.12)
+  # 99 U186 (用户 2026-11-13): 活动区域 / 禁止区域撞线 (到达有效边界被拦停) 持续播报
+  # 并上报事件, 直到撞线消失. contact_repeat_s = 持续期间每隔几秒重复一次 (用户定默认 3 s,
+  # 可配); 离开边界 contact_release_m 米, 或连续 contact_release_s 秒不再撞线, 才算消失
+  # (迟滞, 免得在线上来回跳). 缺失 / null / <= 0 时 p1 拒绝启动.
+  contact_repeat_s: 3.0
+  contact_release_m: 0.5
+  contact_release_s: 2.0
 # ===========================================================================
 # 旋转许可 (12 S6A) -- 落地 11 S10.3.2 R-3. 本段全部键属[安全参数], 不支持热更新
 # (CFG-31). 本段[没有] enabled 开关 -- 裁决 RC-D7: 一个 enabled:false 就是一条
