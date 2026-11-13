@@ -217,8 +217,8 @@ def test_any_customer_fence_set_survives_the_whole_chain(
     # on_unusable 直接 fail: 本用例生成的每一行都是可广播的(限速区都带了值),
     # 所以任何丢弃都说明链路在拒绝一个合法集 -- 把它变成失败而不是静默少一个
     # 多边形, 否则下面的计数断言会用一个"少一个"的集去比, 失败归因就跑偏了.
+    # 99 U193: the set carries no origin; P1 projects in its own frame (below)
     fs = build_fence_set(rows, fence_set_id="fs-gen", rev=3,
-                         enu_origin={"lat": lat0, "lon": lon0, "alt": 0.0},
                          on_unusable=lambda pid, why: pytest.fail(
                              "a generated set should be broadcastable: %s %s"
                              % (pid, why)))
@@ -278,8 +278,8 @@ def test_any_customer_fence_set_survives_the_whole_chain(
         i = int(p.poly_id.split("-")[1])
         # 用与生成时同一个偏移反算环心. 这里重建 LocalFrame 而不复用上面的
         # cf: CompiledFence 只存 ENU 顶点, 不存投影器 -- 它是编译期的输入,
-        # 拍内只读几何(12 FS-1). 这正是"同一个 enu_origin 两处必须一致"的
-        # 那条要求(S9A.2: 每个进程用同一个原点投影, ENU 逐位一致).
+        # 拍内只读几何(12 FS-1). 投影原点是 P1 自己的 common.geo.enu_origin
+        # (99 U193 起 FenceSet 不带原点; ~~S9A.2: 每个进程用同一个原点投影~~).
         cxy = LocalFrame(lat0, lon0).to_xy(lat0 + 0.002 * i, lon0 + 0.002 * i)
         hit = boundary_hit(cxy[0], cxy[1], p)
         # 有限性先于符号: 一个 NaN 距离会让下游每个比较都返回 False,

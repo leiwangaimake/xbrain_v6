@@ -101,7 +101,6 @@ def _vertices(geom_json: str) -> List[Dict[str, float]]:
 
 
 def build_fence_set(active_rows: Sequence, *, fence_set_id: str, rev: int,
-                    enu_origin: Optional[Dict[str, float]] = None,
                     soft_margin_min_m: Optional[float] = None,
                     on_unusable: Optional[Callable[[str, str], None]] = None
                     ) -> Dict[str, Any]:
@@ -112,9 +111,16 @@ def build_fence_set(active_rows: Sequence, *, fence_set_id: str, rev: int,
 
     *** NOTHING here depends on what this robot's fence.db happens to hold.
     A fence set is whatever the customer recorded on THEIR site: any count
-    within FV-3, any role mix, any ring shape, anywhere on earth. The one
-    site-specific number in the whole chain is enu_origin, and that comes from
-    common.geo.enu_origin (config), not from a fence row.
+    within FV-3, any role mix, any ring shape, anywhere on earth: the vertices
+    are WGS84 and every consumer projects them in its own frame.
+    99 U193 (user ruling 2026-11-13, "系统删除用广播的围栏的正式原点, 不再使用"):
+    the set carries NO enu_origin. ~~The one site-specific number in the whole
+    chain is enu_origin, and that comes from common.geo.enu_origin (config)~~
+    (2026-09-02 ~ 2026-11-13): no consumer projected with it -- P1 reads
+    common.geo.enu_origin itself (nav_cfg frame_from_config), P2 judges in
+    local metres around the robot, and the HMI draws around the robot's GPS
+    fix (99 U192) -- while P5 adopting it put the whole map ~10 km off-screen
+    on this robot (the sim placeholder of configs/sites/sim.yaml).
 
     on_unusable(poly_id, reason) is called for a stored row that cannot be put
     on the wire; that polygon is DROPPED and the rest of the set still goes
@@ -190,7 +196,7 @@ def build_fence_set(active_rows: Sequence, *, fence_set_id: str, rev: int,
         "fence_set_id": fence_set_id,
         "rev": rev,
         "crc32": fence_set_crc32(fence_set_id, rev, polygons),
-        "enu_origin": enu_origin,
+        # ~~"enu_origin": enu_origin~~ removed 2026-11-13 (99 U193, docstring)
         "soft_margin_min_m": soft_margin_min_m,
         "polygons": polygons,
     }

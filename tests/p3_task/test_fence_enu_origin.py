@@ -3,157 +3,84 @@ Copyright (c) 2026 Hachist Robotics
 Author: wanglei@hachist.com
 上海哈船智能船舶技术有限公司
 File: test_fence_enu_origin.py
-Brief: FenceSet 的 enu_origin 必须随发布带上 (11 S9A.2 必填字段)
+Brief: 99 U193 -- the cmd/fence FenceSet carries NO enu_origin; P3 never sends it, P5 never reads it
 
 Description:
-守 2026-09-02 补的接线. 缺陷原样: build_fence_set 早就有 enu_origin 形参,
-configs 也早就声明了 common.geo.enu_origin(带 FV-ORG-1/2/3 三条启动断言),
-L4 sites/{site_id}.yaml 也是唯一定义处 -- 但 p3 的两个调用点都没传, 形参取默认
-None, 于是 cmd/fence 上这个[必填]字段恒为 null.
+User ruling 2026-11-13: "系统删除用广播的围栏的正式原点, 不再使用. HMI 显示原点
+永远用有效机器人 GPS 定位作为原点" (99 U193, after U192).
 
-*** 后果不是"少一个字段".
-11 S9A.2 逐字: enu_origin 是"本地 ENU 平面的锚点, 全系统唯一". 没有它:
-  - HMI 拿不到投影原点, 围栏/路径几何数据齐全却一个图元都画不出来;
-  - 11 FV-7(所有顶点距 enu_origin <= 20km, 超出 E_SCHEMA)连判据都无从谈起 --
-    该校验至今未实现, 因为它依赖的值一直是 null.
+~~守 2026-09-02 补的接线: FenceSet 的 enu_origin 是 11 S9A.2 必填字段, p3
+必须从 common.geo.enu_origin 读出并随发布带上, p5 从 cmd/fence 采纳它为权威原点~~
+(2026-09-02 ~ 2026-11-13). Why that no longer holds: no consumer projected
+fences with it (P1 reads common.geo.enu_origin itself, P2 judges in metres
+around the robot), and P5 adopting it drew the whole HMI map ~10 km away on
+this robot, whose common.geo.enu_origin is the sim placeholder of
+configs/sites/sim.yaml -- once U183 made P3 send it with every FenceSet.
+The display origin is the robot's GPS fix (99 U192, test_display_origin.py).
 
-*** 为什么这个洞能活这么久.
-默认值是 None 而不是抛错, 所以"没接线"与"配置里没值"表现完全一样, 都是
-安静地发一个 null. 而在没有场地标定的开发环境里, 后者本来就是预期状态
-(sites/ 下只有 _skeleton.yaml) -- 于是缺陷被合理现象完美掩盖.
-
-Boundaries: 只测[传没传]与[传对没传对]. NO 不测 enu_origin 的取值是否正确
-(那是现场标定的事), 也不测 FV-7(独立一批).
+Each case names the mutant it kills.
 """
-from __future__ import annotations
+from __future__ import annotations  # postponed annotations
 
-import pytest
+import inspect  # signature check
+import pathlib  # source checks
 
-from xbrain.p3_task.fence.fence_set import build_fence_set
+import pytest  # marker
 
-pytestmark = pytest.mark.no_device
+from xbrain.p3_task.fence.fence_set import build_fence_set  # under test
 
-#: FencesDAO.list_active() 的行形状: (fence_id, name, role, kind, geom_json,
-#: hard_enforce, rev, priority, speed_limit_mps). 只放一个 allow -- FV-3 要求
-#: 恰好一个. 尾两列是 11 S9A.2 v0.3 字段: priority 取中性 0, speed_limit_mps
-#: 对 allow 必须是 None(FV-13 反向).
+pytestmark = pytest.mark.no_device  # pure logic + source checks
+
+_ROOT = pathlib.Path(__file__).resolve().parents[2]  # repo root
+
+#: FencesDAO.list_active() row shape: (fence_id, name, role, kind, geom_json,
+#: hard_enforce, rev, priority, speed_limit_mps); one activity area
 _ROWS = [("f-a", "活动区", "allow", "polygon",
           '{"points": [[31.24, 121.45], [31.25, 121.46], [31.23, 121.47]]}',
           1, 1, 0, None)]
-_ORIGIN = {"lat": 31.2304, "lon": 121.4737, "alt": 4.0}
 
 
-def test_enu_origin_is_carried_into_the_fence_set():
-    """*** 传进去的原点必须原样出现在 FenceSet 里.
-
-    变异体: build_fence_set 里 "enu_origin": enu_origin 改成 None => 本条红.
-    """
-    fs = build_fence_set(_ROWS, fence_set_id="fs-active", rev=1,
-                         enu_origin=_ORIGIN)
-    assert fs["enu_origin"] == _ORIGIN, (
-        "enu_origin 没随 FenceSet 带出去, 实得 %r" % fs["enu_origin"])
+def _src(*parts):  # one source file's text
+    return (_ROOT.joinpath(*parts)).read_text(encoding="utf-8")  # utf-8 (Chinese comments)
 
 
-def test_enu_origin_absent_stays_none_not_a_fabricated_zero():
-    """*** 没传就是 None, NO 不能兜底成 0/0/0.
-
-    一个 {0,0,0} 的假原点会把所有围栏投影到几内亚湾外海(赤道与本初子午线的
-    交点), 而且[不报任何错] -- 操作员看到的是一张空地图或错得离谱的图元,
-    没有任何线索指向配置. 这正是 CLAUDE.md 3.1 那条"0.0 冒充已赋值".
-
-    变异体: 给 enu_origin 形参一个 {"lat":0,"lon":0,"alt":0} 默认值 => 本条红.
-    """
-    fs = build_fence_set(_ROWS, fence_set_id="fs-active", rev=1)
-    assert fs["enu_origin"] is None, (
-        "未标定时编了一个原点: %r" % fs["enu_origin"])
+def test_the_fence_set_has_no_origin_field():
+    """MUTATION: the "enu_origin" key put back (any value) -> red."""
+    fs = build_fence_set(_ROWS, fence_set_id="fs-active", rev=1)  # one set
+    assert "enu_origin" not in fs  # not null: absent
+    assert set(fs) == {"fence_set_id", "rev", "crc32", "soft_margin_min_m", "polygons"}
 
 
-def test_p3_wiring_passes_enu_origin_to_the_published_fence_set():
-    """*** 守接线那一半: 发布路径必须把 enu_origin 传下去.
-
-    上面两条只证明 build_fence_set 会带; 但缺陷本体在[调用点没传]. 两个文件
-    各自都"对", 合起来是错的 -- 与 2026-09-01 那次 mic streaming 信号同一形状.
-    静态查 wiring 源码(与 test_cloud_key_surface_wired 同一手法).
-
-    变异体: 把发布调用点的 enu_origin=enu_origin 删掉 => 本条红.
-    """
-    import pathlib
-    src = (pathlib.Path(__file__).resolve().parents[2]
-           / "xbrain" / "p3_task" / "runtime" / "main_wiring.py").read_text(
-               encoding="utf-8")
-    assert "enu_origin=enu_origin" in src, (
-        "p3 的 build_fence_set 发布调用点没有传 enu_origin -- "
-        "cmd/fence 上该必填字段会恒为 null")
-    assert "enu_origin: Optional[Dict[str, float]] = None" in src, (
-        "_amain / run_voice_loop_wiring 没有接收 enu_origin 的形参")
+def test_build_fence_set_takes_no_origin():
+    """The parameter is gone, so no caller can feed one back in.
+    MUTATION: the enu_origin parameter restored -> red."""
+    assert "enu_origin" not in inspect.signature(build_fence_set).parameters
 
 
-def test_main_reads_enu_origin_from_the_resolved_config():
-    """*** 守另一半: __main__ 必须从解析产物里取值, 而不是就地写死.
-
-    11 第 7815 行逐字"各进程不得各自选原点", 单一来源是 L4 场地层. 在 p3 里
-    写一个坐标常量会让换场地时这台车用旧原点 -- 而且不会有任何报错.
-
-    变异体: 把 _cfg.get("geo") 换成一个字面量 dict => 本条红.
-    """
-    import pathlib
-    src = (pathlib.Path(__file__).resolve().parents[2]
-           / "xbrain" / "p3_task" / "__main__.py").read_text(encoding="utf-8")
-    assert '_geo.get("enu_origin")' in src, (
-        "__main__ 没有从解析产物读 enu_origin")
-    assert "enu_origin=_enu" in src, "读了但没往下传"
+def test_p3_neither_reads_nor_passes_the_origin():
+    """__main__ no longer reads common.geo.enu_origin for P3, and the wiring
+    has no origin parameter. MUTATION: the old read / pass-through restored
+    -> red."""
+    main = _src("xbrain", "p3_task", "__main__.py")  # entry point
+    wiring = _src("xbrain", "p3_task", "runtime", "main_wiring.py")  # wiring
+    assert '_geo.get("enu_origin")' not in main and "enu_origin=_enu" not in main
+    assert "enu_origin=enu_origin" not in wiring  # no call site passes it
+    assert "enu_origin: Optional[Dict[str, float]] = None" not in wiring  # no parameter
 
 
-# --- p5 侧: 权威原点必须被采纳且优先于兜底 ---------------------------
-
-def test_p5_reads_the_cmd_fence_origin_but_does_not_draw_around_it():
-    """*** 99 U192 (2026-11-13) 起: p5 仍从 cmd/fence 读 enu_origin(只记日志),
-    HMI 不再以它为显示原点. ~~p5 必须从 cmd/fence 取权威 enu_origin, 而不是只认
-    首次定位~~ (2026-08 ~ 2026-11-13, 下面是当时的理由, 留作对账).
-
-    p5 原来只有一条"首次 GPS 定位当原点"的兜底路(W4 待办), 它的注释自己写着
-    "The authoritative origin is common.geo.enu_origin" -- 但代码从不读它.
-    p3 那半修好之后, 权威值已经躺在 cmd/fence 里, p5 却看不见, HMI 的
-    enu_origin 仍是 null, 地图照样画不出来. 两个文件各自都"对", 合起来是错的.
-
-    变异体: 删掉 _on_cmd_fence 里的 enu_origin 采纳块 => 本条红.
-    """
-    import pathlib
-    src = (pathlib.Path(__file__).resolve().parents[2]
-           / "xbrain" / "p5_gateway" / "runtime" / "main_wiring.py").read_text(
-               encoding="utf-8")
-    # 99 U192 (user ruling 2026-11-13): the HMI no longer DRAWS around this
-    # origin -- it is the sim placeholder on this robot and pushed the whole
-    # map ~10 km off-screen. p5 still reads it from cmd/fence (kept for the
-    # log); ~~marked authoritative, overriding the first fix~~ is gone.
-    assert 'eo = d.get("enu_origin")' in src, (
-        "p5 的 _on_cmd_fence 没有从 FenceSet 取 enu_origin")
-    assert 'hmi_state["config_enu_origin"] = {' in src, "取了但没留下(日志用)"
-    assert 'hmi_state["enu_origin_authoritative"] = True' not in src, (
-        "99 U192: cmd/fence 的原点不得再顶掉 HMI 的 GPS 显示原点")
+def test_p5_reads_no_origin_from_cmd_fence():
+    """P5's cmd/fence handler takes no origin, and the U192 log-only copy is
+    gone. MUTATION: d.get("enu_origin") or config_enu_origin restored -> red."""
+    src = _src("xbrain", "p5_gateway", "runtime", "main_wiring.py")  # P5 wiring
+    assert 'd.get("enu_origin")' not in src  # the cmd/fence handler reads none
+    assert 'hmi_state["config_enu_origin"]' not in src  # no state written
+    assert '"config_enu_origin": None,' not in src  # no state key declared
+    assert 'hmi_state["enu_origin_authoritative"] = True' not in src  # U192 still holds
 
 
-def test_the_gps_display_origin_is_not_gated_by_the_cmd_fence_origin():
-    """*** 99 U192 (2026-11-13) 起: HMI 显示原点 = 机器人当前 GPS 定位, 不让位.
-    ~~优先级不能反: 配置里的测绘锚点 > 首次定位兜底~~ (2026-08 ~ 2026-11-13;
-    本机的"测绘锚点"其实是 sites/sim.yaml 的仿真占位值, 离场地约 10 km).
-
-    写反的后果很隐蔽: 先开机(拿到 GPS 首次定位)再配围栏的顺序下, 系统会一直
-    用那个跟着开机位置漂移的兜底原点, 而权威值明明已经到了. 地图上所有图元
-    整体偏移, 但每个图元的相对关系都对 -- 看起来"只是没对齐", 没人会想到是
-    原点选错了.
-
-    变异体: 兜底那个 if 去掉 not ..._authoritative 条件 => 本条红.
-    """
-    import pathlib
-    src = (pathlib.Path(__file__).resolve().parents[2]
-           / "xbrain" / "p5_gateway" / "runtime" / "main_wiring.py").read_text(
-               encoding="utf-8")
-    # 99 U192 (user ruling 2026-11-13) reversed this priority for the HMI:
-    # the display origin is the robot's own GPS fix and nothing outranks it.
-    # ~~the first-fix fallback yields to the authoritative origin~~
-    # (2026-08 ~ 2026-11-13). MUTATION now: gate the GPS origin on the
-    # cmd/fence flag again -> red.
-    assert 'and not hmi_state.get("enu_origin_authoritative")' not in src, (
-        "99 U192: GPS 显示原点不得再让位于 cmd/fence 的配置原点")
-    assert "o = origin_from_pose(hmi_state[\"pose\"])" in src, "GPS 原点没接上"
+def test_the_gps_display_origin_stays_the_only_origin():
+    """99 U192 unchanged: the HMI origin comes from state/pose only.
+    MUTATION: the GPS adoption removed -> red."""
+    src = _src("xbrain", "p5_gateway", "runtime", "main_wiring.py")  # P5 wiring
+    assert 'o = origin_from_pose(hmi_state["pose"])' in src  # the one source
+    assert 'and not hmi_state.get("enu_origin_authoritative")' not in src  # not gated

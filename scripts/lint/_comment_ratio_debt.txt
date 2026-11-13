@@ -333,7 +333,6 @@ tests/p3_task/test_batch_d.py
 tests/p3_task/test_batch_e.py
 tests/p3_task/test_batch_f.py
 tests/p3_task/test_batch_g.py
-tests/p3_task/test_fence_enu_origin.py
 tests/p3_task/test_fence_set.py
 tests/p3_task/test_geo_command.py
 tests/p3_task/test_geo_commit.py

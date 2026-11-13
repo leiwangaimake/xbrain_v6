@@ -136,7 +136,6 @@ def run_voice_loop_wiring(stop_flag: dict,
                           task_db_path: str = DEFAULT_TASK_DB,
                           geo_db_path: str = DEFAULT_GEO_DB,
                           fence_db_path: str = DEFAULT_FENCE_DB,
-                          enu_origin: Optional[Dict[str, float]] = None,
                           teach_snap_max_age_ms: Optional[int] = None,
                           recorded_arrive_radius_m: Optional[float] = None,
                           route_membership_m: Optional[float] = None,
@@ -151,9 +150,9 @@ def run_voice_loop_wiring(stop_flag: dict,
                           low_battery: Optional[Dict[str, float]] = None) -> int:
     """Block until stop_flag['stop'] is truthy. Returns 0 on clean shutdown.
 
-    enu_origin 来自 common.geo.enu_origin(L4 sites/{site_id}.yaml), 由
-    __main__ 从解析产物取出后传入. 默认 None 保留是为了既有调用方(测试)不必
-    全部改签名 -- 但生产路径必须传, 否则 FenceSet 的必填字段为空(11 S9A.2).
+    ~~enu_origin 来自 common.geo.enu_origin, 由 __main__ 传入, 随 FenceSet
+    发出(11 S9A.2 必填字段)~~ -- 99 U193 (用户 2026-11-13) 起形参已删,
+    FenceSet 不再带原点.
 
     teach_snap_max_age_ms is p3_task.yaml teach.snap_max_age_ms (18 PS-6,
     99 U109). None (tests) leaves every snapshot-carrying capture refused.
@@ -199,7 +198,7 @@ def run_voice_loop_wiring(stop_flag: dict,
     """
     return asyncio.run(
         _amain(stop_flag, heartbeat_period_s, task_db_path, geo_db_path,
-               fence_db_path, enu_origin, teach_snap_max_age_ms,
+               fence_db_path, teach_snap_max_age_ms,
                recorded_arrive_radius_m, route_membership_m,
                teach_sample_hz=teach_sample_hz,
                teach_min_dist_m=teach_min_dist_m,
@@ -215,7 +214,6 @@ def run_voice_loop_wiring(stop_flag: dict,
 async def _amain(stop_flag: dict, heartbeat_period_s: float,
                  task_db_path: str, geo_db_path: str = DEFAULT_GEO_DB,
                  fence_db_path: str = DEFAULT_FENCE_DB,
-                 enu_origin: Optional[Dict[str, float]] = None,
                  teach_snap_max_age_ms: Optional[int] = None,
                  recorded_arrive_radius_m: Optional[float] = None,
                  route_membership_m: Optional[float] = None,
@@ -840,7 +838,6 @@ async def _amain(stop_flag: dict, heartbeat_period_s: float,
                     return None
                 try:
                     return build_fence_set(rows, fence_set_id=FENCE_SET_ID, rev=0,
-                                           enu_origin=enu_origin,
                                            on_unusable=lambda _pid, _r: None)
                 except InvalidFenceSet:
                     return None
@@ -2237,10 +2234,8 @@ async def _amain(stop_flag: dict, heartbeat_period_s: float,
                             rows = await fences_dao.list_active()
                             # rev=0 gives a rev-independent signature to detect change.
                             # crc32 只用于[变更检测], 不上总线: 传 rev=0 让
-                            # 签名与 rev 无关. enu_origin 同样不参与 -- 它不
-                            # 进 crc32 配方(11 S9A.2 的配方只含 polygons), 所以
-                            # 这里传不传都不影响比对结果; 不传是为了让"签名"
-                            # 这一步与"发布"那一步的意图区分得更清楚.
+                            # 签名与 rev 无关. (99 U193 起 FenceSet 不再带
+                            # enu_origin, 它本来也不进 crc32 配方.)
                             def _on_unusable(poly_id: str, reason: str) -> None:
                                 # 11 FV-13 等校验挡不住的[已存]坏行: 该多边形
                                 # 被丢出广播, 其余照发(见 build_fence_set).
@@ -2260,14 +2255,16 @@ async def _amain(stop_flag: dict, heartbeat_period_s: float,
                                 if last_fence_sig[0] is not None:
                                     fence_rev[0] += 1
                                 last_fence_sig[0] = sig
-                            # enu_origin 必须随发布带上(11 S9A.2 必填字段).
+                            # ~~enu_origin 必须随发布带上(11 S9A.2 必填字段)~~
+                            # 99 U193 (用户 2026-11-13): 广播不再带原点, 见
+                            # fence/fence_set.build_fence_set 头注.
                             # 第二次调用不再传 on_unusable: 同一批 rows 已在
                             # 上面的签名计算里报过一遍, 再传会让每拍记两条.
                             # 传 None 会落到模块 logger -- 所以给一个显式的
                             # no-op, 并写明为什么它是 no-op 而不是忘了传.
                             fs = build_fence_set(
                                 rows, fence_set_id=FENCE_SET_ID,
-                                rev=fence_rev[0], enu_origin=enu_origin,
+                                rev=fence_rev[0],
                                 on_unusable=lambda _pid, _r: None)
                             # 99 U187: the warning zones' autonomous-alarm
                             # settings (window / watched targets / siren) ride

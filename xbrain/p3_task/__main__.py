@@ -116,17 +116,13 @@ def main(argv: Optional[list] = None) -> int:
             DEFAULT_TASK_DB,
             run_voice_loop_wiring,
         )
-        # 11 S9A.2: FenceSet 的 enu_origin 是[必填]字段("本地 ENU 平面的锚点,
-        # 全系统唯一, 来自 common.geo.enu_origin"). 在此之前 p3 加载了配置却
-        # 只用来验证存在性, 没有任何值往下传, 于是 build_fence_set 的
-        # enu_origin 形参一直取默认 None, cmd/fence 上该字段恒为 null.
-        # 下游后果: HMI 拿不到投影锚点 -> 几何数据齐全却画不出来; 11 FV-7
-        # (顶点距原点 <= 20km) 连判据都无从谈起.
-        # NO 不在这里兜底成 0/0/0 -- 那是 CLAUDE.md 3.1 的 fail-silent 陷阱,
-        # 一个假原点会把所有围栏画到几千公里外而不报任何错. 配置缺失时传 None,
-        # 由既有的 FV-ORG 启动断言去拦.
-        _geo = (_cfg.get("geo") or {}) if hasattr(_cfg, "get") else {}
-        _enu = _geo.get("enu_origin") or None
+        # 99 U193 (用户 2026-11-13 "系统删除用广播的围栏的正式原点, 不再使用"):
+        # p3 不再读 common.geo.enu_origin, cmd/fence 不再带它. ~~11 S9A.2:
+        # FenceSet 的 enu_origin 是[必填]字段, 这里读出往下传给 build_fence_set~~
+        # (2026-09-02 ~ 2026-11-13). 没有消费方真用它投影: P1 自己读配置
+        # (nav_cfg), HMI 以机器人 GPS 定位为显示原点(99 U192); 而 P5 采纳它曾把
+        # 整张地图画到约 10 km 外. common.geo.enu_origin 仍是 P1 的局部坐标原点,
+        # FV-ORG 启动断言照旧.
         # 18 PS-6 (99 U109): the oldest pose_snap a keypoint capture accepts.
         # No fallback value here either: unset is passed as None and the
         # runtime refuses snapshot captures by name.
@@ -254,7 +250,6 @@ def main(argv: Optional[list] = None) -> int:
         return run_voice_loop_wiring(
             stop_flag=stop_flag,
             task_db_path=args.task_db or DEFAULT_TASK_DB,
-            enu_origin=_enu,
             teach_snap_max_age_ms=_teach.get("snap_max_age_ms"),
             recorded_arrive_radius_m=float(_radius),
             route_membership_m=float(_member),

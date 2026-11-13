@@ -23,7 +23,8 @@ what is in force; a consumer that wants "in force" reads state == 'active'.
 This module is the read + shape half (pure async against a live aiosqlite conn on
 P3's single db thread, 15 S2.1). v1.5 PLAN A: geometry is emitted in WGS84 as
 {lat, lon} (waypoints/routes are the 15 S9.3 model now); the frontend's toXY
-projects {lat,lon} through the shared enu_origin (11 S7.10A GO-1, {lat,lon} form).
+projects {lat,lon} through the HMI display origin -- the robot's GPS fix (99 U192;
+~~the shared enu_origin~~ is not on any broadcast since 99 U193) (11 S7.10A GO-1).
 Route points are emitted as {lat,lon} OBJECTS, never [a,b] arrays -- an array would
 be read as ENU metres by toXY and land the route in the wrong frame. A route's
 geometry is INLINE (routes.path_points mode B, or routes.waypoint_ids resolved to
