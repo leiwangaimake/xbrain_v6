@@ -33,7 +33,7 @@ def _wire(polys=None, fence_set_id="fs-active", rev=1):
                   "winding": "cw", "hard_enforce": False, "priority": 0, "vertices": _RING}]
     crc = fence_set_crc32(fence_set_id, rev, polys)
     return {"fence_set_id": fence_set_id, "rev": rev, "crc32": crc,
-            "enu_origin": None, "soft_margin_min_m": None, "polygons": polys}
+            "soft_margin_min_m": None, "polygons": polys}  # no enu_origin (99 U193)
 
 
 def test_a_valid_fence_set_compiles_and_holds():
@@ -153,7 +153,7 @@ def test_warning_hard_enforce_is_normalized_to_false():
               "winding": "cw", "hard_enforce": True, "priority": 0, "vertices": _RING}]
     crc = fence_set_crc32("fs-active", 1, polys)     # crc 用 wire 原值(含 true)
     wire = {"fence_set_id": "fs-active", "rev": 1, "crc32": crc,
-            "enu_origin": None, "soft_margin_min_m": None, "polygons": polys}
+            "soft_margin_min_m": None, "polygons": polys}  # no enu_origin (99 U193)
     held = compile_fence_set(wire)                   # crc 自洽 -> 接受
     assert held.warning_polygons()[0].hard_enforce is False, (
         "warning 的 hard_enforce 没归一化成 False -- 信了发送方(审计 #4)")
@@ -245,7 +245,7 @@ def _wire_nocrc(polys):
     用例在那之前就该抛了.
     """
     return {"fence_set_id": "fs-active", "rev": 1, "crc32": "00000000",
-            "enu_origin": None, "soft_margin_min_m": None, "polygons": polys}
+            "soft_margin_min_m": None, "polygons": polys}  # no enu_origin (99 U193)
 
 
 def test_speed_limit_polygon_is_held_with_its_limit_and_never_hard_enforces():

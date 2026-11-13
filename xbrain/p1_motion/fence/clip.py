@@ -272,9 +272,13 @@ class CompiledFence:
 
 
 def compile_fence(held: HeldFenceSet, frame: LocalFrame) -> CompiledFence:
-    """HeldFenceSet (WGS84 vertices) -> CompiledFence about the site frame
-    (11 S9A.2: enu_origin is common.geo.enu_origin, every process projects
-    with the same origin so ENU agrees to the bit).
+    """HeldFenceSet (WGS84 vertices) -> CompiledFence about the site frame.
+    The frame is P1's own, from its resolved common.geo.enu_origin (nav_cfg
+    frame_from_config) -- the FenceSet carries WGS84 only and, since 99 U193
+    (2026-11-13), no origin at all. ~~11 S9A.2: enu_origin is
+    common.geo.enu_origin, every process projects with the same origin so
+    ENU agrees to the bit~~: no other process projects fences with it (P2
+    judges in metres around the robot, the HMI around the robot's GPS fix).
 
     Three roles are compiled, into two tuples:
       * allow / forbid -> .polygons, the BOUNDARIES (project_halfspaces);
