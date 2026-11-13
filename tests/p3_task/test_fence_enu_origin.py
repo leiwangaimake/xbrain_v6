@@ -106,8 +106,10 @@ def test_main_reads_enu_origin_from_the_resolved_config():
 
 # --- p5 侧: 权威原点必须被采纳且优先于兜底 ---------------------------
 
-def test_p5_adopts_the_authoritative_origin_from_cmd_fence():
-    """*** p5 必须从 cmd/fence 取权威 enu_origin, 而不是只认首次定位.
+def test_p5_reads_the_cmd_fence_origin_but_does_not_draw_around_it():
+    """*** 99 U192 (2026-11-13) 起: p5 仍从 cmd/fence 读 enu_origin(只记日志),
+    HMI 不再以它为显示原点. ~~p5 必须从 cmd/fence 取权威 enu_origin, 而不是只认
+    首次定位~~ (2026-08 ~ 2026-11-13, 下面是当时的理由, 留作对账).
 
     p5 原来只有一条"首次 GPS 定位当原点"的兜底路(W4 待办), 它的注释自己写着
     "The authoritative origin is common.geo.enu_origin" -- 但代码从不读它.
@@ -120,14 +122,21 @@ def test_p5_adopts_the_authoritative_origin_from_cmd_fence():
     src = (pathlib.Path(__file__).resolve().parents[2]
            / "xbrain" / "p5_gateway" / "runtime" / "main_wiring.py").read_text(
                encoding="utf-8")
+    # 99 U192 (user ruling 2026-11-13): the HMI no longer DRAWS around this
+    # origin -- it is the sim placeholder on this robot and pushed the whole
+    # map ~10 km off-screen. p5 still reads it from cmd/fence (kept for the
+    # log); ~~marked authoritative, overriding the first fix~~ is gone.
     assert 'eo = d.get("enu_origin")' in src, (
         "p5 的 _on_cmd_fence 没有从 FenceSet 取 enu_origin")
-    assert 'hmi_state["enu_origin_authoritative"] = True' in src, (
-        "取了但没标记为权威 -- 兜底路径会把它顶掉")
+    assert 'hmi_state["config_enu_origin"] = {' in src, "取了但没留下(日志用)"
+    assert 'hmi_state["enu_origin_authoritative"] = True' not in src, (
+        "99 U192: cmd/fence 的原点不得再顶掉 HMI 的 GPS 显示原点")
 
 
-def test_the_first_fix_fallback_yields_to_the_authoritative_origin():
-    """*** 优先级不能反: 配置里的测绘锚点 > 首次定位兜底.
+def test_the_gps_display_origin_is_not_gated_by_the_cmd_fence_origin():
+    """*** 99 U192 (2026-11-13) 起: HMI 显示原点 = 机器人当前 GPS 定位, 不让位.
+    ~~优先级不能反: 配置里的测绘锚点 > 首次定位兜底~~ (2026-08 ~ 2026-11-13;
+    本机的"测绘锚点"其实是 sites/sim.yaml 的仿真占位值, 离场地约 10 km).
 
     写反的后果很隐蔽: 先开机(拿到 GPS 首次定位)再配围栏的顺序下, 系统会一直
     用那个跟着开机位置漂移的兜底原点, 而权威值明明已经到了. 地图上所有图元
@@ -140,5 +149,11 @@ def test_the_first_fix_fallback_yields_to_the_authoritative_origin():
     src = (pathlib.Path(__file__).resolve().parents[2]
            / "xbrain" / "p5_gateway" / "runtime" / "main_wiring.py").read_text(
                encoding="utf-8")
-    assert 'and not hmi_state.get("enu_origin_authoritative")' in src, (
-        "首次定位兜底没有让位于权威原点 -- 优先级反了")
+    # 99 U192 (user ruling 2026-11-13) reversed this priority for the HMI:
+    # the display origin is the robot's own GPS fix and nothing outranks it.
+    # ~~the first-fix fallback yields to the authoritative origin~~
+    # (2026-08 ~ 2026-11-13). MUTATION now: gate the GPS origin on the
+    # cmd/fence flag again -> red.
+    assert 'and not hmi_state.get("enu_origin_authoritative")' not in src, (
+        "99 U192: GPS 显示原点不得再让位于 cmd/fence 的配置原点")
+    assert "o = origin_from_pose(hmi_state[\"pose\"])" in src, "GPS 原点没接上"

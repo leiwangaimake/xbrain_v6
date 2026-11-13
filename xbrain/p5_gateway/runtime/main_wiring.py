@@ -36,6 +36,7 @@ from typing import Callable, Optional
 from xbrain.common.envelope import Envelope, encode, read_local_boot_id
 #: HMI event list ring (pure): merge, robot position, record.db seed fold.
 from xbrain.p5_gateway.hmi import event_ring
+from xbrain.p5_gateway.hmi.display_origin import origin_from_pose  # 99 U192
 
 _logger = logging.getLogger("xbrain.p5.wiring")
 
@@ -882,10 +883,11 @@ def run_voice_loop_wiring(stop_flag: dict,
         "events": [],                # event/**    -> event stream ring (W2)
         "health": None,              # health/factor -> /api/health (W8)
         "bit": None,                 # health/bit  -> /api/bit (W8)
-        "enu_origin": None,          # localisation origin (gated, W4)
-        # True 表示当前 enu_origin 来自 common.geo.enu_origin(经 cmd/fence 送达),
-        # False 表示来自首次定位兜底. 两者优先级不同, 见 _on_cmd_fence.
-        "enu_origin_authoritative": False,
+        "enu_origin": None,          # HMI display origin: first usable GPS fix (99 U192)
+        # 99 U192: common.geo.enu_origin as carried on cmd/fence, kept for the
+        # log only -- the HMI never draws around it. ~~enu_origin_authoritative:
+        # the cmd/fence origin outranked the first fix~~ (2026-08 ~ 2026-11-13).
+        "config_enu_origin": None,
         #: query/tasks 拉来的任务全量(v2.0 snapshot 的 queue/suspended 用它).
         #: 与 hmi_state["tasks"](只有 active_task, 供 HMI plan 面板)是两份,
         #: 因为两者的形状与刷新节律都不同.
@@ -1182,17 +1184,23 @@ def run_voice_loop_wiring(stop_flag: dict,
             # 只是 W4 场地标定落地前的权宜(见 _on_state_pose 的注释). 权威值
             # 一旦到达就该顶掉它 -- 否则先开机后配围栏的顺序下, 系统会一直用
             # 那个漂移的兜底原点, 而且没有任何迹象表明用错了.
+            # 99 U192 (user ruling 2026-11-13): the HMI display origin is the
+            # robot's own GPS fix, NOT this value. ~~adopt it as the
+            # authoritative HMI origin, overriding the first fix~~ (2026-08 ~
+            # 2026-11-13): on this robot common.geo.enu_origin is the sim
+            # placeholder from configs/sites/sim.yaml, ~10 km from the yard, so
+            # once U183 made P3 send it with every (even empty) FenceSet the
+            # whole map was drawn off-screen. Kept and logged once, unused.
             eo = d.get("enu_origin")
             if isinstance(eo, dict) and eo.get("lat") is not None \
                     and eo.get("lon") is not None:
-                if not hmi_state.get("enu_origin_authoritative"):
+                if hmi_state.get("config_enu_origin") is None:
                     _logger.info(
-                        "p5 HMI: adopted authoritative enu_origin from "
-                        "cmd/fence (lat=%s lon=%s)", eo.get("lat"), eo.get("lon"))
-                hmi_state["enu_origin"] = {"lat": eo.get("lat"),
-                                           "lon": eo.get("lon"),
-                                           "alt": eo.get("alt")}
-                hmi_state["enu_origin_authoritative"] = True
+                        "p5 HMI: cmd/fence carries enu_origin lat=%s lon=%s; "
+                        "not used for display (99 U192)", eo.get("lat"), eo.get("lon"))
+                hmi_state["config_enu_origin"] = {"lat": eo.get("lat"),
+                                                  "lon": eo.get("lon"),
+                                                  "alt": eo.get("alt")}
 
         def _on_geo_objects(sample) -> None:
             # 11 S7.10A: P3 broadcasts routes/keypoints/docks geometry; cache the
@@ -1287,14 +1295,17 @@ def run_voice_loop_wiring(stop_flag: dict,
             # calibration: this origin follows wherever the robot first fixed.
             # NOTE: the RAW state/pose data has no "available" key (pose_group adds
             # it downstream); a real fix is just lat/lon present, so key off those.
-            # NO 权威原点已到达时不再兜底 -- 否则一个跟着首次定位跑的原点会
-            # 把配置里那个测绘出来的锚点顶掉(优先级正好反了).
-            if hmi_state.get("enu_origin") is None \
-                    and not hmi_state.get("enu_origin_authoritative"):
-                p = hmi_state["pose"]
-                if isinstance(p, dict) and p.get("lat") is not None and p.get("lon") is not None:
-                    hmi_state["enu_origin"] = {
-                        "lat": p["lat"], "lon": p["lon"], "alt": p.get("alt")}
+            # 99 U192 (user ruling 2026-11-13): this IS the HMI display origin
+            # -- the first fix of any level except no_fix -- and nothing
+            # replaces it while P5 runs, so the grid does not slide. ~~the
+            # fallback yielded to the cmd/fence "authoritative" origin~~
+            # (2026-08 ~ 2026-11-13; see _on_cmd_fence for why that broke).
+            if hmi_state.get("enu_origin") is None:
+                o = origin_from_pose(hmi_state["pose"])
+                if o is not None:
+                    hmi_state["enu_origin"] = o
+                    _logger.info("p5 HMI: display origin from GPS fix %s (lat=%s lon=%s)",
+                                 hmi_state["pose"].get("fix_type"), o["lat"], o["lon"])
 
         def _on_state_clock(sample) -> None:
             # P1-13: clock sync mirror -> RTK time-sync indicator (18-C G47).
