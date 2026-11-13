@@ -143,6 +143,11 @@ hmi:
   link_rtt_degrade_ms: 200
   link_down_misses: 3
   estop_fast_path: true               # 独立任务, <=10 ms
+  # -- W9 解锁后自动站立 (99 U181, 用户 2026-11-13). HMI 解锁发出后, state/robot 读回
+  #    两把锁都清掉 (= 按钮变绿) 就发一次 cmd/chassis/ctrl{stand}; 本窗口内没解开 (例如
+  #    硬件急停还按着) 就不站. 已经站着 (stand / rl_control) 不再发. 代码里没有默认值:
+  #    缺了只关掉自动站立, 解锁照常.
+  unlock_stand_window_ms: 5000
   # -- W2 点击导航 (11 S12.1.1 W2; 用户 2026-11-10). 只能点路径上的点或关键点.
   #    点关键点按 waypoint_id 下发, 到点半径取该关键点自己的 arrival_radius;
   #    点路径上的点按 lat/lon 下发, 路径点没有半径, 用下面这个值随帧带给 P3
