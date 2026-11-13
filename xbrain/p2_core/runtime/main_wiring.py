@@ -36,6 +36,7 @@ import json
 import logging
 import os
 import queue
+import threading
 import time
 import uuid
 from datetime import datetime, timezone
@@ -592,6 +593,29 @@ def run_voice_loop_wiring(mic_cfg: MicCaptureConfig,
         from xbrain.p2_core.d_mode.deter_driver import DeterDriver, DeterPlan
         deter_driver = DeterDriver(device_sync, DeterPlan.from_config(
             lambda k: None if _mcfg.get(k) is _MISSING else _mcfg.get(k)))
+
+        # 99 U188 报警区自主报警: 巡逻 / 点到点导航途中, 机器人在启用的报警区内,
+        # 该区里出现云端规则所列的目标 => 事件 + 警笛红蓝灯 duration_sec 秒 + 喊一次
+        # 驱离话术, 系统模式不变(用户裁决"不停车, 也响警笛"). auto_alarm 段缺一个键
+        # 即拒绝启动(CLAUDE.md 3.6). 判定见 suspicion/auto_alarm.py, 设备时序见
+        # d_mode/auto_deter.py, 输入输出见 runtime/alarm_wiring.py.
+        from xbrain.p2_core.d_mode.auto_deter import AutoDeter
+        from xbrain.p2_core.runtime.alarm_wiring import AlarmWiring
+        from xbrain.p2_core.suspicion.auto_alarm import AutoAlarm, AutoAlarmConfig
+        _aget = lambda k: None if _mcfg.get(k) is _MISSING else _mcfg.get(k)  # noqa: E731
+        _atext = _aget("auto_alarm.speech_text")
+        if not isinstance(_atext, str) or not _atext:
+            raise ValueError("p2_core config: auto_alarm.speech_text missing (99 U188)")
+        _aplan = DeterPlan.from_config(_aget)  # the tuned red/blue pattern and siren level
+        auto_deter = AutoDeter(
+            device_sync, _aplan.redblue_mode, _aplan.siren_level, _atext,
+            lambda text: threading.Thread(
+                target=lambda: _speak_and_log(speaker, text, "tts_local"),
+                name="p2.auto_alarm_speak", daemon=True).start())
+        alarm_wiring = AlarmWiring(
+            AutoAlarm(AutoAlarmConfig.from_config(_aget)), auto_deter, gen, rt,
+            os.environ.get("XBRAIN_ROBOT_ID") or None, state_cache, rx_mono)
+        alarm_wiring.subscribe()
 
         # --- B 模式(云端喊话)的收发端 -------------------------------
         # 11 S2.2: audio/broadcast "仅 p2_core" 订阅(RT-A3). 三件东西跟着
@@ -1496,7 +1520,10 @@ def run_voice_loop_wiring(mic_cfg: MicCaptureConfig,
                         except Exception as exc:      # noqa: BLE001
                             _logger.error("p2 boot volume failed: %s", exc)
                     try:
-                        _rc = device_sync.reconcile(to_device_mode(mode_face.state))
+                        # 99 U188: 自主报警借用设备 deter 期间, 对账目标是 deter --
+                        # 否则 5 s 内就会被修回 func1, 警笛提前停.
+                        _rc = device_sync.reconcile(auto_deter.reconcile_target(
+                            to_device_mode(mode_face.state)))
                         # D 模式下设备被修回 deter = 驱离循环已随那次漂移
                         # (payload 重启 / 别人切了模式)的拆流死掉, 只修模式
                         # 不补 /deter 的话设备停在一个不发声的 deter 里.
@@ -1522,6 +1549,14 @@ def run_voice_loop_wiring(mic_cfg: MicCaptureConfig,
                     deter_driver.tick(_now_ms)
                 except Exception as exc:      # noqa: BLE001
                     _logger.error("p2 D DT-5 tick failed: %s", exc)
+                # 99 U188 自主报警: 每拍判定一次并执行(到点关警笛 / 模式被人接管时
+                # 交还设备). 异常只记日志 -- 报警链路坏了不能拖垮仲裁主循环.
+                try:
+                    alarm_wiring.tick(_now_ms, mode_face.state == ModeState.IDLE,
+                                      mode_face.state == ModeState.ALARM,
+                                      to_device_mode(mode_face.state))
+                except Exception as exc:      # noqa: BLE001
+                    _logger.error("p2 auto alarm tick failed: %s", exc)
                 # 14 S4.4.2: a manual PTZ hold idles out after T_idle; then a
                 # B / D mode that could not get domain 5 at entry (or lost it
                 # to the operator) takes it back as auto_track.
