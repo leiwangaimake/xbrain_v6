@@ -526,11 +526,27 @@ v2.0 §9.5 要求可靠事件断线后在原 key 上补发、复用 `eid`。**�
   - 请在 Qt 上对这两个操作做明确提示。
 - 急停**不停云台**，急停期间云台照常可控（PTZ 契约 U-2）。
 
-### 6.4 `SET_ALARM_CONFIG`【偏差·待修】
+### 6.4 `SET_ALARM_CONFIG`【变更 · `99` U187，2026-11-13】
 
-- **只实现了 `regions[]`**。每个区域写成机器人的报警区围栏；`enabled=true` 时同时启用。
-- `alarm_level`、`siren_level`、`duration_sec`、`cooldown_sec`、`alarm_window`、`rules[]`、区域的 `applies_to` **只做格式校验，不生效**。
-- `regions[]` 为空时整条拒绝：1006，`E_NOT_IMPLEMENTED`。
+- 每个 `regions[]` 区域写成机器人的报警区围栏；`enabled=true` 时同时启用（同前）。
+- ~~`alarm_level`、`siren_level`、`duration_sec`、`cooldown_sec`、`alarm_window`、`rules[]`、区域的 `applies_to` **只做格式校验，不生效**。~~ —— 被替代（~ 2026-11-13）。★ U187 现行：除 `applies_to` 外，这些字段**存到机器人上**（重启后仍在），供巡逻 / 点到点导航途中的自主报警使用。
+- ★ **部分更新**：报文里**出现的字段**才改；**没出现的字段保持机器人上原值不变**；字段值为 `null` 表示**删除**，机器人回到默认。`regions[]` 可以不带（只改时间段或规则时）。
+  - 例：只改报警时间段，发 `{"alarm_window": {"start": "22:00", "end": "05:00"}}`；删除时间段（回到全天），发 `{"alarm_window": null}`。
+
+| 字段 | 机器人怎么用 | 没设置 / 删除后的默认 |
+|---|---|---|
+| `alarm_window` `{start, end}`（`HH:mm`） | 每天的报警有效时间段。★ 允许跨零点（`start` 晚于 `end`，如 22:00–05:00）。全机**只有一个**时间段，对所有报警区域生效。机器人时钟未同步时按**全天**处理 | 全天 |
+| `rules[]` | 要报警的可疑目标。按**整表**下发：增删目标就发新的完整列表，新表**替换**旧表。`type` 取值见下；`region_ids` 为空表示**所有报警区域**；`enabled=false` 的规则不报 | 只报**人**，所有报警区域 |
+| `alarm_level` | 1 / 2，存储并随报警事件上报 | 机器人侧默认 |
+| `siren_level` | 0–100，警报音量 | 机器人侧默认 |
+| `duration_sec` | 1–20，一次警报持续秒数 | 机器人侧默认 |
+| `cooldown_sec` | 0.5–600，同一区域两次报警的最短间隔 | 机器人侧默认 |
+
+- `rules[].type` 取值：`person_in_region`（人；★ 行人、骑自行车、骑摩托车都算人）、`vehicle_in_region`（车）、★ **新增 `animal_in_region`**（动物：家畜、大型野生动物，**鸟类不报**；能否报出取决于感知模型是否识别出该目标）。其它取值回 1003。
+- `rules[].alarm_role` 只支持 `include`；`exclude`（排除规则）机器人**未实现**，回 3001、`E_CONFIG_INVALID`，不会被当成 `include` 存下。
+- 区域的 `applies_to`：**只做格式校验，不生效** —— 报什么目标以 `rules[]` 为准。
+- 报文里既没有 `regions[]`、也没有任何上表字段时整条拒绝：1003，`E_SCHEMA`。~~`regions[]` 为空时整条拒绝：1006，`E_NOT_IMPLEMENTED`。~~（被替代，~ 2026-11-13）
+- 只改上表字段、不改区域时，机器人执行的围栏不变，受理后**立即**回 `done`。
 - 终态 result：
   - 机器人生效围栏版本前进即回 `done`，`detail` 为空（没有 `active_rev`、`played_times`、`stop_reason`）。
   - 6 s 内未前进回 `failed`、2002。
@@ -746,7 +762,7 @@ v2.0 §3.4 写明「营区 keep-in 必须走独立安全围栏接口」，本任
 | D-5 | `state/robot.robot_state` 不出现 `charging`；`alarm_window_active` 恒为 `false` | 中 | §5.1 |
 | D-6 | `state/geo/manifest` 的 `manifest_rev` 恒为 0；~~所有启用的围栏都标成 `alarm_region`~~（U183 已修：按实际类型上报，未启用的也报） | 中 | §5.4 |
 | D-7 | `state/task` 的进度字段恒为 0 / null；终态 `failed` 一律 2001，距离为 null | 中 | §5.2 |
-| D-8 | `SET_ALARM_CONFIG` 只有区域生效，规则、声光、时间窗未接；result 的 `detail` 为空（~~全部 `enabled=false` 时终态回 failed~~ U185 已修） | 中 | §6.4 |
+| D-8 | `SET_ALARM_CONFIG` ~~只有区域生效，规则、声光、时间窗未接；~~（U187 已修：存储并用于自主报警）result 的 `detail` 为空（~~全部 `enabled=false` 时终态回 failed~~ U185 已修）；区域 `applies_to` 不生效 | 低 | §6.4 |
 | D-9 | `msg_id` 在执行前登记去重，被拒后同一 `msg_id` 重发得到 `duplicate`；超时后命令可能已生效 | 中 | §6.7 |
 | D-10 | `exit_broadcast` 的 `duplicate` ack 不回显 `stream_id`；`stream_id` 在音频进程重启后会重号 | 低 | §6.5 |
 | D-11 | `STOP_TASK` 对已暂停的任务再 `pause`、对运行中的任务 `resume`，回 2003 而不是 `duplicate` | 低 | §6.2 |
