@@ -25,6 +25,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import threading
 import time
 from datetime import datetime, timezone
 from typing import Callable, Optional
@@ -398,6 +399,34 @@ def _start_hmi(gen, hmi_cfg: dict, hmi_state: dict,
                    # the HMI (via p5_gateway) as a publisher of this key.
                    CMD_CHASSIS_CTRL_TOPIC: gen.declare_publisher(CMD_CHASSIS_CTRL_TOPIC)}
     _ctrl_env_seq = [0]          # S3.0 seq for cmd/chassis/ctrl, this process
+    # The unlock (web-server thread) and the stand after it (Zenoh callback
+    # thread, 99 U181) share that seq; one lock keeps the pair stamp + put whole.
+    _ctrl_lock = threading.Lock()
+
+    # 99 U181 (user 2026-11-13): an HMI unlock whose read-back shows the lock
+    # cleared is followed by one cmd/chassis/ctrl{stand}. The window is required
+    # config; a missing or bad value turns only this follow-up off, loudly --
+    # the unlock itself still works, and the HMI must never take P5 down.
+    from xbrain.p5_gateway.hmi.unlock_stand import StandAfterUnlock  # noqa: PLC0415
+    try:
+        hmi_state["stand_after_unlock"] = StandAfterUnlock(
+            hmi_cfg.get("unlock_stand_window_ms"))
+    except ValueError as exc:
+        hmi_state["stand_after_unlock"] = None
+        _logger.error("p5 HMI: stand after unlock disabled: %s", exc)
+
+    def _send_stand(enable_cmd_id: str) -> None:
+        # Same key, envelope and origin as the unlock it follows (11 S9.3.4:
+        # action stand, origin hmi); the cmd_id ties the two in every log.
+        payload = {"cmd_id": enable_cmd_id + "-stand", "action": "stand", "origin": "hmi"}
+        if stamp is None:
+            raise RuntimeError("no S3.0 stamper; cmd/chassis/ctrl stand not sent")
+        with _ctrl_lock:
+            uplink_pubs[CMD_CHASSIS_CTRL_TOPIC].put(stamp(payload, _ctrl_env_seq))
+        _logger.warning("p5 HMI unlock read back clear -> cmd/chassis/ctrl stand "
+                        "(cmd_id=%s, origin=hmi)", payload["cmd_id"])
+
+    hmi_state["send_stand_after_unlock"] = _send_stand
 
     def _send_uplink(key: str, payload: dict) -> None:
         pub = uplink_pubs.get(key)
@@ -412,9 +441,13 @@ def _start_hmi(gen, hmi_cfg: dict, hmi_state: dict,
             # quadruped refuses a bare body, so never fall back to one.
             if stamp is None:
                 raise RuntimeError("no S3.0 stamper; cmd/chassis/ctrl not sent")
-            pub.put(stamp(payload, _ctrl_env_seq))
+            with _ctrl_lock:
+                pub.put(stamp(payload, _ctrl_env_seq))
             _logger.warning("p5 HMI chassis unlock -> cmd/chassis/ctrl enable "
                             "(cmd_id=%s, origin=hmi)", payload.get("cmd_id"))
+            sau = hmi_state.get("stand_after_unlock")
+            if sau is not None and payload.get("action") == "enable":
+                sau.arm(payload["cmd_id"], time.monotonic())  # 99 U181: wait for the read-back
             return
         pub.put(json.dumps(payload, ensure_ascii=False).encode("utf-8"))
         _logger.info("p5 HMI uplink -> %s (%s %s)", key,
@@ -1277,6 +1310,16 @@ def run_voice_loop_wiring(stop_flag: dict,
             if isinstance(body, dict):
                 hmi_state["robot"] = body
                 hmi_state["robot_updated_ms"] = _now_mono_ms()   # staleness gate
+                # 99 U181: an HMI unlock read back clear -> one stand. Same rule as
+                # the button going green (chassis_lock_group), so the frame that
+                # turns it green is the frame that sends the stand.
+                sau = hmi_state.get("stand_after_unlock")
+                cid = sau.on_robot(body, time.monotonic()) if sau is not None else None
+                if cid is not None:
+                    try:
+                        hmi_state["send_stand_after_unlock"](cid)
+                    except Exception:      # noqa: BLE001
+                        _logger.exception("p5 HMI: stand after unlock %s not sent", cid)
 
         def _on_state_power(sample) -> None:
             # CR-5. 同上: 坏报文不清缓存.
@@ -1561,6 +1604,14 @@ def run_voice_loop_wiring(stop_flag: dict,
                 # stamped, so one bus key serves every origin without P5
                 # claiming acks that belong to another sender.
                 return
+            sau = hmi_state.get("stand_after_unlock")
+            if sau is not None:
+                sau.on_ack(cmd_id, body.get("result"))  # 99 U181: a refused unlock never stands
+            if cmd_id.endswith("-stand"):
+                # 99 U181: no browser request waits on this one, so its answer
+                # is logged here or nowhere.
+                _logger.warning("p5 HMI stand after unlock: %s %s %s", cmd_id,
+                                body.get("result"), body.get("code"))
             acks = hmi_state.setdefault("uplink_acks", {})
             acks[cmd_id] = body
             # An ack nobody collects any more (its request timed out at 2 s,
