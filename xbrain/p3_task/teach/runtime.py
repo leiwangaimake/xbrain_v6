@@ -352,6 +352,7 @@ class TeachRuntime:
         try:
             cmd = parse_teach_command(payload)
         except TeachCommandError as exc:
+            _logger.warning("p3 teach command refused (cmd_id=%s): %s %s", cmd_id, exc.code, exc)
             return teach_ack(cmd_id, "rejected", exc.code, {"reason": str(exc)})
         try:
             ack = await self._dispatch(cmd, now_mono_s, now_ms,
@@ -367,9 +368,33 @@ class TeachRuntime:
             _logger.error("p3 teach %s failed: %s", cmd.action, exc)
             ack = teach_ack(cmd.cmd_id, "rejected", E_TEACH_STATE,
                             {"reason": str(exc)})
+        if cmd.action != "query":  # a query changes nothing and may be polled
+            self._log_outcome(cmd, ack)
         if cmd_id:
             self._acks[cmd_id] = ack
         return ack
+
+    @staticmethod
+    def _log_outcome(cmd: TeachCommand, ack: Dict[str, Any]) -> None:
+        """One INFO line per teach command (user request 2026-11-13: a cloud
+        recording of 4号路径 left no trace in the P3 log). Built from the ack
+        it answers, so the log says exactly what the issuer was told: who
+        sent it, the result and code, the session, and -- on a save -- the
+        geo_id, name, point count and length. Commands come a handful per
+        recording, never per sample, so this costs nothing at 1 Hz sampling."""
+        d = ack.get("detail") if isinstance(ack.get("detail"), dict) else {}
+        applied = d.get("applied") if isinstance(d.get("applied"), dict) else {}
+        start = cmd.start if isinstance(cmd.start, dict) else {}
+        # the point count lives under a different key per action
+        points = next((v for v in (d.get("point_count"), d.get("discarded_points"),
+                                   applied.get("point_count")) if v is not None), None)
+        _logger.info("p3 teach %s from %s/%s -> %s %s (session=%s state=%s kind=%s "
+                     "points=%s length_m=%s saved=%s name=%s total_len_m=%s reason=%s)",
+                     cmd.action, cmd.issuer_src, cmd.issuer_channel, ack.get("result"),
+                     ack.get("code"), d.get("session_id") or cmd.session_id, d.get("state"),
+                     start.get("kind") or d.get("kind"), points, d.get("length_m"),
+                     applied.get("geo_id"), applied.get("name") or d.get("name"),
+                     applied.get("total_len_m"), d.get("reason") or d.get("close_reason"))
 
     async def _dispatch(self, cmd: TeachCommand, now_mono_s: float,
                         now_ms: int,
@@ -981,6 +1006,11 @@ class TeachRuntime:
             return None
         self._session.apply("finish")
         self._session.warn.append("max_duration")
+        rec = self._recorder  # what the auto-finish keeps for the save that follows
+        _logger.info("p3 teach session %s reached its max duration: finished "
+                     "(points=%s length_m=%s)", self._session.session_id,
+                     None if rec is None else rec.point_count,
+                     None if rec is None else round(rec.length_m, 1))
         return "max_duration"
 
     def due_warnings(self, now_mono_s: float) -> List[Tuple[float, float]]:
