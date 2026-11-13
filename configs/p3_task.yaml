@@ -62,12 +62,22 @@ teach:
   #   每次录制每档只提醒一次), 同时发 event/info/teach 上云. 每个值须 > 0 且
   #   < record_duration_s; 缺失 / 空 / 越界时 p3 拒绝启动 (EX_CONFIG 78).
   record_warn_before_s: [600, 60]
-  #   99 U176 (用户 2026-11-12): 围栏类型按名字关键字定 (活动区域/报警区域/
-  #   限速区域/禁止区域). 名字含 限速区域 的围栏在区内的限速 (m/s, FV-13 必填).
-  #   是一块真实区域的安全限值, 代码里没有缺省值 (CLAUDE.md 3.1): null 时
-  #   拒绝开始录制限速区域围栏并报本键路径, 其它三类照常; 非 null 时须 > 0,
-  #   否则 p3 拒绝启动 (EX_CONFIG 78). 待现场按营区规定填写.
-  fence_speed_limit_mps: null
+  #   ~~99 U176 fence_speed_limit_mps: null (录限速区域围栏用的限速, null 拒录)~~
+  #   被替代 (2026-11-12 ~ 2026-11-13): 见下面 fence 段 (99 U185).
+
+# -- 围栏限速值 (99 U185, 用户 2026-11-13) ---------------------------------
+#   限速区域围栏的区内限速分三级, 高者优先:
+#     1. 该区自带的值 (云端随区域下发 speed_limit_mps);
+#     2. 云端下发的统一值 (cmd/geo set_fence_defaults, 存 fence.db, 重启有效,
+#        可覆盖, 可删除);
+#     3. 下面的 speed_limit_default_mps. 用户裁决: 云端没下发 (缺损) 时为 0.6.
+#   这是用户裁决的值, 写在配置里而不是代码里 (CLAUDE.md 3.1 同一纪律).
+#   min / max 是云端下发值的合法范围, 超出拒绝 (E_GEO_INVALID).
+#   三个键缺失 / null / <= 0 / min > default / default > max 时 p3 拒绝启动 (EX_CONFIG 78).
+fence:
+  speed_limit_default_mps: 0.6
+  speed_limit_min_mps: 0.1
+  speed_limit_max_mps: 2.0
 
 # -- 路径推送 (取值, 非定义) ------------------------------------------------
 #   示教录制的路径是模式 B 密集折线, 没有逐点到点半径; 15 S2.4.3 规定取
