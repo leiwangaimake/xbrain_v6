@@ -1983,13 +1983,16 @@ dead-man 会在「按住不动」的过程中触发一次 `Stop`** —— ★ �
 
 | 要素 | 类型/role | 连线样式 | 颜色（默认） | 粗细（★ v1.4：屏幕 px · 非缩放 · ×2） | config 键 |
 |---|---|---|---|---|---|
-| ★ 活动区域围栏 | `allow` | **实线** | ★ **亮蓝 `#2f88ff`** | `4.8` | `fence.active.line`（color 从 config 取） |
-| ★ 报警区域围栏 | `warning`（旧名 `zone`） | **实线** | ★ **亮红 `#ff2020`** | `4.8` | `fence.alarm.line`（color 从 config 取） |
-| ★ 禁止区域围栏 | `forbid` | **实线** | ★ **v1.4 深红 `#8b0000`** | `4.8` | 前端 CSS `--fence-forbid-color`（★ config `fence.forbid.color` 仍为误值 `#ff2020`，`applyUiConfig` 只从 config 取 active/alarm，forbid/speed 用 CSS 默认胜出） |
-| ★ 限速区域围栏 | `speed_limit`（★ v1.4 新增） | **实线** | ★ **v1.4 亮青蓝 `#22c5ff`**（区别活动亮蓝） | `4.8` | 前端 CSS `--fence-speed-color`；`cfg.fence.speed` 缺则渲染回退用 `active` 的 line |
+| ★ 活动区域围栏 | `allow` | **实线** | ★ **亮蓝 `#2f88ff`** | ★ `10.5`（~~`4.8`~~） | `fence.active.line`（color 从 config 取） |
+| ★ 报警区域围栏 | `warning`（旧名 `zone`） | **实线** | ★ **亮红 `#ff2020`** | ★ `10.5`（~~`4.8`~~） | `fence.alarm.line`（color 从 config 取） |
+| ★ 禁止区域围栏 | `forbid` | **实线** | ★ **v1.4 深红 `#8b0000`** | ★ `10.5`（~~`4.8`~~） | 前端 CSS `--fence-forbid-color`（★ config `fence.forbid.color` 仍为误值 `#ff2020`，`applyUiConfig` 只从 config 取 active/alarm，forbid/speed 用 CSS 默认胜出） |
+| ★ 限速区域围栏 | `speed_limit`（★ v1.4 新增） | **实线** | ★ **v1.4 亮青蓝 `#22c5ff`**（区别活动亮蓝） | ★ `10.5`（~~`4.8`~~） | 前端 CSS `--fence-speed-color`；`fence.speed.line`（2026-11-13 补入 config） |
+| ★★ 未启用的围栏（任何类型，`99` U183） | `state ≠ active` | ★ **虚线**（闭合折线，虚线段随线宽放大） | ★ **灰 `#9a9a9a`** | ★ `10.5` | `fence.disabled.line`；CSS `.fence-disabled`（无填充）；名字后加「(未启用)」，如「营区活动区域围栏(未启用) (420 m)」 |
 | ★ 路径（已录制） | route recorded | ★ **折线**（2026-11-12 用户：只画折线，不再画采样点圆点） | ★ **亮绿 `#2ecc40`** | ★ `7.0`（= 原路径点圆点直径 2 × 3.5 px；配置 `width_px: 3.5`，前端 ×2；~~`2.0`~~） | `route.recorded.line` |
 | ★ 实时行走轨迹（巡逻中） | route realtime | **实线** | ★ **亮黄 `#ffd400`** | `4.8` | `route.realtime.line` |
 | ★ 关键点 / 路径点 | keypoint / route point | ★ 关键点见 §6.10.2 U6 圆饼。~~路径点：v1.4 圆点（非缩放，半径 ~3.5 屏幕 px，`.geo-dot`），颜色 = 该路径线色~~ —— **被替代的表述**（v1.4 ~ 2026-11-12）。★ **为何不再成立**：用户 2026-11-12 要求路径只用折线表示，采样点圆点（已录制路径与实时轨迹）均不再画；点击导航仍按屏幕像素吸附到最近的路径采样点（采样间距约 0.55 m，远小于 `snap_px` 14 px 对应的距离） | — | — | `waypoint.*`（§6.10.2 U6） |
+
+★★★ **围栏线宽与未启用围栏（用户 2026-11-13，`99` U183）**：所有围栏线宽 = 已录制路径的 **1.5 倍**（屏幕 7 → 10.5 px；`lineStroke` 按配置 ×2，所以配置写 `5.25`）。地图上的围栏来自 `state/geo/objects` 的 `fences[]`（`11` §7.10A GO-7，**全部未删除的围栏**），~~来自 `cmd/fence` 缓存（只含已启用的）~~ —— 被替代：刚录好、或被云端关闭的围栏此前根本不上地图。`state ≠ active` 的一律灰色虚线 + 「(未启用)」；纯函数 `fenceLook(type, state, cfg)` 在 `hmi.js` `<map-marks>` 块内，断言见 `tests/p5_gateway/hmi/test_map_marks_js.py`。`GET /api/fences/active` 仍答 `cmd/fence` 缓存（「P1 正在执行什么」）。★ `cmd/fence` 空集（U183 FS-9）现在是有效答案：新鲜的空集返回 `200` 空列表，只有从未收到或超时才 `503 E_DEGRADED`。
 
 ★★★ **图例菜单（左上角，★ 现七项；~~v1.4 六项~~ —— 被替代：2026-11 起多了「录制中(近似)」，实测 index.html 7 个 legend-row）**：已录制路径 · 实时行走轨迹 · ★ 录制中(近似) · 活动区域 · 报警区域 · ★ **限速区域** · ★ **禁止区域**。★ v1.4：区域色块由镂空 border 改**实心填充矩形**（`.legend-mark` background 实色）；路径色块为填充细条。
 ★★★ **名称标签（★ v1.4）**：围栏名后显**周长**、路径名后显**长度**，格式 `名称 (N m)`；关键点名无长度。★ **v1.5（方案 A）**：路径点是 WGS84 `{lat,lon}`，长度在 **`toXY` 投影后的屏幕米**上算欧氏距离（`segLen(rproj)`），围栏(ENU 米)仍直接算 —— 二者投影后同为米。颜色**统一亮白 `#ffffff` + 粗体**（不再按图层线色）；字号 = **任务内容字号**（`--font-plan-size`，即 `font.plan.size_px`，非硬编码 12）；**非缩放**（不随地图缩放变），且**去重叠**（见 §6.10.2C）。
