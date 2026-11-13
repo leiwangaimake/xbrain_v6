@@ -176,6 +176,33 @@ def validate_goto(payload: Dict[str, Any]) -> None:
         _range(ar, 0.5, 10.0, "%s.arrival_radius_m" % base)
 
 
+# --- 99 U190: PATROL_ROUTE payload ------------------------------------
+
+#: the three fields PATROL_ROUTE carries; anything else is refused (a cloud
+#: that sends "laps" instead of "loops" must hear about it, not get one lap)
+PATROL_FIELDS = ("recorded_path_id", "loops", "round_trip")
+
+
+def validate_patrol(payload: Dict[str, Any]) -> None:
+    """99 U190 PATROL_ROUTE: patrol a whole recorded path (user ruling
+    2026-11-13, "按建议做"). recorded_path_id required; loops optional int
+    >= 0 (absent = 1, 0 = standing patrol ended only by STOP_TASK cancel);
+    round_trip optional bool. Whether the path EXISTS is P3's question (it
+    owns geo.db; the gateway's manifest copy may lag) -- not checked here."""
+    for key in payload:  # closed field set
+        if key not in PATROL_FIELDS:
+            raise _invalid(key, "unknown PATROL_ROUTE field %r (allowed: %s)"
+                           % (key, ", ".join(PATROL_FIELDS)))
+    _regex(_req(payload, "recorded_path_id"), _PATH_ID_RE, "recorded_path_id",
+           "r-[a-z0-9_]{1,40}")
+    if "loops" in payload:  # absent = one pass (P3 laps.lap_spec_from_params)
+        loops = payload["loops"]
+        if isinstance(loops, bool) or not isinstance(loops, int) or loops < 0:
+            raise _invalid("loops", "loops must be an integer >= 0 (0 = standing patrol)")
+    if "round_trip" in payload and not isinstance(payload["round_trip"], bool):
+        raise _invalid("round_trip", "round_trip must be true or false")
+
+
 # --- B-3: SET_ALARM_CONFIG payload ------------------------------------
 
 def validate_alarm(payload: Dict[str, Any]) -> None:

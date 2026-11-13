@@ -12,6 +12,7 @@ Description:
   v2.0 task_type      机内 key              机内形状
   ------------------  --------------------  ---------------------------
   GOTO_KEYPOINT       cmd/task              11 S7.2 {action:"submit", task}
+  PATROL_ROUTE        cmd/task              11 S7.2 submit, type patrol (99 U190)
   STOP_TASK           cmd/task              11 S7.2 {action:pause|resume|cancel}
   ESTOP               cmd/estop             {type:"estop", action:"stop"}
   SET_ALARM_CONFIG    cmd/geo               11 S7.9 {action:"upsert", origin}
@@ -47,7 +48,13 @@ from typing import Any, Dict, List, Tuple
 from ...common import errors
 from ..outbound.error_map import V2_DETAIL_TASK_UNSUPPORTED, build_error_fields
 from .cloud_inbound import InboundReject
-from .field_validate import check_ids, validate_alarm, validate_fence_config, validate_goto
+from .field_validate import (
+    check_ids,
+    validate_alarm,
+    validate_fence_config,
+    validate_goto,
+    validate_patrol,
+)
 
 #: 云端来的一律 origin/source = cloud. NO 不从报文里取 --
 #: origin 是授权边界(11 CH-1 通道即权限), 让发起方自称等于没有边界.
@@ -64,7 +71,10 @@ OPEN_TASK_TYPES = ("GOTO_KEYPOINT", "STOP_TASK", "ESTOP",
                    "SET_ALARM_CONFIG", "AUDIO_CONTROL",
                    # 99 U185: the safety-fence interface v2.0 S3.4 calls for
                    # ("营区 keep-in 必须走独立安全围栏接口")
-                   "SET_FENCE_CONFIG")
+                   "SET_FENCE_CONFIG",
+                   # 99 U190: patrol a whole recorded path (GOTO_KEYPOINT only
+                   # follows a path through waypoints to the last one)
+                   "PATROL_ROUTE")
 
 #: v2.0 S3 逐字列出的[旧名称], 收到必须以"不支持的任务类型"拒绝,
 #: NO 不能静默映射到某个现有能力.
@@ -133,6 +143,8 @@ def route(data: Dict[str, Any]) -> List[Tuple[str, Dict[str, Any]]]:
 
     if task_type == "GOTO_KEYPOINT":
         return [(KEY_TASK, _goto(cmd_id, task_id, payload))]
+    if task_type == "PATROL_ROUTE":
+        return [(KEY_TASK, _patrol(cmd_id, task_id, payload))]
     if task_type == "STOP_TASK":
         return [(KEY_TASK, _stop(cmd_id, payload))]
     if task_type == "ESTOP":
@@ -209,6 +221,36 @@ def _goto(cmd_id: str, task_id: str, payload: Dict) -> Dict[str, Any]:
                 "coordinate_system": payload.get("coordinate_system"),
                 "waypoints": payload.get("waypoints") or [],
             },
+        },
+        "source": CLOUD_ORIGIN,
+        "reason": "",
+    }
+
+
+def _patrol(cmd_id: str, task_id: str, payload: Dict) -> Dict[str, Any]:
+    """PATROL_ROUTE -> 11 S7.2 {action:"submit", task:{type:"patrol", ...}} (99 U190).
+
+    *** 机内巡逻任务早已具备(语音 B02/B04 落的就是它): route_id 指路径,
+    圈数与来回放在 params.slots, 由 p3 的 laps.lap_spec_from_params 读取 --
+    与语音链路同一个位置, 同一个函数, 两条输入不会有两套圈数语义.
+    只传云端实际带了的字段: loops 缺席时由 p3 取 1(16 S6.7.3 [3] 的唯一缺省),
+    网关不再写一份缺省值, 免得两处缺省将来分叉. 0 = 常驻巡逻, 只能 STOP_TASK
+    cancel 结束(11 S7.8.3 LM-4).
+
+    *** task_id 原样作为机内任务号, 与 GOTO_KEYPOINT 相同: cmd/task/ack 与
+    state/task 的进度 / 终态都带它, 云端据此对应这一次请求.
+    路径是否存在由持有 geo.db 的 p3 判(网关只有转发来的 manifest 副本).
+    """
+    validate_patrol(payload)
+    slots = {k: payload[k] for k in ("loops", "round_trip") if k in payload}  # as sent
+    return {
+        "cmd_id": cmd_id,
+        "action": "submit",
+        "task": {
+            "task_id": task_id,
+            "type": "patrol",  # 15 S12 TASK_TYPES, not the wire name
+            "route_id": payload["recorded_path_id"],
+            "params": {"slots": slots},
         },
         "source": CLOUD_ORIGIN,
         "reason": "",

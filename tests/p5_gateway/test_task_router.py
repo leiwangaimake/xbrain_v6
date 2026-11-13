@@ -46,6 +46,8 @@ def _data(task_type, payload, msg_id="msg-1", task_id="task-1"):
 #: 不经过 15 S12 的闭集检查. 把它们混进来会让判据看起来覆盖更广而实际在测
 #: 无关的东西.
 _CREATE_TASK_SAMPLES = {
+    # 99 U190: the whole-path patrol also creates a task row (type patrol)
+    "PATROL_ROUTE": {"recorded_path_id": "r-north", "loops": 2},
     "GOTO_KEYPOINT": {
         "coordinate_system": "WGS84",
         "recorded_path_id": "r-north",
@@ -113,12 +115,15 @@ def test_all_five_open_types_route_somewhere():
         "AUDIO_CONTROL": {"mode": "pc_to_dog", "action": "start"},
         # 99 U185: the safety-fence interface -- the speed-limit default alone
         "SET_FENCE_CONFIG": {"speed_limit_default_mps": 0.8},
+        # 99 U190: whole-path patrol, path id only
+        "PATROL_ROUTE": {"recorded_path_id": "r-a"},
     }
     assert set(payloads) == set(OPEN_TASK_TYPES), (
         "本用例的样例集与 OPEN_TASK_TYPES 不一致 -- 新增类型时要同步")
     want = {"GOTO_KEYPOINT": KEY_TASK, "STOP_TASK": KEY_TASK,
             "ESTOP": KEY_ESTOP, "SET_ALARM_CONFIG": KEY_GEO,
-            "AUDIO_CONTROL": KEY_AUDIO, "SET_FENCE_CONFIG": KEY_GEO}
+            "AUDIO_CONTROL": KEY_AUDIO, "SET_FENCE_CONFIG": KEY_GEO,
+            "PATROL_ROUTE": KEY_TASK}
     for task_type, payload in payloads.items():
         # route 现在返回 [(key, payload), ...]; 每类的第一条落点即验收目标.
         cmds = route(_data(task_type, payload))
