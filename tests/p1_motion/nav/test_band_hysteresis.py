@@ -145,7 +145,8 @@ def _stack(hold_ms=3000):
                    speed_up_hold_ms=hold_ms, d_up_margin_m=0.5,
                    rot_limits=rot_limits(), r_robot_m=None,
                    degraded_fix_cap_mps=0.5, cog_drive_fixed_mps=1.0, cog_drive_degraded_mps=0.6,
-                   bridge_drive_fixed_mps=1.0)
+                   bridge_drive_fixed_mps=1.0,
+                   float_fix_cap_mps=0.5, cog_drive_float_mps=0.6)
     goal = translate_relative_move(
         {"cmd_id": "rm-1", "dx_m": 15.0, "dy_m": 0.0, "dyaw_rad": 0.0},
         pose_xy=(0.0, 0.0), yaw_rad=0.0, heading_valid=True, holonomic=True, limits=LIM)
@@ -187,4 +188,5 @@ def test_nav_tick_refuses_a_null_hysteresis_leaf():
                 holonomic=True, speed_up_hold_ms=None, d_up_margin_m=0.5,
                 rot_limits=rot_limits(), r_robot_m=None,
                    degraded_fix_cap_mps=0.5, cog_drive_fixed_mps=1.0, cog_drive_degraded_mps=0.6,
-                   bridge_drive_fixed_mps=1.0)
+                   bridge_drive_fixed_mps=1.0,
+                   float_fix_cap_mps=0.5, cog_drive_float_mps=0.6)

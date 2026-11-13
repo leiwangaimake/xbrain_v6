@@ -30,6 +30,7 @@ P1 = {
             # 99 U142: float / dgps cap and the fixed L2 (COG) speed
             "degraded_fix_cap_mps": 0.5, "cog_drive_fixed_mps": 1.0, "cog_drive_degraded_mps": 0.6,
             "bridge_drive_fixed_mps": 1.0,  # 99 U178
+            "float_fix_cap_mps": 1.0, "cog_drive_float_mps": 1.0,  # 99 U180
             "recording_teleop_fixed_mps": 2.0, "recording_teleop_degraded_mps": 1.0,  # 99 U179
             "recording_state_stale_ms": 3000,
             # 99 U151: the heading-deadlock climb
@@ -141,6 +142,7 @@ def test_missing_rotation_key_names_itself(key):
     "fence.brake_k", "fence.t_lat_s", "fence.margin_by_fix.rtk_fixed", "fence.projection_iters",
     "fence.margin_by_fix.dgps", "nav.degraded_fix_cap_mps", "nav.cog_drive_fixed_mps",  # 99 U142
     "nav.cog_drive_degraded_mps", "nav.bridge_drive_fixed_mps",  # 99 U178
+    "nav.float_fix_cap_mps", "nav.cog_drive_float_mps",  # 99 U180
     "nav.recording_teleop_fixed_mps", "nav.recording_teleop_degraded_mps",  # 99 U179
     "nav.recording_state_stale_ms",
     "nav.climb_track_seg_m", "nav.climb_max_s",  # 99 U151

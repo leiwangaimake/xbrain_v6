@@ -142,7 +142,7 @@ def test_no_odometry_no_climb():
     assert not c.step(0.0, False, True, t, None).climbing
 
 
-@pytest.mark.parametrize("fix,want", [("rtk_fixed", (None, 1.0)), ("rtk_float", (None, 0.6)),
+@pytest.mark.parametrize("fix,want", [("rtk_fixed", (None, 1.0)), ("rtk_float", (None, 1.0)),
                                       ("dgps", (None, 0.6))])
 def test_the_climb_runs_at_the_cog_fixed_speed(fix, want):
     """99 U153 (2026-11-07): only the dual antenna on rtk_fixed runs at the
@@ -151,7 +151,8 @@ def test_the_climb_runs_at_the_cog_fixed_speed(fix, want):
     COG speed, never the 0.5 cap that would pin it at the COG threshold.
     MUTATION: no term on rtk_fixed -> the climb runs at 2.0 -> red; give it
     the 0.5 cap -> red."""
-    assert quality_caps(fix, "climb", 0.5, 2.0, 0.6, 1.0) == want  # COG 2.0 (U178), climb 1.0
+    # float pair 1.0 / 1.5 (99 U180): float is held at the bridge 1.0, never cog_float 1.5
+    assert quality_caps(fix, "climb", 0.5, 2.0, 0.6, 1.0, 1.0, 1.5) == want  # COG 2.0 (U178), climb 1.0
 
 
 @pytest.mark.parametrize("bad", [0.0, -1.0, None, True])

@@ -67,6 +67,10 @@ class NavConfig:
     cog_drive_degraded_mps: float
     # 99 U178: the climb / IMU-bridge speed on rtk_fixed (nav.bridge_drive_fixed_mps)
     bridge_drive_fixed_mps: float
+    # 99 U180: rtk_float's own position cap and COG speed (both 1.0); since
+    # then degraded_fix_cap_mps / cog_drive_degraded_mps apply to dgps only
+    float_fix_cap_mps: float
+    cog_drive_float_mps: float
     # 99 U179: the teleop move speed while a recording runs -- rtk_fixed + L1 /
     # degraded but legal -- and how old state/teach may be before it lapses
     recording_teleop_fixed_mps: float
@@ -352,6 +356,8 @@ def build_nav_config(p1_tree: Mapping[str, Any], rns_tree: Mapping[str, Any]) ->
         cog_drive_fixed_mps=_pos(p1_tree, "nav.cog_drive_fixed_mps"),
         cog_drive_degraded_mps=_pos(p1_tree, "nav.cog_drive_degraded_mps"),
         bridge_drive_fixed_mps=_pos(p1_tree, "nav.bridge_drive_fixed_mps"),  # 99 U178
+        float_fix_cap_mps=_pos(p1_tree, "nav.float_fix_cap_mps"),  # 99 U180
+        cog_drive_float_mps=_pos(p1_tree, "nav.cog_drive_float_mps"),
         recording_teleop_fixed_mps=_pos(p1_tree, "nav.recording_teleop_fixed_mps"),  # 99 U179
         recording_teleop_degraded_mps=_pos(p1_tree, "nav.recording_teleop_degraded_mps"),
         recording_state_stale_ms=_pos(p1_tree, "nav.recording_state_stale_ms"),

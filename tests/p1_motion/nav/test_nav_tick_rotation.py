@@ -829,7 +829,8 @@ def _stack(*, wz_blind_radps=None, r_robot=None):
                    rot_limits=rot_limits(wz_blind_radps=wz_blind_radps),
                    r_robot_m=r_robot,
                    degraded_fix_cap_mps=0.5, cog_drive_fixed_mps=1.0, cog_drive_degraded_mps=0.6,
-                   bridge_drive_fixed_mps=1.0)
+                   bridge_drive_fixed_mps=1.0,
+                   float_fix_cap_mps=0.5, cog_drive_float_mps=0.6)
     return src, tick
 
 
@@ -903,7 +904,8 @@ def _tick_with(vx, vy, wz, *, wz_blind_radps=None, r_robot=None, ring=None):
                    rot_limits=rot_limits(wz_blind_radps=wz_blind_radps),
                    r_robot_m=r_robot,
                    degraded_fix_cap_mps=0.5, cog_drive_fixed_mps=1.0, cog_drive_degraded_mps=0.6,
-                   bridge_drive_fixed_mps=1.0)
+                   bridge_drive_fixed_mps=1.0,
+                   float_fix_cap_mps=0.5, cog_drive_float_mps=0.6)
     return tick.run(_inp(1000, ring=ring))
 
 
@@ -1029,4 +1031,5 @@ def test_tick_refuses_construction_without_the_rotation_block():
                 d_up_margin_m=0.5, wz_max_rps=1.2, spec_max_vx_mps=2.0,
                 holonomic=True, rot_limits=None, r_robot_m=None,
                    degraded_fix_cap_mps=0.5, cog_drive_fixed_mps=1.0, cog_drive_degraded_mps=0.6,
-                   bridge_drive_fixed_mps=1.0)
+                   bridge_drive_fixed_mps=1.0,
+                   float_fix_cap_mps=0.5, cog_drive_float_mps=0.6)

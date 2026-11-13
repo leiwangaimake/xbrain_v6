@@ -69,7 +69,8 @@ class Sim:
                             wz_max_rps=1.2, spec_max_vx_mps=2.0, holonomic=True,
                             rot_limits=rot_limits(), r_robot_m=None,
                    degraded_fix_cap_mps=0.5, cog_drive_fixed_mps=1.0, cog_drive_degraded_mps=0.6,
-                   bridge_drive_fixed_mps=1.0)
+                   bridge_drive_fixed_mps=1.0,
+                   float_fix_cap_mps=0.5, cog_drive_float_mps=0.6)
         self.now = 5000
         self.host = MissionHost(self.src, relmove_limits=LIM, holonomic=True,
                                 now_mono_ms=self.now)

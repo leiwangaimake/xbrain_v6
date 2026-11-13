@@ -221,7 +221,7 @@ DEGRADED_FIXES = ("rtk_float", "dgps")
 
 def quality_caps(fix_type: Optional[str], heading_source: Optional[str],
                  fix_cap_mps: float, cog_fixed_mps: float, cog_degraded_mps: float,
-                 bridge_fixed_mps: float
+                 bridge_fixed_mps: float, float_cap_mps: float, cog_float_mps: float
                  ) -> Tuple[Optional[float], Optional[float]]:
     """(fix_cap_mps, cog_drive_mps) for compute_gate this tick (99 U142).
 
@@ -245,10 +245,21 @@ def quality_caps(fix_type: Optional[str], heading_source: Optional[str],
     GNSS heading is gone, and the odometry yaw they lean on has not been
     measured at 2.0. Until 2026-11-13 they shared cog_fixed_mps, so raising
     COG would have raised them too; bridge_fixed_mps is their own value.
+    99 U180 (user ruling 2026-11-13): rtk_float got its own pair -- the
+    position cap float_cap_mps and the COG speed cog_float_mps, both 1.0 --
+    while dgps keeps fix_cap_mps / cog_degraded_mps (0.5 / 0.6): the COG
+    speed bypasses the position cap, so raising only the COG speed would
+    have run a COG heading on float at 1.0 while the better dual-antenna
+    heading on the same fix stayed at 0.5. dgps stays slow because its
+    ~1.5 m position error eats the fence inset. On float the climb / bridge
+    take cog_float_mps but never more than bridge_fixed_mps (the rescue
+    path is not faster on a worse fix than on rtk_fixed).
     single / no_fix never get here as a moving case: their i_fix is absent and
     the gate vetoes on rtk (11 S3.2.1, unchanged).
     """
     if heading_source == "cog":  # L2: a fixed COG speed, by fix quality
+        if fix_type == "rtk_float":
+            return None, cog_float_mps  # 99 U180
         return None, (cog_degraded_mps if fix_type in DEGRADED_FIXES else cog_fixed_mps)
     if heading_source in ("climb", "bridge"):
         # 99 U151: the heading-deadlock climb runs at the navigation top speed
@@ -263,9 +274,13 @@ def quality_caps(fix_type: Optional[str], heading_source: Optional[str],
         # speed (1.0), which still keeps COG alive for the hand-back.
         # 99 U178: its own value (bridge_fixed_mps, 1.0) now that COG runs at
         # 2.0 -- ~~cog_fixed_mps~~ shared until 2026-11-13.
+        if fix_type == "rtk_float":
+            return None, min(cog_float_mps, bridge_fixed_mps)  # 99 U180
         return None, (cog_degraded_mps if fix_type in DEGRADED_FIXES else bridge_fixed_mps)
+    if fix_type == "rtk_float":
+        return float_cap_mps, None  # 99 U180: float has its own cap
     if fix_type in DEGRADED_FIXES:
-        return fix_cap_mps, None  # float / dgps: capped
+        return fix_cap_mps, None  # dgps: capped
     return None, None  # rtk_fixed + L1: nothing added
 
 
@@ -279,7 +294,8 @@ class NavTick:
                  v_obstacle_avoid_mps: Any = None,
                  fence_consts: Optional[FenceConstants] = None,
                  degraded_fix_cap_mps: Any, cog_drive_fixed_mps: Any,
-                 cog_drive_degraded_mps: Any, bridge_drive_fixed_mps: Any) -> None:
+                 cog_drive_degraded_mps: Any, bridge_drive_fixed_mps: Any,
+                 float_fix_cap_mps: Any, cog_drive_float_mps: Any) -> None:
         self._src = source
         self._arb = arbiter
         # 12 S2.2 step 6b constants. REQUIRED, with no None-means-skip shape --
@@ -328,6 +344,9 @@ class NavTick:
         self._cog_degraded = _positive("nav.cog_drive_degraded_mps", cog_drive_degraded_mps)
         # 99 U178: the climb / IMU-bridge speed on rtk_fixed, required like the rest
         self._bridge_fixed = _positive("nav.bridge_drive_fixed_mps", bridge_drive_fixed_mps)
+        # 99 U180: the rtk_float pair; the two degraded_* values above are dgps only now
+        self._float_cap = _positive("nav.float_fix_cap_mps", float_fix_cap_mps)
+        self._cog_float = _positive("nav.cog_drive_float_mps", cog_drive_float_mps)
         self._holo = bool(holonomic)
         self._suspended = False
 
@@ -444,7 +463,8 @@ class NavTick:
         zone_cap = speed_cap_mps(inp.fence, inp.pose_xy, fence_inset)
         fix_cap, cog_drive = quality_caps(inp.fix_type, inp.heading_source, self._fix_cap,
                                           self._cog_fixed, self._cog_degraded,
-                                          self._bridge_fixed)  # 99 U142 / U178
+                                          self._bridge_fixed, self._float_cap,
+                                          self._cog_float)  # 99 U142 / U178 / U180
         gate = compute_gate(
             v_nom_mps=v_nom, spec_max_vx_mps=self._spec_vx,
             free_space_mps=f_mps, health=inp.health, i_fix=inp.i_fix,

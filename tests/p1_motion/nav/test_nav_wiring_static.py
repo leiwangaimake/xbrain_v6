@@ -182,5 +182,6 @@ def test_the_fix_quality_speeds_reach_navtick_by_name():
     test_fix_quality_caps.py. MUTATION: swap the fixed / degraded COG fields
     (1.0 on a dgps position) -> red."""
     for arg in ("degraded_fix_cap_mps", "cog_drive_fixed_mps", "cog_drive_degraded_mps",
-                "bridge_drive_fixed_mps"):  # 99 U178
+                "bridge_drive_fixed_mps",  # 99 U178
+                "float_fix_cap_mps", "cog_drive_float_mps"):  # 99 U180
         assert "%s=cfg.%s" % (arg, arg) in _NAV, arg  # each from its own field

@@ -36,27 +36,31 @@ from xbrain.p1_motion.path import gnss_pose  # i_fix table
 
 pytestmark = pytest.mark.no_device  # pure logic
 
-CAP, COG, COG_LOW, BRIDGE = 0.5, 2.0, 0.6, 1.0  # degraded cap / COG fixed / COG degraded / bridge (U178)
+CAP, COG, COG_LOW, BRIDGE = 0.5, 2.0, 0.6, 1.0  # dgps cap / COG fixed / COG dgps / bridge (U178)
+F_CAP, F_COG = 0.9, 0.8  # 99 U180 rtk_float pair; distinct from every other value so a swap shows
 
 
 # -- the decision table ------------------------------------------------------------
 @pytest.mark.parametrize("fix,source,want", [
     ("rtk_fixed", "dual_antenna", (None, None)),  # full speed: nothing added
-    ("rtk_float", "dual_antenna", (CAP, None)),   # float: capped
+    ("rtk_float", "dual_antenna", (F_CAP, None)), # float: its own cap (99 U180, was CAP)
     ("dgps", "dual_antenna", (CAP, None)),        # dgps: capped, NOT stopped (was i_fix 0)
     ("rtk_fixed", "cog", (None, COG)),            # L2 on a good fix: 2.0 (99 U178, was 1.0)
-    ("rtk_float", "cog", (None, COG_LOW)),        # L2 on float: 0.6, not 1.0
+    ("rtk_float", "cog", (None, F_COG)),          # L2 on float: its own speed (99 U180, was COG_LOW)
     ("dgps", "cog", (None, COG_LOW)),             # COG beats the cap: 0.5 would starve COG
     ("rtk_fixed", None, (None, None)),            # no valid heading: the gate vetoes anyway
     ("rtk_fixed", "bridge", (None, BRIDGE)),      # 99 U178: the bridge keeps its own 1.0
     ("rtk_fixed", "climb", (None, BRIDGE)),       # 99 U178: likewise
+    ("rtk_float", "bridge", (None, F_COG)),       # 99 U180: float COG speed (under the bridge)
+    ("dgps", "climb", (None, COG_LOW)),           # dgps keeps the 0.6
 ])
 def test_quality_caps(fix, source, want):
     """MUTATION: check the fix before the source -> dgps + cog gets the 0.5
     cap and COG drops to blind -> red; drop dgps from the capped set -> red;
     one COG speed for every fix -> float + cog runs at 1.0 -> red; the bridge
-    on the COG speed again (pre-U178) -> bridge at 2.0 -> red."""
-    assert quality_caps(fix, source, CAP, COG, COG_LOW, BRIDGE) == want  # (fix_cap, cog_drive)
+    on the COG speed again (pre-U178) -> bridge at 2.0 -> red; float on the
+    dgps pair (pre-U180) or dgps on the float pair -> red."""
+    assert quality_caps(fix, source, CAP, COG, COG_LOW, BRIDGE, F_CAP, F_COG) == want  # (fix_cap, cog_drive)
 
 
 def test_float_and_dgps_factor_is_one_single_still_vetoes():
@@ -97,14 +101,16 @@ def test_the_cog_speed_replaces_the_fix_cap():
 
 # -- through NavTick ---------------------------------------------------------------
 @pytest.mark.parametrize("fix,source,ceiling,limiter", [
-    ("rtk_float", "dual_antenna", CAP, "rtk"),  # float: <= 0.5
+    ("rtk_float", "dual_antenna", 0.7, "rtk"),  # float: <= its own cap (the spine's 0.7, 99 U180)
+    ("dgps", "dual_antenna", CAP, "rtk"),       # dgps: <= 0.5
+    ("rtk_float", "cog", 0.8, "heading"),       # COG on float: its own speed (the spine's 0.8)
     ("rtk_fixed", "cog", 1.0, None),            # COG on fixed: 1.0 ties the spine's v_nom (gate test names it)
     ("dgps", "cog", COG_LOW, "heading"),        # COG on dgps: <= 0.6
 ])
 def test_navtick_applies_the_caps(fix, source, ceiling, limiter):
     """MUTATION: NavTick does not pass the caps to compute_gate -> v_max 1.0
-    (the spine's v_nom) -> red."""
-    src, tick = _stack()  # v_nom 1.0, caps 0.5 / 1.0 / 0.6
+    (the spine's v_nom) -> red; NavTick hands the dgps pair for float -> red."""
+    src, tick = _stack()  # v_nom 1.0; dgps 0.5 / 0.6, float 0.7 / 0.8, COG fixed 1.0
     _goto(src, 5000)  # a goto in open ground
 
     class _Tick:  # tick.run with the fix / source of this case

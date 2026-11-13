@@ -167,13 +167,15 @@ def test_the_keys_have_no_default(bad):
         HeadingBridge(30.0, 20.0, bad)  # bad time constant
 
 
-@pytest.mark.parametrize("fix,want", [("rtk_fixed", (None, 1.0)), ("rtk_float", (None, 0.6))])
+@pytest.mark.parametrize("fix,want", [("rtk_fixed", (None, 1.0)), ("rtk_float", (None, 0.9)),
+                                      ("dgps", (None, 0.6))])
 def test_the_bridge_runs_like_the_climb(fix, want):
     """99 U153: held at the COG fixed speed 1.0 on rtk_fixed (only the dual
     antenna runs at 2.0). MUTATION: no term on rtk_fixed -> the bridge runs
     at the 2.0 top speed -> red; like a plain heading on float -> the 0.5 cap
     holds it at the COG threshold -> red."""
-    assert quality_caps(fix, "bridge", 0.5, 2.0, 0.6, 1.0) == want  # COG 2.0 (U178), bridge 1.0
+    # float pair 1.0 / 0.9 (99 U180): float takes cog_float_mps 0.9, under the bridge 1.0
+    assert quality_caps(fix, "bridge", 0.5, 2.0, 0.6, 1.0, 1.0, 0.9) == want  # COG 2.0 (U178), bridge 1.0
 
 
 # -- the pose view ---------------------------------------------------------------------

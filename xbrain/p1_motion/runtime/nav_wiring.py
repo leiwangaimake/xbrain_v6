@@ -286,7 +286,9 @@ class NavRuntime:
                              degraded_fix_cap_mps=cfg.degraded_fix_cap_mps,
                              cog_drive_fixed_mps=cfg.cog_drive_fixed_mps,
                              cog_drive_degraded_mps=cfg.cog_drive_degraded_mps,
-                             bridge_drive_fixed_mps=cfg.bridge_drive_fixed_mps)  # 99 U178
+                             bridge_drive_fixed_mps=cfg.bridge_drive_fixed_mps,  # 99 U178
+                             float_fix_cap_mps=cfg.float_fix_cap_mps,  # 99 U180
+                             cog_drive_float_mps=cfg.cog_drive_float_mps)
         self._host = MissionHost(self._src, relmove_limits=cfg.relmove,
                                  holonomic=cfg.holonomic, now_mono_ms=now_ms)
         self._health = HealthFactorSlot(cfg.health_degrade_ms, cfg.health_dead_ms)

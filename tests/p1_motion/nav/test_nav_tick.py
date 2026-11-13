@@ -51,7 +51,9 @@ def _stack():
                    spec_max_vx_mps=2.0, holonomic=True,
                    rot_limits=rot_limits(), r_robot_m=None,
                    degraded_fix_cap_mps=0.5, cog_drive_fixed_mps=1.0, cog_drive_degraded_mps=0.6,
-                   bridge_drive_fixed_mps=1.0)
+                   bridge_drive_fixed_mps=1.0,
+                   # 99 U180: the float pair differs from the dgps pair so a swap shows
+                   float_fix_cap_mps=0.7, cog_drive_float_mps=0.8)
     return src, tick
 
 
@@ -168,7 +170,8 @@ def test_ctor_refuses_unset_limits():
                 spec_max_vx_mps=2.0, holonomic=True,
                 rot_limits=rot_limits(), r_robot_m=None,
                    degraded_fix_cap_mps=0.5, cog_drive_fixed_mps=1.0, cog_drive_degraded_mps=0.6,
-                   bridge_drive_fixed_mps=1.0)
+                   bridge_drive_fixed_mps=1.0,
+                   float_fix_cap_mps=0.5, cog_drive_float_mps=0.6)
 
 
 # ---- adapter entries ---------------------------------------------------------
@@ -219,7 +222,8 @@ def test_max_profile_obstacle_avoid_caps_the_nominal():
                    spec_max_vx_mps=2.0, holonomic=True, v_obstacle_avoid_mps=0.5,
                    rot_limits=rot_limits(), r_robot_m=None,
                    degraded_fix_cap_mps=0.5, cog_drive_fixed_mps=1.0, cog_drive_degraded_mps=0.6,
-                   bridge_drive_fixed_mps=1.0)
+                   bridge_drive_fixed_mps=1.0,
+                   float_fix_cap_mps=0.5, cog_drive_float_mps=0.6)
     _goto(src, 5000)
     oa = HealthView(1.0, True, "obstacle_avoid", "ok", 100)
     outs = [tick.run(_inp(5000 + 50 * k, health=oa)) for k in range(10)]
