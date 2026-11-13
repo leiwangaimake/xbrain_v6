@@ -218,6 +218,9 @@ hmi:
       disc_outline_color: "#1a1a1a"   # 黄 / 绿饼的描边: 深色
       disc_outline_px: 1.0            # 描边粗细, 屏幕像素
       number_color: "#000000"         # 黄饼里编号的颜色
+      # 用户 2026-11-12: 航点名称在圆饼右侧, 与圆饼水平居中对齐, 紧挨着圆饼;
+      # 这是圆饼外沿到第一个字的间距, 屏幕像素, 不随缩放变 (~~名称在点上方 2 m, 左对齐~~)
+      label_gap_px: 4
       # ~~recorded / unrecorded: { shape, color, size_px }~~ 2026-11-11 起不再区分, 统一上面的样子
     robot:                            # U9: 机器人当前位置三角 (用户 2026-11-11): 亮红
       color: "#ff1f1f"
