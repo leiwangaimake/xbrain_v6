@@ -679,11 +679,24 @@ class CloudBridge:
             # D(v2.0 S3.4): SET_ALARM_CONFIG 受理[不代表生效]. 登记一条待确认终态,
             # 等 state/fence.active.rev 越过受理时的值(围栏真的换了)才发 done,
             # 6s 没等到发 failed. 只对[受理成功]登记 -- 被拒的不必等生效.
-            if task_type == "SET_ALARM_CONFIG" and v2_ack["accepted"]:
-                # rev0 取[fan-out 时]捕获的基线(见 group 的 fence_rev0), 不是此刻
-                # 的 active.rev -- 避免 state/fence 抢先到达造成的误判(#1).
-                self._register_alarm_terminal(
-                    task_id, task_type, group.get("fence_rev0"))
+            if (task_type in ("SET_ALARM_CONFIG", "SET_FENCE_CONFIG")
+                    and v2_ack["accepted"]):
+                # 99 U185: wait for state/fence to move ONLY when a part of the
+                # command changed what P1 enforces (P3 marks each fence ack
+                # detail.in_force). ~~always waited~~: a configuration that
+                # changed nothing in force (a region stored switched off, a
+                # re-sent identical region) timed out as failed after 6 s --
+                # the D-8 / S6.4 "all enabled=false -> failed" deviation.
+                if any((a.get("detail") or {}).get("in_force") for a in group["acks"]):
+                    # rev0 取[fan-out 时]捕获的基线(见 group 的 fence_rev0), 不是此刻
+                    # 的 active.rev -- 避免 state/fence 抢先到达造成的误判(#1).
+                    self._register_alarm_terminal(
+                        task_id, task_type, group.get("fence_rev0"))
+                else:  # stored, nothing in force changed: done now
+                    now_m = self._now_mono()
+                    self._emit_alarm_result(task_id, {
+                        "task_type": task_type, "started_mono": now_m,
+                        "started_wall": self._now_wall()}, "done")
         except Exception:                        # noqa: BLE001
             _logger.exception("p5 cloud internal-ack handler crashed")
 
@@ -766,8 +779,8 @@ class CloudBridge:
             started_ts=pending["started_wall"], ended_ts=ended_wall,
             route_id=None, route_rev=None)
         self.publish_state("state/task", result)
-        _logger.info("p5 cloud SET_ALARM_CONFIG %s terminal -> state/task "
-                     "(task_id=%s)", state, task_id)
+        _logger.info("p5 cloud %s %s terminal -> state/task "
+                     "(task_id=%s)", pending["task_type"], state, task_id)
 
     def tick(self, now_mono_ms: int = None) -> None:
         """由网关主循环周期调用: 清理超时的 pending, 回一条 timeout ack.

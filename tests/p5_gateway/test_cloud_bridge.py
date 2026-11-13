@@ -1516,12 +1516,16 @@ def _feed_state_fence(session, rev):
     session.subs["state/fence"](_Sample("state/fence", env))
 
 
-def _accept_one_alarm(session, msg_id="m-1"):
+def _accept_one_alarm(session, msg_id="m-1", in_force=True):
     """下发单区域(enabled=true)报警配置: fan-out 出[两条](upsert + 激活, 审计
-    #3), 喂两条 accepted -> 聚合 accepted -> 登记待确认终态. 子 cmd_id c-{id}:0/:1."""
+    #3), 喂两条 accepted -> 聚合 accepted -> 登记待确认终态. 子 cmd_id c-{id}:0/:1.
+    99 U185: p3 在激活那条的 detail 里标 in_force(改变了 P1 执行的集合);
+    in_force=False 模拟"存了但没改变生效集合"(例如区域存为未启用)."""
     _feed(session, "cmd/task", _alarm_body([_ALARM_REGION], msg_id=msg_id))
-    _feed_internal_ack(session, "cmd/geo/ack", "c-%s:0" % msg_id, "accepted")
-    _feed_internal_ack(session, "cmd/geo/ack", "c-%s:1" % msg_id, "accepted")
+    _feed_internal_ack(session, "cmd/geo/ack", "c-%s:0" % msg_id, "accepted",
+                       detail={"in_force": False})  # a new region is a draft
+    _feed_internal_ack(session, "cmd/geo/ack", "c-%s:1" % msg_id, "accepted",
+                       detail={"in_force": in_force})  # the activation
 
 
 def _task_results(session):
@@ -1760,3 +1764,16 @@ def test_audio_control_is_not_posted_onto_the_tts_key():
 
     assert not _internal_puts(session, "cmd/audio/speak"), (
         "AUDIO_CONTROL 被发到了 TTS 文本通道上")
+
+
+def test_a_configuration_that_changes_nothing_in_force_is_done_at_once():
+    """99 U185: when no part of the command changed what P1 enforces (P3 marks
+    each fence ack in_force), the terminal is done immediately -- before, it
+    waited for state/fence to move, which it never would, and reported failed
+    after 6 s (the S6.4 "all enabled=false -> failed" deviation).
+    MUTATION: always wait -> no result before the timeout -> red."""
+    _b, session, _mono, _wall = _alarm_bridge()  # the D test harness
+    _feed_state_fence(session, 3)  # a fence view exists
+    _accept_one_alarm(session, in_force=False)  # stored, nothing in force changed
+    res = _task_results(session)  # terminal results so far
+    assert len(res) == 1 and res[0]["state"] == "done"  # at once, done

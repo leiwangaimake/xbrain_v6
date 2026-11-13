@@ -111,12 +111,14 @@ def test_all_five_open_types_route_somewhere():
                                               {"latitude": 31.1,
                                                "longitude": 121.1}]}]},
         "AUDIO_CONTROL": {"mode": "pc_to_dog", "action": "start"},
+        # 99 U185: the safety-fence interface -- the speed-limit default alone
+        "SET_FENCE_CONFIG": {"speed_limit_default_mps": 0.8},
     }
     assert set(payloads) == set(OPEN_TASK_TYPES), (
         "本用例的样例集与 OPEN_TASK_TYPES 不一致 -- 新增类型时要同步")
     want = {"GOTO_KEYPOINT": KEY_TASK, "STOP_TASK": KEY_TASK,
             "ESTOP": KEY_ESTOP, "SET_ALARM_CONFIG": KEY_GEO,
-            "AUDIO_CONTROL": KEY_AUDIO}
+            "AUDIO_CONTROL": KEY_AUDIO, "SET_FENCE_CONFIG": KEY_GEO}
     for task_type, payload in payloads.items():
         # route 现在返回 [(key, payload), ...]; 每类的第一条落点即验收目标.
         cmds = route(_data(task_type, payload))
@@ -499,3 +501,63 @@ def test_exit_must_carry_the_original_stream_id():
                               {"mode": "pc_to_dog", "action": "exit_broadcast",
                                "stream_id": "audio-gj001-0001"}))
     assert body["stream_id"] == "audio-gj001-0001"
+
+
+# -- 99 U185: SET_FENCE_CONFIG, the safety-fence interface ---------------------
+_RING = [{"latitude": 31.0, "longitude": 121.0}, {"latitude": 31.1, "longitude": 121.0},
+         {"latitude": 31.1, "longitude": 121.1}]  # a triangle
+
+
+def _fence_cfg(payload):  # route one SET_FENCE_CONFIG
+    from xbrain.p5_gateway.inbound.task_router import route  # unit under test
+    return [c for _k, c in route(_data("SET_FENCE_CONFIG", payload))]  # the cmd/geo bodies
+
+
+def _reject_code(payload):  # the error code of a refused SET_FENCE_CONFIG
+    from xbrain.p5_gateway.inbound.cloud_inbound import InboundReject  # the refusal type
+    with pytest.raises(InboundReject) as exc:  # must be refused
+        _fence_cfg(payload)  # routed
+    return exc.value.fields["detail"]["code"]  # the closed-set code
+
+
+def test_fence_config_fans_regions_and_the_default_out_to_cmd_geo():
+    """Each region type gets its role; enabled adds an activation; a speed
+    region keeps its own limit; keep_in only switches; the default becomes one
+    set_fence_defaults. MUTATION: one role for all -> red; the activation
+    dropped -> red; the default dropped -> red; keep_in off sent without force
+    -> a base_rev conflict on the robot -> red."""
+    cmds = _fence_cfg({"regions": [
+        {"op": "upsert", "type": "forbid_region", "id": "f-pit", "base_rev": 0,
+         "name": "北门禁止区域围栏", "enabled": True, "vertices": _RING},
+        {"op": "upsert", "type": "speed_limit_region", "id": "f-yard", "base_rev": 0,
+         "name": "路口限速区域围栏", "enabled": False, "vertices": _RING, "speed_limit_mps": 0.5},
+        {"op": "set_state", "type": "keep_in", "id": "f-camp", "enabled": False},
+        {"op": "delete", "type": "forbid_region", "id": "f-old", "base_rev": 3}],
+        "speed_limit_default_mps": None})  # delete the cloud default
+    assert [(c["action"], c.get("geo_id")) for c in cmds] == [
+        ("upsert", "f-pit"), ("set_state", "f-pit"), ("upsert", "f-yard"),
+        ("set_state", "f-camp"), ("delete", "f-old"), ("set_fence_defaults", None)]
+    assert cmds[0]["obj"]["geom"]["role"] == "forbid" and cmds[1]["obj"] == {"state": "active"}
+    assert cmds[2]["obj"]["geom"] == {"role": "speed_limit", "speed_limit_mps": 0.5,
+                                      "outer": [[31.0, 121.0], [31.1, 121.0], [31.1, 121.1]]}
+    assert cmds[3]["obj"] == {"state": "disabled"} and cmds[3]["force"] is True  # cloud-only off
+    assert cmds[5]["obj"] == {"speed_limit_default_mps": None}  # null = delete
+    assert all(c["origin"] == "cloud" for c in cmds)  # CH-2: never another channel
+
+
+@pytest.mark.parametrize("payload,code", [
+    ({}, "E_SCHEMA"),  # nothing to configure
+    ({"regions": [{"op": "upsert", "type": "keep_in", "id": "f-camp", "base_rev": 0,
+                   "name": "x", "enabled": True, "vertices": _RING}]}, "E_CONFIG_INVALID"),
+    ({"regions": [{"op": "upsert", "type": "alarm_region", "id": "f-a", "base_rev": 0,
+                   "name": "x", "enabled": True, "vertices": _RING}]}, "E_SCHEMA"),  # not here
+    ({"regions": [{"op": "upsert", "type": "forbid_region", "id": "f-a", "base_rev": 0,
+                   "name": "x", "enabled": True, "vertices": _RING,
+                   "speed_limit_mps": 0.5}]}, "E_SCHEMA"),  # a limit on a forbid zone
+])
+def test_fence_config_refusals(payload, code):
+    """keep_in is recorded on site (only on / off from the cloud, the one
+    refusal worded as a configuration error); alarm regions belong to
+    SET_ALARM_CONFIG; a limit only on a speed region (field errors, E_SCHEMA).
+    MUTATION: accept a keep_in upsert -> red; accept the empty command -> red."""
+    assert _reject_code(payload) == code  # refused, with the reason's code

@@ -47,7 +47,7 @@ from typing import Any, Dict, List, Tuple
 from ...common import errors
 from ..outbound.error_map import V2_DETAIL_TASK_UNSUPPORTED, build_error_fields
 from .cloud_inbound import InboundReject
-from .field_validate import check_ids, validate_alarm, validate_goto
+from .field_validate import check_ids, validate_alarm, validate_fence_config, validate_goto
 
 #: 云端来的一律 origin/source = cloud. NO 不从报文里取 --
 #: origin 是授权边界(11 CH-1 通道即权限), 让发起方自称等于没有边界.
@@ -61,7 +61,10 @@ KEY_AUDIO = "cmd/audio/speak"
 
 #: v2.0 S3 的六个 task_type. 前五个本期开放, MANUAL_VELOCITY 本期禁止.
 OPEN_TASK_TYPES = ("GOTO_KEYPOINT", "STOP_TASK", "ESTOP",
-                   "SET_ALARM_CONFIG", "AUDIO_CONTROL")
+                   "SET_ALARM_CONFIG", "AUDIO_CONTROL",
+                   # 99 U185: the safety-fence interface v2.0 S3.4 calls for
+                   # ("营区 keep-in 必须走独立安全围栏接口")
+                   "SET_FENCE_CONFIG")
 
 #: v2.0 S3 逐字列出的[旧名称], 收到必须以"不支持的任务类型"拒绝,
 #: NO 不能静默映射到某个现有能力.
@@ -138,6 +141,10 @@ def route(data: Dict[str, Any]) -> List[Tuple[str, Dict[str, Any]]]:
         # fan-out: 一条报警配置 -> N 条 cmd/geo fence(warning) upsert.
         # 批A 只投影 regions(几何); rules/声光是批B/C 的 cmd/config.
         return [(KEY_GEO, c) for c in _alarm(cmd_id, payload)]
+    if task_type == "SET_FENCE_CONFIG":
+        # 99 U185: forbid / speed-limit regions + the activity area's on/off +
+        # the speed-limit default, fanned out like SET_ALARM_CONFIG
+        return [(KEY_GEO, c) for c in _fence_config(cmd_id, payload)]
     return [(KEY_AUDIO, _audio(cmd_id, payload))]
 
 
@@ -353,6 +360,58 @@ def _region_to_fence(cmd_id: str, region: Dict) -> List[Dict[str, Any]]:
                      "geom": {"role": "warning", "outer": verts}}}]
     if region.get("enabled"):
         cmds.append(_activate_fence(cmd_id, geo_id))
+    return cmds
+
+
+#: 99 U185: SET_FENCE_CONFIG region type -> fence role (11 S9A.2)
+_FENCE_TYPE_TO_ROLE = {"forbid_region": "forbid", "speed_limit_region": "speed_limit",
+                       "keep_in": "allow"}
+
+
+def _fence_config(cmd_id: str, payload: Dict) -> List[Dict[str, Any]]:
+    """SET_FENCE_CONFIG -> cmd/geo commands (99 U185, update_cloud.md S6.x).
+
+    Each region becomes 1~2 fence commands exactly as an alarm region does
+    (_region_to_fence's rules: delete; set_state on / off; upsert, plus an
+    activation when enabled) with the role from its type; a
+    speed_limit_region may carry its own speed_limit_mps (without one it
+    follows the default, P3 fills it in). keep_in only switches on / off
+    (field_validate refuses the rest). speed_limit_default_mps, when present,
+    becomes one cmd/geo set_fence_defaults (null deletes the cloud value, the
+    robot goes back to its configured 0.6). Overlap, geometry and the speed
+    bounds are P3's to refuse; the aggregation makes the whole command fail if
+    any part is refused (aggregate_child_acks)."""
+    validate_fence_config(payload)
+    cmds: List[Dict[str, Any]] = []
+    for region in payload.get("regions") or ():
+        op, geo_id = region["op"], region["id"]
+        if op == "delete":
+            cmds.append({"cmd_id": cmd_id, "action": "delete", "type": "fence",
+                         "geo_id": geo_id, "origin": CLOUD_ORIGIN,
+                         "base_rev": region["base_rev"]})
+        elif op == "set_state":
+            if region["enabled"]:
+                cmds.append(_activate_fence(cmd_id, geo_id))
+            else:  # switching off is the cloud's alone (11 S7.9.5 disable_fence)
+                cmds.append({"cmd_id": cmd_id, "action": "set_state", "type": "fence",
+                             "geo_id": geo_id, "origin": CLOUD_ORIGIN, "force": True,
+                             "obj": {"state": "disabled"}})
+        else:
+            geom: Dict[str, Any] = {
+                "role": _FENCE_TYPE_TO_ROLE[region["type"]],
+                "outer": [[v["latitude"], v["longitude"]] for v in region["vertices"]]}
+            if region.get("speed_limit_mps") is not None:
+                geom["speed_limit_mps"] = region["speed_limit_mps"]
+            cmds.append({"cmd_id": cmd_id, "action": "upsert", "type": "fence",
+                         "geo_id": geo_id, "origin": CLOUD_ORIGIN,
+                         "base_rev": region["base_rev"],
+                         "obj": {"name": region["name"], "geom": geom}})
+            if region["enabled"]:
+                cmds.append(_activate_fence(cmd_id, geo_id))
+    if "speed_limit_default_mps" in payload:
+        cmds.append({"cmd_id": cmd_id, "action": "set_fence_defaults",
+                     "origin": CLOUD_ORIGIN,
+                     "obj": {"speed_limit_default_mps": payload["speed_limit_default_mps"]}})
     return cmds
 
 

@@ -256,9 +256,60 @@ def _validate_regions(payload: Dict[str, Any]) -> None:
         # delete: id + base_rev 已校验, 无其它必填.
 
 
+# --- 99 U185: SET_FENCE_CONFIG payload (update_cloud.md S6.x) -----------------
+
+#: the region types of the safety-fence interface. keep_in is the activity
+#: area: only switched on / off from the cloud (user 2026-11-13: "活动区域围栏
+#: 不支持云端下发, 该围栏录制好后支持云端启用和关闭").
+FENCE_REGION_TYPES = ("forbid_region", "speed_limit_region", "keep_in")
+
+
+def validate_fence_config(payload: Dict[str, Any]) -> None:
+    """Field-level check of a SET_FENCE_CONFIG payload. The robot (P3) is the
+    authority on geometry (self-intersection, area, overlap) and on the speed
+    bounds; the gateway checks shape, so a malformed command never reaches
+    the robot and the reason names the field."""
+    regions = payload.get("regions")
+    if regions is not None and not isinstance(regions, list):
+        raise _invalid("regions", "regions must be an array")
+    has_default = "speed_limit_default_mps" in payload
+    if not regions and not has_default:
+        raise _invalid("regions", "nothing to configure: no regions and no "
+                       "speed_limit_default_mps")
+    if has_default and payload["speed_limit_default_mps"] is not None:
+        _number(payload["speed_limit_default_mps"], "speed_limit_default_mps")
+    for i, region in enumerate(regions or ()):
+        base = "regions[%d]" % i
+        if not isinstance(region, dict):
+            raise _invalid(base, "%s must be an object" % base)
+        op = _enum_ret(_req(region, "op"), REGION_OPS, "%s.op" % base)
+        typ = _enum_ret(_req(region, "type"), FENCE_REGION_TYPES, "%s.type" % base)
+        _regex(_req(region, "id"), _REGION_ID_RE, "%s.id" % base, "f-[a-z0-9_]{1,40}")
+        if typ == "keep_in" and op != "set_state":
+            raise InboundReject(build_error_fields(
+                errors.E_CONFIG_INVALID,
+                "the activity area is recorded on site; the cloud may only "
+                "switch it on or off", {"field": "%s.op" % base, "region_id": region.get("id")}))
+        if op in ("upsert", "delete") and not isinstance(_req(region, "base_rev"), int):
+            raise _invalid("%s.base_rev" % base, "base_rev must be an integer")
+        if op in ("upsert", "set_state") and not isinstance(_req(region, "enabled"), bool):
+            raise _invalid("%s.enabled" % base, "enabled must be a boolean")
+        if op == "upsert":
+            _req(region, "name")
+            vertices = _req(region, "vertices")
+            if not isinstance(vertices, list) or len(vertices) < 3:
+                raise _invalid("%s.vertices" % base, "a polygon needs at least 3 vertices")
+            if "speed_limit_mps" in region:
+                if typ != "speed_limit_region":
+                    raise _invalid("%s.speed_limit_mps" % base,
+                                   "speed_limit_mps is only legal on a speed_limit_region")
+                if region["speed_limit_mps"] is not None:
+                    _number(region["speed_limit_mps"], "%s.speed_limit_mps" % base)
+
+
 def _enum_ret(value: Any, closed, field: str) -> Any:
     _enum(value, closed, field)
     return value
 
 
-__all__ = ["check_ids", "validate_goto", "validate_alarm"]
+__all__ = ["check_ids", "validate_goto", "validate_alarm", "validate_fence_config"]
