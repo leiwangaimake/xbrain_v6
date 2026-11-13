@@ -398,6 +398,11 @@
           : d.cause === "battery_swap" ? "已换电, 低电告警解除" : "低电告警解除");
       case "return_target_missing": return word("没有定义返航目标(充电站或返航终点站)");
       case "rtk_lost": return word("定位丢失, 机器人已停车");
+      // 99 U196: repeated every 3 s while locked; hes_engaged = the hardware
+      // stop is still pressed, which an unlock alone cannot clear.
+      case "estop.locked":
+        return word(d.reason === "hes_engaged" ? "底盘锁定: 硬件急停未松开"
+          : "底盘锁定: 请先解锁");
       case "heading_recovered": return word("定位恢复");
       case "cloud_up": return word("云端连接恢复");
       case "cloud_down": return word("云端连接断开");
@@ -456,6 +461,9 @@
     rtk: { cat: "rtk", name: "定位丢失", starts: ["rtk_lost"], ends: ["heading_recovered"] },
     comm: { cat: "comm", name: "云端断链", starts: ["cloud_lost", "cloud_down", "cloud_degraded"],
             ends: ["cloud_up"] },
+    // 99 U196: P2 repeats estop.locked every 3 s while locked and sends nothing
+    // on unlock, so silence past repeatS is the end of the episode.
+    chassis_lock: { cat: "estop", name: "底盘锁定", repeatS: 10, starts: ["estop.locked"], ends: [] },
   };
 
   function eventFamily(ev) {

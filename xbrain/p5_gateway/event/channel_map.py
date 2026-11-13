@@ -24,7 +24,7 @@ Most categories are single-channel; a few are per-detail:
   * fence   default alarm, but soft_enter/soft_exit/hard_clip/fence_changed/
             fence_stage_failed ride normal (11 S6.2 fence sub-table).
   * estop   default alarm, but estop.hes_cleared / estop.unlock ride normal
-            (11 S6.2 estop note).
+            (11 S6.2 estop note), and so does the estop.locked reminder (99 U196).
   * payload/ptz/voice  default normal, but device_offline + device_online ride
             alarm together (paired, E-1).
   * charging  default normal (the CHG stage events), but the low-battery
@@ -90,6 +90,10 @@ _DETAIL_OVERRIDES: dict = {
     # estop: default alarm; the two "cleared/unlocked" info events ride normal.
     ("estop", "estop.hes_cleared"): "normal",
     ("estop", "estop.unlock"): "normal",
+    # 99 U196: the chassis-lock reminder repeats every 3 s while locked; a few
+    # minutes late after a reconnect is acceptable (11 S6.2 criterion), and the
+    # repeats must not crowd the alarm cursor.
+    ("estop", "estop.locked"): "normal",
     # device offline/online (2026-08-17): default-normal categories, but a device
     # outage + its recovery ride alarm together (E-1: never leave cloud stuck).
     ("payload", "device_offline"): "alarm",

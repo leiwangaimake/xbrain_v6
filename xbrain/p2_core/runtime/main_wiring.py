@@ -51,6 +51,7 @@ from xbrain.p2_core.audio.broadcast_sink import BroadcastPlaySink
 from xbrain.p2_core.boot.config_digest import ConfigDigestGuard, digest_fault_event
 from xbrain.p2_core.health.aggregate import HealthAggregator, refresh_health
 from xbrain.p2_core.health.change_events import HealthChangeTracker, health_change_event
+from xbrain.p2_core.health.chassis_lock_events import ChassisLockReporter, chassis_lock_event
 from xbrain.p2_core.health.factor import (
     FactorConfig,
     PerceptionHealthConfig,
@@ -154,7 +155,8 @@ def _stage_a_config() -> "tuple":
     this process needs from it -- the factor table and the config digest guard.
 
     (FactorConfig, PerceptionHealthConfig, battery critical_soc_pct,
-    ConfigDigestGuard, health change_event_hold_s).
+    ConfigDigestGuard, health change_event_hold_s, health chassis_lock_event
+    {period_s, max_age_s}).
 
     One load, deliberately. A second load_resolved() for the guard could see a
     DIFFERENT MANIFEST than the one the factor table came from, and since a
@@ -196,10 +198,14 @@ def _stage_a_config() -> "tuple":
     # event/{sev}/health goes out (health/change_events.py). No default: a
     # missing key raises like the factor keys above.
     change_hold_s = cfg.get("health.change_event_hold_s")
+    # 99 U196 (user 2026-11-13): the chassis lock event cadence and the
+    # state/robot freshness bound. No default: ChassisLockReporter raises.
+    lock_evt_cfg = (cfg.get("health.chassis_lock_event.period_s"),
+                    cfg.get("health.chassis_lock_event.max_age_s"))
     # Built from the ResolvedConfig object, not from a fresh MANIFEST read --
     # see ConfigDigestGuard.at_stage_a on why that distinction is the point.
     return (factor, perception, battery_soc, ConfigDigestGuard.at_stage_a(cfg),
-            change_hold_s)
+            change_hold_s, lock_evt_cfg)
 
 
 def _now_mono_ms() -> int:
@@ -294,11 +300,14 @@ def run_voice_loop_wiring(mic_cfg: MicCaptureConfig,
         # freeze line and a restart), and re-reading it at 1 Hz would put a
         # file read plus a sha256 verification in the publish path.
         (factor_cfg, perception_cfg, battery_soc, digest_guard,
-         change_hold_s) = _stage_a_config()
+         change_hold_s, lock_evt_cfg) = _stage_a_config()
         # 11 S6.2 health row "健康度变化": one event per item state change
         # (2026-11-12, the HMI event list). eid boot-unique like _cfg_evt.
         health_changes = HealthChangeTracker(change_hold_s)
         _health_evt = {"boot": os.urandom(3).hex(), "seq": 0}
+        # 99 U196: event/warn/estop estop.locked every period_s while locked.
+        chassis_lock = ChassisLockReporter(*lock_evt_cfg)
+        _lock_evt = {"boot": os.urandom(3).hex(), "seq": 0}
         _logger.info("p2 stage A: common_digest=%s", digest_guard.cached_digest)
         # Edge-triggered fault sequence for event/fault/bit. Same boot-token
         # rationale as _estop_boot below: record.db persists across restarts
@@ -1427,6 +1436,18 @@ def run_voice_loop_wiring(mic_cfg: MicCaptureConfig,
                                 ts=time.time())
                             gen.put("event/%s/health" % _hev["sev"], json.dumps(
                                 _hev, ensure_ascii=False).encode("utf-8"))
+                        # 99 U196: the chassis lock, from the same state/robot cache
+                        _lk = chassis_lock.observe(state_cache.get("robot"),
+                                                   rx_mono.get("robot"), now)
+                        if _lk is not None:
+                            _lock_evt["seq"] += 1
+                            _lev = chassis_lock_event(
+                                _lk, eid="lock-p2-%s-%d" % (_lock_evt["boot"],
+                                                            _lock_evt["seq"]),
+                                # WALL-CLOCK-OK(record): 11 S6.1 Event.ts display stamp.
+                                ts=time.time())
+                            gen.put("event/%s/estop" % _lev["sev"], json.dumps(
+                                _lev, ensure_ascii=False).encode("utf-8"))
                         # the grant, from the same aggregate (11 S3.6 body).
                         factor_body = build_health_factor(health_agg.states(), factor_cfg)
                         # 10 S3.3.3 Stage C criterion 3 / 10 S5.4.4 failure row:
