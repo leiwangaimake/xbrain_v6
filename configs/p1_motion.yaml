@@ -36,7 +36,13 @@ nav:
   v_nom_mps: ${common.motion.profiles.patrol.max_mps}   # 任务标称速 = patrol 档 (20 S8.1A)
   v_obstacle_avoid_mps: ${common.motion.profiles.obstacle_avoid.max_mps}  # 11 S3.6 max_profile 降档上限
   degraded_fix_cap_mps: 0.5           # 99 U142 用户裁决 2026-11-06: rtk_float / dgps 与 fixed 同样作业, 限速 0.5 m/s
-  cog_drive_fixed_mps: 1.0            # 99 U142 用户裁决 2026-11-06: 航向 L2 (COG) + rtk_fixed 固定 1.0 m/s (COG 门槛 0.5, 余量大, 航向更准)
+  cog_drive_fixed_mps: 2.0            # 99 U178 用户裁决 2026-11-13: 航向 L2 (COG) + rtk_fixed 与双天线一样最快 2.0 m/s (~~1.0~~, 99 U142 2026-11-06 ~ 2026-11-13)
+  # 99 U179 用户裁决 2026-11-13: 录制期间键盘移动速度按定位/航向定, 取代语音设定的移动速度;
+  # 云端键盘仍按 U150 只受急停与底盘限幅 (录制是人工行为, 看云台视频, 空格键急停, 不加避障)
+  recording_teleop_fixed_mps: 2.0     # rtk_fixed + 双天线 (L1) 航向
+  recording_teleop_degraded_mps: 1.0  # rtk_float / dgps, 或 COG / 桥接 / 无航向; single / no_fix 不动
+  recording_state_stale_ms: 3000      # state/teach (1 Hz) 超过这么久没收到即按非录制 (语音移动速度, <= 1.0)
+  bridge_drive_fixed_mps: 1.0         # 99 U178: IMU 桥接 / 航向死锁爬升 + rtk_fixed 保持 1.0 m/s (救命机制; 2 m/s 下里程计航向精度未测); 此前与 cog_drive_fixed_mps 共用
   cog_drive_degraded_mps: 0.6         # 99 U142 用户裁决 2026-11-06: 航向 L2 (COG) + rtk_float / dgps 固定 0.6 m/s (维持 COG 的最低速)
   climb_track_seg_m: 1.0              # 99 U151 用户裁决 2026-11-06: 航向死锁时取最后移动 >= 1 m 的位移方向作爬升航向
   climb_max_s: 30.0                   # 99 U151: 爬升最长时间 (同 rtk_driver blind_timeout_s), 超时仍无 GNSS 航向则停车
