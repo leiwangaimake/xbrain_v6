@@ -260,55 +260,35 @@ CREATE TABLE IF NOT EXISTS fences (
 """.strip()
 
 
-# 11 S9A.1A operating rules enforced at the DB so a bulk import cannot violate them:
-#   total active <= 5 (S9A.1)  +  at most ONE active allow (S9A.1A FS-5A upper half).
-# The "at least one allow" half (FS-5A lower) is a SET invariant, not a single-row
-# one, so it is checked at FenceSet build/broadcast time (validate_active_fence_set
-# in fence/geom.py) -- a per-row INSERT trigger cannot assert existence.
-TRIGGER_FENCE_TOTAL_QUOTA = """
-CREATE TRIGGER trg_fence_total_quota
-BEFORE INSERT ON fences
-WHEN NEW.state = 'active'
-BEGIN
-  SELECT RAISE(ABORT, 'fence quota exceeded (max 5 active, 11 S9A.1)')
-   WHERE (SELECT COUNT(*) FROM fences
-           WHERE tombstone = 0 AND state = 'active') >= 5;
-END;
-""".strip()
-
+# 11 S9A.1A operating rule enforced at the DB so a bulk import cannot violate it:
+# at most ONE active allow (FS-5A). 99 U183 (user 2026-11-13): ~~total active <= 5
+# (S9A.1)~~ superseded -- there is no limit on the number of fences. The
+# trg_fence_total_quota[_upd] triggers are gone; their DROP statements stay in
+# FENCE_DB_STATEMENTS so a robot whose fence.db still carries them loses them on
+# the next open. A set with no allow is valid too (U183), so nothing here, nor at
+# broadcast time, asserts that one exists.
 TRIGGER_FENCE_SINGLE_ALLOW = """
 CREATE TRIGGER trg_fence_single_allow
 BEFORE INSERT ON fences
 WHEN NEW.role = 'allow' AND NEW.state = 'active'
 BEGIN
-  SELECT RAISE(ABORT, 'duplicate allow fence (11 S9A.1A: exactly 1)')
+  SELECT RAISE(ABORT, 'duplicate allow fence (11 S9A.1A: at most 1)')
    WHERE (SELECT COUNT(*) FROM fences
            WHERE tombstone = 0 AND state = 'active' AND role = 'allow') >= 1;
 END;
 """.strip()
 
-# The UPDATE halves. F15 (set_state fence -> active) is precisely the path that
-# turns a stored draft into a live fence, so without these two the S9A.1A
-# invariants hold at INSERT and are then walked past one activation at a time --
-# and the second allow fence is the dangerous one: two keep-in polygons make the
+# The UPDATE half. F15 (set_state fence -> active) is precisely the path that
+# turns a stored draft into a live fence, so without it the S9A.1A invariant
+# holds at INSERT and is then walked past one activation at a time -- and the
+# second allow fence is the dangerous one: two keep-in polygons make the
 # permitted area their union, quietly widening it.
-TRIGGER_FENCE_TOTAL_QUOTA_UPD = """
-CREATE TRIGGER trg_fence_total_quota_upd
-BEFORE UPDATE OF state ON fences
-WHEN NEW.state = 'active' AND OLD.state <> 'active'
-BEGIN
-  SELECT RAISE(ABORT, 'fence quota exceeded (max 5 active, 11 S9A.1)')
-   WHERE (SELECT COUNT(*) FROM fences
-           WHERE tombstone = 0 AND state = 'active') >= 5;
-END;
-""".strip()
-
 TRIGGER_FENCE_SINGLE_ALLOW_UPD = """
 CREATE TRIGGER trg_fence_single_allow_upd
 BEFORE UPDATE OF state ON fences
 WHEN NEW.role = 'allow' AND NEW.state = 'active' AND OLD.state <> 'active'
 BEGIN
-  SELECT RAISE(ABORT, 'duplicate allow fence (11 S9A.1A: exactly 1)')
+  SELECT RAISE(ABORT, 'duplicate allow fence (11 S9A.1A: at most 1)')
    WHERE (SELECT COUNT(*) FROM fences
            WHERE tombstone = 0 AND state = 'active' AND role = 'allow') >= 1;
 END;
@@ -357,9 +337,8 @@ FENCE_DB_STATEMENTS = (
     "DROP TRIGGER IF EXISTS trg_fence_single_allow;",
     "DROP TRIGGER IF EXISTS trg_fence_total_quota_upd;",
     "DROP TRIGGER IF EXISTS trg_fence_single_allow_upd;",
-    TRIGGER_FENCE_TOTAL_QUOTA,
+    # 99 U183: the two total-quota triggers are dropped above and not recreated
     TRIGGER_FENCE_SINGLE_ALLOW,
-    TRIGGER_FENCE_TOTAL_QUOTA_UPD,
     TRIGGER_FENCE_SINGLE_ALLOW_UPD,
 )
 

@@ -113,11 +113,13 @@ def test_warning_hard_enforce_false_flows_through():
     assert wp["hard_enforce"] is False
 
 
-def test_build_refuses_invalid_active_set():
-    # 11 S9A.1A FS-5A / FV-3: 0 allow and >= 2 allow both refused BEFORE broadcast.
-    # MUTATION: dropping the validate call lets a set with no activity area go live.
-    with pytest.raises(InvalidFenceSet):
-        build_fence_set([_FORBID], fence_set_id="fs-a", rev=1)          # 0 allow
+def test_build_refuses_two_allow_and_builds_a_set_without_one():
+    # 11 S9A.1A FS-5A / FV-3 (99 U183): >= 2 allow refused BEFORE broadcast; a set
+    # with no allow (the activity area switched off) is built and broadcast, its
+    # forbid zone still in force. ~~0 allow refused too~~ superseded 2026-11-13.
+    # MUTATION: dropping the validate call -> the 2-allow set builds -> red.
+    fs = build_fence_set([_FORBID], fence_set_id="fs-a", rev=1)          # 0 allow
+    assert [p["role"] for p in fs["polygons"]] == ["forbid"]
     allow2 = _row("f-lake2", "活动区2", "allow",
                   [[31.30, 121.60], [31.31, 121.60], [31.31, 121.61]])
     with pytest.raises(InvalidFenceSet):
@@ -185,20 +187,18 @@ def test_a_speed_limit_row_with_no_limit_is_dropped_not_fatal():
     assert ids == ["f-lake"]
 
 
-def test_an_empty_active_set_is_refused_but_not_by_this_module():
-    """一般性边界, 写明以免误读上一条.
+def test_an_empty_active_set_is_built_so_p1_can_clear():
+    """99 U183: 没有任何启用的围栏 -> 照样组出一个[空集]并广播.
 
-    "没有围栏数据" 与 "围栏数据坏了" 是两件事:
-      * 客户没录任何围栏 -> p3 的 FV-3(validate_active_fence_set)在这里就拒,
-        于是 p3 [不广播]; p1 没有 active 集 ==> clip.evaluate 返回
-        disabled/no_fence 并[原样透传速度] ==> 机器人可任意行走, 不受限制.
-        这是 11 S9A.7 的 disabled 档, NO 不是"拒动".
-      * 已有一行存坏 -> 上一条: 丢那一行, 其余照发.
-    MUTATION: 删掉 validate_active_fence_set 调用 -> 0 allow 的集也上线 ->
-    本条红(而机器人会按一个没有活动区的集去跑).
+    ~~p3 在这里就拒, 不广播~~ 被替代(2026-11-13): p1 只认最后收到的集(FS-7),
+    p3 一不广播, 云端刚关掉的活动区域/全部围栏在 p1 里继续生效, 直到 p1 重启;
+    重启后又一个都不生效. 空集让 p1 立刻清空 ==> clip.evaluate 返回
+    disabled/no_fence 并原样透传速度(11 S9A.7 disabled 档).
+    MUTATION: validate 改回"必须恰好 1 个 allow" -> 空集抛 -> 本条红.
     """
-    with pytest.raises(InvalidFenceSet):
-        build_fence_set([], fence_set_id="fs-a", rev=1)
+    fs = build_fence_set([], fence_set_id="fs-a", rev=3)
+    assert fs["polygons"] == [] and fs["rev"] == 3
+    assert fs["crc32"] == fence_set_crc32("fs-a", 3, [])  # p1 self-check agrees
 
 
 def test_a_legacy_hard_enforcing_speed_limit_row_is_corrected_on_the_wire():

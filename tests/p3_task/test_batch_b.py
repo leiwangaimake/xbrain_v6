@@ -577,15 +577,15 @@ async def test_fences_list_active_excludes_tombstoned(fence_conn):
 
 
 @pytest.mark.asyncio
-async def test_fence_total_quota_trigger_rejects_sixth(fence_conn):
-    # 11 S9A.1: at most 5 active fences. MUTATION: dropping the trigger lets a 6th
-    # active fence through. Use forbid for 2..5 (single-allow rule limits allow=1).
+async def test_there_is_no_limit_on_the_number_of_active_fences(fence_conn):
+    # 99 U183 (user 2026-11-13): ~~at most 5 active fences~~ -- no limit any more.
+    # MUTATION: recreate trg_fence_total_quota -> the 6th insert raises -> red.
     dao = FencesDAO(fence_conn)
     await dao.insert("f-a", "allow", "[]", "h", 0)
-    for i in range(4):
+    for i in range(7):
         await dao.insert(f"f-{i}", "forbid", "[]", "h", 0)
-    with pytest.raises(Exception, match="fence quota"):
-        await dao.insert("f-6", "forbid", "[]", "h", 0)
+    cur = await fence_conn.execute("SELECT COUNT(*) FROM fences WHERE state='active'")
+    assert (await cur.fetchone())[0] == 8
 
 
 @pytest.mark.asyncio
@@ -598,21 +598,21 @@ async def test_fence_single_allow_trigger_rejects_second(fence_conn):
         await dao.insert("f-a2", "allow", "[]", "h", 0)
 
 
-def test_validate_active_fence_set_exactly_one_allow():
+def test_validate_active_fence_set_at_most_one_allow():
     from xbrain.p3_task.fence.geom import (
         InvalidFenceSet,
         validate_active_fence_set,
     )
-    validate_active_fence_set(["allow", "forbid", "warning"])   # ok: 1 allow, 3 total
-    # 0 allow (no activity area) and >= 2 allow both reject (FS-5A existence half,
-    # which the per-row triggers cannot assert). MUTATION: only checking <= 1 allow
-    # would let a set with NO allow go live.
-    with pytest.raises(InvalidFenceSet, match="need exactly 1"):
-        validate_active_fence_set(["forbid", "warning"])
-    with pytest.raises(InvalidFenceSet, match="need exactly 1"):
+    validate_active_fence_set(["allow", "forbid", "warning"])   # ok: 1 allow
+    # 99 U183: no allow, no fence at all and any number of fences are valid;
+    # only a second allow is refused. ~~exactly 1 allow, at most 5~~.
+    # MUTATION: back to "!= 1" -> the set with no allow raises -> red;
+    # count limit back -> the 9-fence set raises -> red.
+    validate_active_fence_set(["forbid", "warning"])
+    validate_active_fence_set([])
+    validate_active_fence_set(["allow"] + ["forbid"] * 8)
+    with pytest.raises(InvalidFenceSet, match="at most 1"):
         validate_active_fence_set(["allow", "allow"])
-    with pytest.raises(InvalidFenceSet, match="max 5"):
-        validate_active_fence_set(["allow", "f", "f", "f", "f", "f"])
 
 
 # --- BIZ-P3-5 record.db commands DDL (owner is P5) ---

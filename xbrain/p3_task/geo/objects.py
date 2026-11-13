@@ -3,14 +3,22 @@ Copyright (c) 2026 Hachist Robotics
 Author: wanglei@hachist.com
 上海哈船智能船舶技术有限公司
 File: objects.py
-Brief: Read geo.db into the state/geo/objects broadcast payload (11 S7.10A)
+Brief: Read geo.db + fence.db into the state/geo/objects broadcast payload (11 S7.10A)
 
 Description:
 The HMI is a real-time visualisation relay (17 S6.10.4): every displayable datum
 reaches P5 by a live Zenoh path, and P5 never reads P3's DBs (11 S7843 single
 writer). For the map's routes / keypoints / docks, P3 reads geo.db HERE and
 broadcasts the full geometry on state/geo/objects (11 S7.10A); P5 caches it and
-relays to the browser. (Fences keep their own cmd/fence path, 11 S9A.2.)
+relays to the browser. ~~(Fences keep their own cmd/fence path, 11 S9A.2.)~~
+
+99 U183 (user 2026-11-13): fences ride here too, EVERY live fence with its state
+and role. cmd/fence (11 S9A.2) still carries the ENFORCED set to P1, and it holds
+only active fences -- so a fence just recorded, or switched off, appeared nowhere
+the HMI or the cloud could see it: the operator could not see a recording's
+result on the map, and the cloud could not even find the activity area it is
+meant to switch on. This payload is the catalogue (what exists), cmd/fence is
+what is in force; a consumer that wants "in force" reads state == 'active'.
 
 This module is the read + shape half (pure async against a live aiosqlite conn on
 P3's single db thread, 15 S2.1). v1.5 PLAN A: geometry is emitted in WGS84 as
@@ -44,20 +52,57 @@ from typing import Any, Dict, List
 GEO_OBJECTS_SCHEMA = "geo_objects_v1"
 
 
-async def read_geo_objects(conn) -> Dict[str, Any]:
+async def read_geo_objects(conn, fence_conn=None) -> Dict[str, Any]:
     """Read the live (non-tombstoned) geo objects into a GeoObjects payload
-    (11 S7.10A). `conn` is a live aiosqlite connection to geo.db."""
+    (11 S7.10A). `conn` is a live aiosqlite connection to geo.db, `fence_conn`
+    one to fence.db (99 U183); without it the payload has no fences key, which
+    is what a geo-only caller (tests, the delete sweep) gets."""
     waypoints = await _read_waypoints(conn)
     docks = await _read_docks(conn)
     routes = await _read_routes(conn)
     catalog_rev = await _catalog_rev(conn)
-    return {
+    out: Dict[str, Any] = {
         "schema": GEO_OBJECTS_SCHEMA,
         "catalog_rev": catalog_rev,
         "waypoints": waypoints,
         "routes": routes,
         "docks": docks,
     }
+    if fence_conn is not None:
+        fences, fence_rev = await _read_fences(fence_conn)
+        out["fences"] = fences
+        # GO-2: one change token over everything this payload carries, so a
+        # fence switched on or off changes it as a route edit does
+        out["catalog_rev"] = max(catalog_rev, fence_rev)
+    return out
+
+
+async def _read_fences(conn):
+    """([fence], max updated_ms) of every live fence (99 U183). vertices are
+    {lat,lon} objects like route points (GO-1); speed_limit_mps rides only on a
+    speed_limit fence, as on cmd/fence (11 S9A.2 FV-13)."""
+    cur = await conn.execute(
+        "SELECT fence_id, name, role, state, geom_json, rev, speed_limit_mps, "
+        "updated_ms FROM fences WHERE state<>'deleted' AND tombstone=0 "
+        "ORDER BY fence_id")
+    out: List[Dict[str, Any]] = []
+    for fid, name, role, state, geom, frev, speed, _updated in await cur.fetchall():
+        try:
+            pts = json.loads(geom)["points"]
+            vertices = [{"lat": float(a), "lon": float(b)} for a, b in pts]
+        except (ValueError, KeyError, TypeError):
+            continue  # an unreadable row is not drawn (cmd/fence drops it too)
+        item: Dict[str, Any] = {"geo_id": fid, "name": name, "role": role,
+                                "state": state, "rev": frev, "vertices": vertices}
+        if role == "speed_limit" and speed is not None:
+            item["speed_limit_mps"] = float(speed)
+        out.append(item)
+    # The token is taken over EVERY row, tombstones included: deleting the
+    # newest fence must still move it, or a consumer comparing tokens keeps
+    # drawing the deleted fence.
+    cur = await conn.execute("SELECT COALESCE(MAX(updated_ms), 0) FROM fences")
+    row = await cur.fetchone()
+    return out, int(row[0] or 0)
 
 
 async def _read_waypoints(conn) -> List[Dict[str, Any]]:

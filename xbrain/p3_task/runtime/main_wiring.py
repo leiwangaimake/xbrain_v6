@@ -2126,7 +2126,7 @@ async def _amain(stop_flag: dict, heartbeat_period_s: float,
                     if now - last_geo >= GEO_PUBLISH_PERIOD_S:
                         try:
                             geo_pub.put(json.dumps(
-                                await read_geo_objects(geo_conn),
+                                await read_geo_objects(geo_conn, fence_conn),
                                 ensure_ascii=False).encode("utf-8"))
                             manifest = await build_manifest(geo_ctx)
                             manifest["schema"] = "geo_manifest_v1"
@@ -2138,8 +2138,14 @@ async def _amain(stop_flag: dict, heartbeat_period_s: float,
                     # 11 S9A.3: re-broadcast the active FenceSet from fence.db every
                     # FENCE_PUBLISH_PERIOD_S (>= 0.1 Hz keepalive); rev +1 on any
                     # geometry change (detected via the rev-independent crc32). An
-                    # invalid set (no allow / > 5, S9A.1A FS-5A) is NOT broadcast --
-                    # the old fence stays in effect; logged once until it recovers.
+                    # invalid set (two allow, S9A.1A FS-5A; the fence.db triggers
+                    # make it unreachable) is NOT broadcast -- the old fence stays
+                    # in effect; logged once until it recovers.
+                    # 99 U183: an EMPTY set, and one with no allow, ARE broadcast.
+                    # ~~no allow / > 5 is not broadcast~~ superseded 2026-11-13:
+                    # P1 keeps the last set it accepted (FS-7), so going silent
+                    # when the cloud switched the activity area (or every fence)
+                    # off left P1 enforcing the old geometry until it restarted.
                     # 11 S2.2.2: state/task at 1 Hz (the "event" half rides the
                     # transition callback). The floor is what lets a consumer tell
                     # "nothing changed" from "P3 is gone" -- with event-only

@@ -154,3 +154,44 @@ async def test_empty_geo_is_empty_payload(geo):
     p = await read_geo_objects(geo)
     assert p["waypoints"] == [] and p["routes"] == [] and p["docks"] == []
     assert p["catalog_rev"] == 0             # never None -> P5 compare is simple
+
+
+# -- 99 U183: fences ride state/geo/objects, every live fence with its state ---
+@pytest.mark.asyncio
+async def test_every_live_fence_rides_the_payload_with_its_state(geo):
+    """The catalogue, not the enforced set: a fence just recorded (draft) or
+    switched off must reach the HMI and the cloud too; a tombstone must not.
+    MUTATION: filter fences on state='active' -> the draft is missing -> red;
+    drop the fence updated_ms from catalog_rev -> a fence switched on changes
+    nothing a consumer compares -> red."""
+    from xbrain.p3_task.ingest.geo_commit import commit_fence  # the writer teach uses
+    from xbrain.p3_task.persistence.schema_geo import FENCE_DB_STATEMENTS  # fence DDL
+    await _seed(geo)
+    async with aiosqlite.connect(":memory:") as fc:
+        for stmt in FENCE_DB_STATEMENTS:
+            await fc.execute(stmt)
+        ring = [(31.20, 121.50), (31.21, 121.50), (31.21, 121.51)]
+        await commit_fence(fc, fence_id="f-a", role="allow", points=ring, now_ms=900,
+                           name="营区活动区域围栏", state="active", created_by="teach")
+        await commit_fence(fc, fence_id="f-s", role="speed_limit", points=ring,
+                           now_ms=950, name="路口限速区域围栏", state="draft",
+                           created_by="teach", speed_limit_mps=0.6)
+        await commit_fence(fc, fence_id="f-x", role="forbid", points=ring, now_ms=990,
+                           name="旧禁止区域围栏", state="draft", created_by="teach")
+        await fc.execute("UPDATE fences SET state='deleted', tombstone=1 WHERE fence_id='f-x'")
+        await fc.commit()
+        p = await read_geo_objects(geo, fc)
+    assert [(f["geo_id"], f["role"], f["state"]) for f in p["fences"]] == [
+        ("f-a", "allow", "active"), ("f-s", "speed_limit", "draft")]  # no tombstone
+    assert p["fences"][0]["vertices"][0] == {"lat": 31.20, "lon": 121.50}  # {lat,lon}
+    assert p["fences"][1]["speed_limit_mps"] == 0.6  # only the speed zone has it
+    assert "speed_limit_mps" not in p["fences"][0]
+    assert p["catalog_rev"] == 990  # the tombstone's write counts too (GO-2 token)
+
+
+@pytest.mark.asyncio
+async def test_a_geo_only_read_has_no_fences_key(geo):
+    """The delete sweep and older callers pass no fence connection: no fences
+    key at all, so P5 greys the layer rather than drawing "no fences"."""
+    await _seed(geo)
+    assert "fences" not in await read_geo_objects(geo)

@@ -10,9 +10,10 @@ The GEOMETRY-BROADCAST half of the fence runtime (11 S9A.3). P3 is the sole
 cmd/fence publisher; this module turns the active fence.db rows into a FenceSet
 message (11 S9A.2) so P3 can broadcast the real stored geometry instead of the
 demo injector. It:
-  * runs validate_active_fence_set (11 S9A.1A FS-5A: exactly 1 allow, <= 5 total)
-    -- FV-3 of the S9A.3 compile checklist -- BEFORE building, so an invalid set
-    never goes on the wire;
+  * runs validate_active_fence_set (11 S9A.1A FS-5A: at most 1 allow, 99 U183;
+    ~~exactly 1 allow, <= 5 total~~) -- FV-3 of the S9A.3 compile checklist --
+    BEFORE building, so an invalid set never goes on the wire. An EMPTY set is
+    valid and is broadcast: it is how P1 learns that nothing is in force;
   * shapes each row into a polygon {poly_id, role, name, winding, hard_enforce,
     vertices:[{lat,lon}]} (winding declared per role: allow->ccw, keep-out->cw;
     the receiver re-normalises per 11 S9A.2 and does not trust the sender);
@@ -106,8 +107,8 @@ def build_fence_set(active_rows: Sequence, *, fence_set_id: str, rev: int,
                     ) -> Dict[str, Any]:
     """Build a 11 S9A.2 FenceSet from FencesDAO.list_active() rows. Each row is
     (fence_id, name, role, kind, geom_json, hard_enforce, rev, priority,
-    speed_limit_mps). Raises InvalidFenceSet (FV-3) if the active set is not
-    exactly-1-allow / <= 5.
+    speed_limit_mps). Raises InvalidFenceSet (FV-3) if the active set holds
+    more than one allow (99 U183). Zero rows build an empty FenceSet.
 
     *** NOTHING here depends on what this robot's fence.db happens to hold.
     A fence set is whatever the customer recorded on THEIR site: any count
