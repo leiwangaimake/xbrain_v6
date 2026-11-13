@@ -304,10 +304,11 @@ async def _submit(cmd: TaskCommand, ctx: TaskContext, now_mono_ms: int,
             code, message, detail = refusal
             raise TaskCommandError(code, message, detail)
     if (ctx.cloud_goto_precheck is not None and cmd.source == "cloud"
-            and isinstance(cmd.task, dict) and cmd.task.get("type") == "goto"):
+            and isinstance(cmd.task, dict) and cmd.task.get("type") in ("goto", "patrol")):
         # 99 U164: a cloud plan naming a missing path / waypoint, or a
         # waypoint outside the fence, is refused in the ack with the locator
         # (v2.0 S3.1) -- it used to be accepted and fail at dispatch.
+        # 99 U190: the cloud PATROL_ROUTE too (its path only, user "加上检查").
         refusal = await ctx.cloud_goto_precheck(cmd.task)
         if refusal is not None:
             code, message, detail = refusal

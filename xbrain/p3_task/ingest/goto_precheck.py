@@ -42,6 +42,11 @@ waypoint (E_OUT_OF_FENCE with the same locators, the v2.0 S3.1 example).
 Positioning is not checked here: the P3 loop refuses every submit while the
 fix is lost (99 U142), whichever channel sent it.
 
+99 U190 (2026-11-13, user "加上检查"): the cloud PATROL_ROUTE (task type
+patrol) gets the same submit-time path check -- only the path, a patrol has
+no waypoints. Before it, an unknown path was accepted and failed later at
+the scheduler's PC-8 (state/task failed 2001), unlike GOTO_KEYPOINT.
+
 Trap: point_in_polygon is planar. Fence vertices and the target are both WGS84,
 so (x, y) = (lon, lat) is used on both -- consistent, and the distortion is
 irrelevant at fence scale (the same convention P1 uses for its alarm regions).
@@ -142,12 +147,15 @@ async def cloud_goto_refusal(task: Dict[str, Any], *,
     task is the 11 S7.2 body the gateway built: route_id = recorded_path_id,
     params.waypoints = the v2.0 S2.1 items ({id, arrival_radius_m, ...}).
     Order is the operator's: the path first, then the waypoints in plan
-    order, so the locator points at the first thing to fix."""
+    order, so the locator points at the first thing to fix.
+    A patrol (99 U190 PATROL_ROUTE) is checked for the path only."""
     rid = task.get("route_id")
     if isinstance(rid, str) and rid and not await route_exists(rid):
         return (E_NOT_FOUND, "recorded path %r not found" % rid,
                 {"reason": "route_not_found", "field": "recorded_path_id",
                  "recorded_path_id": rid})
+    if task.get("type") == "patrol":  # 99 U190: no waypoints to check
+        return None
     items = (task.get("params") or {}).get("waypoints") or []
     points = []
     for i, item in enumerate(items):
