@@ -884,10 +884,10 @@ def run_voice_loop_wiring(stop_flag: dict,
         "health": None,              # health/factor -> /api/health (W8)
         "bit": None,                 # health/bit  -> /api/bit (W8)
         "enu_origin": None,          # HMI display origin: first usable GPS fix (99 U192)
-        # 99 U192: common.geo.enu_origin as carried on cmd/fence, kept for the
-        # log only -- the HMI never draws around it. ~~enu_origin_authoritative:
-        # the cmd/fence origin outranked the first fix~~ (2026-08 ~ 2026-11-13).
-        "config_enu_origin": None,
+        # ~~enu_origin_authoritative: the cmd/fence origin outranked the first
+        # fix~~ (2026-08 ~ 2026-11-13, 99 U192); ~~config_enu_origin: the
+        # cmd/fence origin kept for the log~~ (99 U192 ~ U193): cmd/fence
+        # carries no origin any more (99 U193).
         #: query/tasks 拉来的任务全量(v2.0 snapshot 的 queue/suspended 用它).
         #: 与 hmi_state["tasks"](只有 active_task, 供 HMI plan 面板)是两份,
         #: 因为两者的形状与刷新节律都不同.
@@ -1173,34 +1173,13 @@ def run_voice_loop_wiring(stop_flag: dict,
                 # (2026-11-12). Replaced whole with the polygons it came with.
                 hmi_state["fence_set_meta"] = {
                     k: d.get(k) for k in ("fence_set_id", "rev", "name", "updated_ts")}
-            # *** 权威 enu_origin 走这条路进来.
-            # 11 S9A.2 把 enu_origin 定为 FenceSet 的必填字段, 值来自
-            # common.geo.enu_origin(L4 sites/{site_id}.yaml, 11 第 7815 行逐字
-            # "各进程不得各自选原点"). p3 从解析产物读出后随 FenceSet 发出,
-            # 这里是它到达 HMI 的入口.
-            #
-            # 它[覆盖]下面 _on_state_pose 的首次定位兜底, 而不是被后者挡住:
-            # 兜底原点跟着"机器人第一次定位在哪"跑, 换个地方开机就换一个原点,
-            # 只是 W4 场地标定落地前的权宜(见 _on_state_pose 的注释). 权威值
-            # 一旦到达就该顶掉它 -- 否则先开机后配围栏的顺序下, 系统会一直用
-            # 那个漂移的兜底原点, 而且没有任何迹象表明用错了.
-            # 99 U192 (user ruling 2026-11-13): the HMI display origin is the
-            # robot's own GPS fix, NOT this value. ~~adopt it as the
-            # authoritative HMI origin, overriding the first fix~~ (2026-08 ~
-            # 2026-11-13): on this robot common.geo.enu_origin is the sim
-            # placeholder from configs/sites/sim.yaml, ~10 km from the yard, so
-            # once U183 made P3 send it with every (even empty) FenceSet the
-            # whole map was drawn off-screen. Kept and logged once, unused.
-            eo = d.get("enu_origin")
-            if isinstance(eo, dict) and eo.get("lat") is not None \
-                    and eo.get("lon") is not None:
-                if hmi_state.get("config_enu_origin") is None:
-                    _logger.info(
-                        "p5 HMI: cmd/fence carries enu_origin lat=%s lon=%s; "
-                        "not used for display (99 U192)", eo.get("lat"), eo.get("lon"))
-                hmi_state["config_enu_origin"] = {"lat": eo.get("lat"),
-                                                  "lon": eo.get("lon"),
-                                                  "alt": eo.get("alt")}
+            # 99 U193 (user ruling 2026-11-13, "系统删除用广播的围栏的正式原点,
+            # 不再使用"): P3 no longer puts enu_origin on cmd/fence and P5 reads
+            # none from it; the HMI display origin is the robot's GPS fix only
+            # (_on_state_pose, 99 U192). ~~权威 enu_origin 走这条路进来, 覆盖
+            # 首次定位兜底~~ (2026-08 ~ 2026-11-13: on this robot it was the sim
+            # placeholder and drew the map ~10 km off-screen); ~~kept and logged
+            # as config_enu_origin~~ (99 U192 ~ U193).
 
         def _on_geo_objects(sample) -> None:
             # 11 S7.10A: P3 broadcasts routes/keypoints/docks geometry; cache the
@@ -1287,9 +1266,10 @@ def run_voice_loop_wiring(stop_flag: dict,
             hmi_state["pose"] = d.get("data")
             hmi_state["pose_updated_ms"] = _now_mono_ms()   # for the staleness gate
             # DEMO / W4-pending (user 2026-08-18): the ENU E/N readout and the map
-            # robot need an enu_origin to project lat/lon into local metres. The
-            # authoritative origin is common.geo.enu_origin, set by SITE calibration
-            # in configs/sites/ (7.8.4) -- it is null until then, so ENU shows "--".
+            # robot need an enu_origin to project lat/lon into local metres.
+            # ~~The authoritative origin is common.geo.enu_origin, set by SITE
+            # calibration in configs/sites/ (7.8.4)~~ -- not for the HMI: it
+            # reaches P5 by no path since 99 U193 (cmd/fence carries none).
             # Until that calibration exists, adopt the FIRST valid GPS fix as the
             # local origin so the readout works. NOT a substitute for real
             # calibration: this origin follows wherever the robot first fixed.
