@@ -143,6 +143,14 @@ _RTK_SOURCE = "tts_local"
 #: low-battery episode lasts. Only the one marked first is spoken (the ruling:
 #: a SINGLE voice alarm; the cloud gets them all).
 CHARGING_EVENT_KEY = "event/*/charging"  # wiring subscribes this
+#: 99 U186 fence events from P1: entering / leaving a 报警区域 or 限速区域
+#: (zone_enter / zone_exit, once each) and boundary contact on the activity
+#: area / a forbid zone (contact_start, then contact_hold every few seconds
+#: while it lasts, contact_end silent). P3's objects_unreachable is NOT
+#: spoken here: a voice-triggered one is already said with its ack.
+FENCE_EVENT_KEY = "event/*/fence"  # wiring subscribes this
+#: 99 U186: the cloud keyboard refused outside a recording (P1, once per episode)
+TELEOP_EVENT_KEY = "event/*/teleop"  # wiring subscribes this
 #: 99 U163: the recording reports P3 raises with no command behind them (the
 #: time-left warnings, the auto-finish at the time limit).
 TEACH_EVENT_KEY = "event/*/teach"  # wiring subscribes this
@@ -540,6 +548,58 @@ def low_battery_speech(data: bytes) -> Optional[Tuple[str, bytes]]:  # P3 marks 
     soc_txt = "%d" % int(round(soc)) if isinstance(soc, (int, float)) and not isinstance(soc, bool) else "不足"  # whole percent
     text = template.format(soc=soc_txt, target=detail.get("target_name") or "充电点")  # the sentence
     return _speak(text, _RTK_SOURCE)  # a local alarm voice
+
+
+#: 99 U186 wording (user 2026-11-13: "所有涉及到的播报话术, 你来组织语言").
+_ZONE_SPEECH = {
+    ("zone_enter", "warning"): "已进入报警区域{name}",
+    ("zone_exit", "warning"): "已离开报警区域{name}",
+    ("zone_enter", "speed_limit"): "已进入限速区域{name}, 限速每秒{speed}米",
+    ("zone_exit", "speed_limit"): "已离开限速区域{name}, 恢复正常速度",
+}
+_CONTACT_SPEECH = {  # (recording, role) -> sentence; None recording = autonomous
+    (None, "allow"): "已到活动区域边界, 不能继续前进",
+    (None, "forbid"): "已到禁止区域{name}边界, 不能进入",
+    ("route", "allow"): "路径到了活动区域边界, 已停止前进, 请往回开",
+    ("route", "forbid"): "路径碰到禁止区域{name}, 已停止前进, 请往回开",
+    ("fence", "allow"): "注意, 现在已在活动区域外",  # once, never repeated
+    ("fence", "forbid"): "注意, 现在进入了禁止区域{name}",
+}
+_KEYBOARD_REFUSED = "现在没有在录制, 键盘不能控制机器人"  # P1 refused the cloud keyboard
+
+
+def _speed_said(v: Any) -> str:
+    """A limit read out: 0.6 -> "0.6", 1.0 -> "1" (no trailing .0)."""
+    if not isinstance(v, (int, float)) or isinstance(v, bool):  # absent / wrong type
+        return "未知"  # never a made-up number
+    return ("%.1f" % v).rstrip("0").rstrip(".")  # one decimal, trailing zeros dropped
+
+
+def fence_event_speech(data: bytes) -> Optional[Tuple[str, bytes]]:
+    """99 U186: the voice of one P1 fence event, or None (not voiced)."""
+    ev = _json(data)  # Event shape (S6.1)
+    detail = ev.get("detail") if isinstance(ev, dict) else None  # the S9A.9 detail
+    if not isinstance(detail, dict):  # not an event body
+        return None  # not an event
+    kind, role, name = detail.get("kind"), detail.get("role"), detail.get("poly_name") or ""  # what and where
+    if kind in ("zone_enter", "zone_exit"):  # once on the way in, once on the way out
+        tpl = _ZONE_SPEECH.get((kind, role))  # warning or speed_limit
+        text = None if tpl is None else tpl.format(name=name, speed=_speed_said(detail.get("speed_limit_mps")))  # filled
+    elif kind in ("contact_start", "contact_hold"):  # held at the line: repeated
+        tpl = _CONTACT_SPEECH.get((detail.get("recording"), role))  # autonomous / route / fence
+        text = None if tpl is None else tpl.format(name=name)  # filled
+    else:  # contact_end, the S9A.9 episode rows, objects_unreachable: not voiced
+        text = None
+    return None if text is None else _speak(text, _RTK_SOURCE)  # a local voice, like rtk / low battery
+
+
+def teleop_event_speech(data: bytes) -> Optional[Tuple[str, bytes]]:
+    """99 U186: "现在没有在录制, 键盘不能控制机器人" for P1's keyboard refusal."""
+    ev = _json(data)  # Event shape (S6.1)
+    detail = ev.get("detail") if isinstance(ev, dict) else None  # its detail
+    if isinstance(detail, dict) and detail.get("kind") == "keyboard_refused":  # P1's one report per episode
+        return _speak(_KEYBOARD_REFUSED, _RTK_SOURCE)  # said once
+    return None  # the other teleop events (11 S12A.12) are not voiced here
 
 
 def _teach_event_text(detail: Dict[str, Any]) -> Optional[str]:

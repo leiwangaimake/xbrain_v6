@@ -771,3 +771,51 @@ def test_a_whole_queue_cancel_says_how_many_p3_cleared(ids, said):
     out = sp.on_ack(_b({"cmd_id": "c-q", "result": "accepted", "code": "OK",  # P3 answered
                         "detail": {"cleared_ids": ids, "applied": {"cleared": len(ids)}}}))  # its own count
     assert _said(out)[1] == said  # P3's number, never the snapshot's
+
+
+# -- 99 U186: fence / keyboard events spoken -------------------------------------
+@pytest.mark.parametrize("detail,text", [
+    ({"kind": "zone_enter", "role": "warning", "poly_name": "东门报警区域围栏"},
+     "已进入报警区域东门报警区域围栏"),  # once in
+    ({"kind": "zone_exit", "role": "warning", "poly_name": "东门报警区域围栏"},
+     "已离开报警区域东门报警区域围栏"),  # once out
+    ({"kind": "zone_enter", "role": "speed_limit", "poly_name": "路口限速区域围栏",
+      "speed_limit_mps": 0.6}, "已进入限速区域路口限速区域围栏, 限速每秒0.6米"),  # with the limit
+    ({"kind": "zone_exit", "role": "speed_limit", "poly_name": "路口限速区域围栏",
+      "speed_limit_mps": 1.0}, "已离开限速区域路口限速区域围栏, 恢复正常速度"),
+    ({"kind": "contact_start", "role": "allow", "poly_name": "营区活动区域围栏",
+      "recording": None}, "已到活动区域边界, 不能继续前进"),  # autonomous, repeated
+    ({"kind": "contact_hold", "role": "forbid", "poly_name": "北门禁止区域围栏",
+      "recording": None}, "已到禁止区域北门禁止区域围栏边界, 不能进入"),
+    ({"kind": "contact_hold", "role": "forbid", "poly_name": "北门禁止区域围栏",
+      "recording": "route"}, "路径碰到禁止区域北门禁止区域围栏, 已停止前进, 请往回开"),
+    ({"kind": "contact_start", "role": "allow", "poly_name": "营区活动区域围栏",
+      "recording": "fence"}, "注意, 现在已在活动区域外"),  # recording a fence: told once
+])
+def test_fence_events_are_spoken(detail, text):
+    """MUTATION: speed zones not voiced -> red; the route-recording wording
+    lost -> red; the limit read as 0.60 -> red."""
+    from xbrain.p4_agent.runtime.ack_speech import fence_event_speech  # under test
+    out = fence_event_speech(_b({"eid": "e1", "detail": detail}))  # one P1 event
+    assert out is not None and _said(out)[1] == text  # the sentence
+
+
+@pytest.mark.parametrize("detail", [
+    {"kind": "contact_end", "role": "forbid", "poly_name": "x"},  # released: silent
+    {"kind": "objects_unreachable", "role": "forbid", "poly_name": "x", "objects": ["a"]},  # ack says it
+    {"kind": "breach", "role": "allow", "poly_name": "x"},  # S9A.9 episode rows: silent
+])
+def test_these_fence_events_stay_silent(detail):
+    """MUTATION: voice objects_unreachable here -> a voice command hears it
+    twice (ack + event) -> red."""
+    from xbrain.p4_agent.runtime.ack_speech import fence_event_speech  # under test
+    assert fence_event_speech(_b({"eid": "e2", "detail": detail})) is None  # nothing said
+
+
+def test_a_refused_cloud_keyboard_is_spoken():
+    """MUTATION: not subscribed / not voiced -> the operator hears nothing -> red."""
+    from xbrain.p4_agent.runtime.ack_speech import teleop_event_speech  # under test
+    out = teleop_event_speech(_b({"eid": "k1", "detail": {"kind": "keyboard_refused",
+                                                         "reason": "not_recording"}}))
+    assert _said(out)[1] == "现在没有在录制, 键盘不能控制机器人"  # the sentence
+    assert teleop_event_speech(_b({"eid": "k2", "detail": {"kind": "takeover"}})) is None

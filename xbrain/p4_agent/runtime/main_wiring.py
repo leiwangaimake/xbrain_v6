@@ -76,7 +76,9 @@ from xbrain.p4_agent.runtime.turn_loop import (
 )
 from xbrain.p4_agent.runtime.ack_speech import (ACK_KEYS, CHARGING_EVENT_KEY, RTK_EVENT_KEY,
                                                 TEACH_EVENT_KEY, teach_event_frames,
-                                                TASK_EVENT_KEY, AckSpeaker, low_battery_speech)
+                                                TASK_EVENT_KEY, AckSpeaker, low_battery_speech,
+                                                FENCE_EVENT_KEY, fence_event_speech,  # 99 U186
+                                                TELEOP_EVENT_KEY, teleop_event_speech)
 from xbrain.p4_agent.runtime.turn_orchestrator import OrchestratorSession
 from xbrain.p4_agent.runtime.voice_turn import VOICE_TURN_KEY_FMT
 
@@ -447,6 +449,25 @@ def run_voice_loop_wiring(cfg: TurnLoopConfig,
                 except queue.Full:
                     _logger.warning("p4 teach event dropped: job queue full")
             cloud_subs.append(gen.declare_subscriber(TEACH_EVENT_KEY, _on_teach_event))
+
+            def _spoken_event(fn):
+                # 99 U186: one subscriber body for the fence / teleop events
+                # that are only spoken (no voice_turn record: the cloud gets
+                # the event itself). Same thread rule: copy, queue, return.
+                def _cb(sample) -> None:
+                    data = bytes(sample.payload)
+
+                    def _job() -> None:
+                        out = fn(data)
+                        if out is not None:
+                            _publish(*out)
+                    try:
+                        jobs.put_nowait(_job)
+                    except queue.Full:
+                        _logger.warning("p4 spoken event dropped: job queue full")
+                return _cb
+            cloud_subs.append(gen.declare_subscriber(FENCE_EVENT_KEY, _spoken_event(fence_event_speech)))
+            cloud_subs.append(gen.declare_subscriber(TELEOP_EVENT_KEY, _spoken_event(teleop_event_speech)))
             _logger.info("p4 wiring: subscribed %s (positioning loss spoken)",
                          RTK_EVENT_KEY)
 
