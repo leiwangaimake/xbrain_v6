@@ -38,6 +38,7 @@ the wiring to publish), no channel policy (geo_command's matrix already ran).
 from __future__ import annotations
 
 import json
+import re
 from typing import Any, Dict, List, Optional, Tuple
 
 from xbrain.common.enums import GEO_CREATED_BY, GEO_STATE
@@ -65,8 +66,11 @@ from xbrain.p3_task.state.geo_events import (  # noqa: F401  (re-export)
 from xbrain.p3_task.state.geo_rev import content_hash
 from xbrain.p3_task.teach.validate import ring_overlap, ring_within  # 99 U184 layout checks
 from xbrain.p3_task.fence.reach import fence_reports  # 99 U184 unreachable objects
-from xbrain.p3_task.fence.settings import (  # 99 U185 speed-limit default
+from xbrain.p3_task.fence.settings import (  # 99 U185 speed default / U187 alarm settings
+    ALARM_KEYS,
+    RULE_TARGET,
     effective_speed_default,
+    write_setting,
     write_speed_default,
 )
 
@@ -248,29 +252,84 @@ async def _settle_speed_limit(ctx: GeoContext, conn, columns: Dict[str, Any]) ->
             {"reason": "speed_limit_out_of_range", "min": bounds["min"], "max": bounds["max"]})
 
 
+_HHMM = re.compile(r"^([01][0-9]|2[0-3]):[0-5][0-9]$")  # v2.0 S2.4 HH:mm
+
+
+def _alarm_value(key: str, value):
+    """99 U187: one alarm setting checked and normalised, or GeoCommandError.
+    The P5 gateway checks the same fields first (field_validate); this is the
+    robot's own line, so a cmd/geo from elsewhere cannot store garbage."""
+    def bad(why):
+        return GeoCommandError(E_GEO_INVALID, "%s: %s" % (key, why),
+                               {"reason": "alarm_setting_invalid", "key": key})
+    def num(v, lo, hi):
+        if isinstance(v, bool) or not isinstance(v, (int, float)) or not lo <= v <= hi:
+            raise bad("must be a number in [%s, %s]" % (lo, hi))
+        return v
+    if key == "alarm_window":  # cross-midnight allowed: start > end spans 0:00
+        if (not isinstance(value, dict) or not isinstance(value.get("start"), str)
+                or not isinstance(value.get("end"), str)
+                or not _HHMM.match(value["start"]) or not _HHMM.match(value["end"])):
+            raise bad("must be {start: HH:mm, end: HH:mm}")
+        return {"start": value["start"], "end": value["end"]}
+    if key == "alarm_rules":
+        if not isinstance(value, list):
+            raise bad("must be an array")
+        out = []
+        for r in value:
+            if not isinstance(r, dict) or r.get("type") not in RULE_TARGET:
+                raise bad("rule type must be one of %s" % sorted(RULE_TARGET))
+            if r.get("alarm_role", "include") != "include":
+                raise bad("only alarm_role include is supported")
+            ids = r.get("region_ids") or []
+            if not isinstance(ids, list) or not all(isinstance(x, str) for x in ids):
+                raise bad("region_ids must be an array of region ids")
+            out.append({"type": r["type"], "enabled": bool(r.get("enabled", True)),
+                        "region_ids": ids})
+        return out
+    if key == "alarm_level":
+        if value not in (1, 2) or isinstance(value, bool):
+            raise bad("must be 1 or 2")
+        return value
+    bounds = {"siren_level": (0, 100), "duration_sec": (1, 20), "cooldown_sec": (0.5, 600.0)}
+    return num(value, *bounds[key])
+
+
 async def apply_set_fence_defaults(cmd: GeoCommand, ctx: GeoContext,
                                    now_ms: int) -> ApplyResult:
-    """99 U185: cmd/geo action set_fence_defaults (cloud only, 11 S7.9.5) --
-    obj {"speed_limit_default_mps": number | null}. A number sets the default
-    of every speed zone without its own limit (within the configured bounds);
-    null deletes it, back to the configured 0.6. Persisted in fence.db
-    fence_settings, so it holds after a restart; the zones that follow it are
-    rewritten in the same transaction (fence/settings.py)."""
-    bounds = ctx.speed_limit
-    if not bounds:
-        raise GeoCommandError(E_SCHEMA, "set_fence_defaults needs the fence speed configuration")
+    """99 U185 / U187: cmd/geo action set_fence_defaults (cloud only, 11
+    S7.9.5) -- the fence-wide settings, as a PARTIAL update: every key present
+    in obj is applied, absent keys stay as they are, null deletes (the
+    robot's default then applies). Keys:
+      * speed_limit_default_mps -- the default limit of the speed zones without
+        one of their own (configured bounds; null = the configured 0.6);
+      * alarm_window {start, end} (null = all day), alarm_rules [..] (null =
+        people in every warning zone), alarm_level / siren_level /
+        duration_sec / cooldown_sec -- the autonomous alarm of the warning
+        zones (fence/settings.py).
+    Persisted in fence.db fence_settings, so all of it holds after a restart.
+    The speed zones that follow the default are rewritten in the same
+    transaction; only that can change what P1 enforces (detail.in_force)."""
     obj = cmd.obj or {}
-    if "speed_limit_default_mps" not in obj:
-        raise GeoCommandError(E_SCHEMA, "set_fence_defaults needs obj.speed_limit_default_mps")
-    value = obj["speed_limit_default_mps"]
-    if value is not None:
-        if isinstance(value, bool) or not isinstance(value, (int, float)) \
-                or not (bounds["min"] <= float(value) <= bounds["max"]):
-            raise GeoCommandError(
-                E_GEO_INVALID, "speed_limit_default_mps %r outside [%s, %s]"
-                % (value, bounds["min"], bounds["max"]),
-                {"reason": "speed_limit_out_of_range", "min": bounds["min"], "max": bounds["max"]})
-        value = float(value)
+    keys = [k for k in ("speed_limit_default_mps",) + ALARM_KEYS if k in obj]
+    if not keys:
+        raise GeoCommandError(E_SCHEMA, "set_fence_defaults needs at least one of "
+                              "speed_limit_default_mps / %s" % " / ".join(ALARM_KEYS))
+    bounds = ctx.speed_limit
+    value = obj.get("speed_limit_default_mps")
+    if "speed_limit_default_mps" in obj:
+        if not bounds:
+            raise GeoCommandError(E_SCHEMA, "set_fence_defaults needs the fence speed configuration")
+        if value is not None:
+            if isinstance(value, bool) or not isinstance(value, (int, float)) \
+                    or not (bounds["min"] <= float(value) <= bounds["max"]):
+                raise GeoCommandError(
+                    E_GEO_INVALID, "speed_limit_default_mps %r outside [%s, %s]"
+                    % (value, bounds["min"], bounds["max"]),
+                    {"reason": "speed_limit_out_of_range", "min": bounds["min"], "max": bounds["max"]})
+            value = float(value)
+    alarm = {k: (None if obj[k] is None else _alarm_value(k, obj[k]))
+             for k in ALARM_KEYS if k in obj}  # checked before anything is written
     conn = ctx.fence_conn
     await conn.execute("BEGIN IMMEDIATE")
     try:
@@ -278,11 +337,17 @@ async def apply_set_fence_defaults(cmd: GeoCommand, ctx: GeoContext,
         if logged is not None:
             await conn.rollback()
             return replay_duplicate(logged)
-        effective, changed, active = await write_speed_default(
-            conn, value, bounds["default"], now_ms)
-        detail = {"speed_limit_default_mps": effective,
-                  "source": "cloud" if value is not None else "config",
-                  "zones_updated": changed, "in_force": bool(active)}
+        detail: Dict[str, Any] = {"in_force": False}
+        if "speed_limit_default_mps" in obj:
+            effective, changed, active = await write_speed_default(
+                conn, value, bounds["default"], now_ms)
+            detail.update({"speed_limit_default_mps": effective,
+                           "source": "cloud" if value is not None else "config",
+                           "zones_updated": changed, "in_force": bool(active)})
+        for k, v in alarm.items():  # 99 U187: each present key written or deleted
+            await write_setting(conn, k, v, now_ms)
+        if alarm:
+            detail["alarm"] = {k: v for k, v in alarm.items()}  # what was applied (None = deleted)
         await write_cmd_log(conn, cmd, "accepted", "OK", detail, now_ms)
         await conn.commit()
     except Exception:

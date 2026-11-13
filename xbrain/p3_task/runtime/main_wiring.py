@@ -548,6 +548,7 @@ async def _amain(stop_flag: dict, heartbeat_period_s: float,
             # scheme as the geo audit events (boot token + seq).
             from xbrain.p3_task.fence.reach import (  # noqa: PLC0415
                 fence_row, robot_note, unreachable_event)
+            from xbrain.p3_task.fence.settings import alarm_view  # noqa: PLC0415 99 U187
             _reach_evt_seq = [0]
 
             def _report_unreachable(detail: dict, trigger: str) -> None:
@@ -2260,6 +2261,13 @@ async def _amain(stop_flag: dict, heartbeat_period_s: float,
                                 rows, fence_set_id=FENCE_SET_ID,
                                 rev=fence_rev[0], enu_origin=enu_origin,
                                 on_unusable=lambda _pid, _r: None)
+                            # 99 U187: the warning zones' autonomous-alarm
+                            # settings (window / watched targets / siren) ride
+                            # along for P2, which takes the warning polygons
+                            # from this same key (11 S9A.13 SR-1). Outside the
+                            # crc32 recipe (polygons only), so a settings change
+                            # does not bump rev: P1 has nothing to re-apply.
+                            fs["alarm"] = await alarm_view(fence_conn)
                             fence_pub.put(json.dumps(
                                 fs, ensure_ascii=False).encode("utf-8"))
                             fence_invalid_logged[0] = False

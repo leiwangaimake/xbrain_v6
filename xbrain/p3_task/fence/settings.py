@@ -126,5 +126,71 @@ async def reconcile_speed_default(conn, configured: Optional[float], now_ms: int
     return changed
 
 
-__all__ = ["SPEED_DEFAULT_KEY", "effective_speed_default", "reconcile_speed_default",
-           "stored_speed_default", "write_speed_default"]
+# -- 99 U187: the autonomous-alarm settings of the warning zones ---------------
+#
+# User ruling 2026-11-13: the time window ("每天从什么时间到什么时间有效", sent
+# by the cloud; not sent = "缺损", all day; persisted; a new one overrides;
+# deletable) and the suspicious targets (sent by the cloud, several at once;
+# persisted; add / delete by sending the new full list). Stored as fence.db
+# fence_settings rows -- the robot-side truth P3 owns -- and broadcast to P2 on
+# cmd/fence (alarm_view), where P2 already gets the warning polygons.
+#
+# The target classes: "人" = perception person / bicycle / motorcycle (a rider
+# is a person), "车" = vehicle, "动物" = animal (birds excluded, user
+# 2026-11-13). The cloud names them by rule type (v2.0 S2.4 rules[].type).
+# Not sent = the user's default: people, in every warning zone.
+
+#: the alarm keys set_fence_defaults accepts besides the speed default
+ALARM_KEYS = ("alarm_window", "alarm_rules", "alarm_level", "siren_level",
+              "duration_sec", "cooldown_sec")  # the six cloud fields (SET_ALARM_CONFIG names, rules -> alarm_rules)
+
+#: rule type -> the target class it watches for (99 U187)
+RULE_TARGET = {"person_in_region": "person", "vehicle_in_region": "vehicle",
+               "animal_in_region": "animal"}  # 人 / 车 / 动物; the bird exclusion is applied where the class is matched (P2)
+
+#: the user's default when the cloud never sent rules (or deleted them)
+DEFAULT_RULES = ({"targets": ["person"], "region_ids": None},)  # None = every warning zone
+
+
+async def write_setting(conn, key: str, value, now_ms: int) -> None:
+    """Set (value) or delete (None) one fence_settings row, inside the
+    caller's transaction. JSON so a window object / a rule list round-trips."""
+    if value is None:  # deleted: the robot falls back to the default
+        await conn.execute("DELETE FROM fence_settings WHERE key=?", (key,))  # gone: the default applies again
+        return  # nothing more to write
+    await conn.execute(  # upsert: a new value overrides the old one
+        "INSERT INTO fence_settings (key, value_json, updated_ms) VALUES (?,?,?) "
+        "ON CONFLICT(key) DO UPDATE SET value_json=excluded.value_json, "
+        "updated_ms=excluded.updated_ms",
+        (key, json.dumps(value, ensure_ascii=False, separators=(",", ":")), now_ms))  # compact JSON, Chinese names kept readable
+
+
+async def read_settings(conn) -> dict:
+    """Every stored fence_settings row as {key: value}."""
+    cur = await conn.execute("SELECT key, value_json FROM fence_settings")  # all rows
+    return {k: json.loads(v) for k, v in await cur.fetchall()}  # decoded
+
+
+async def alarm_view(conn) -> dict:
+    """The effective autonomous-alarm settings for the cmd/fence broadcast:
+    window (None = all day), the watched targets per rule with the default
+    applied, and the siren scalars as stored (None = P2's own default). Each
+    entry says where it came from so P2 / the HMI can tell a default apart."""
+    s = await read_settings(conn)  # what the cloud stored
+    rules = s.get("alarm_rules")  # None: never sent / deleted
+    if rules is None:  # the cloud never sent rules, or deleted them
+        watched, source = [dict(r) for r in DEFAULT_RULES], "default"  # people, everywhere
+    else:  # the cloud list, as sent
+        watched = [{"targets": [RULE_TARGET[r["type"]]],  # one class per rule type
+                    "region_ids": list(r.get("region_ids") or []) or None}  # [] = every zone
+                   for r in rules if r.get("enabled", True) and r.get("type") in RULE_TARGET]
+        source = "cloud"  # as sent (an all-disabled list watches nothing, on purpose)
+    return {"window": s.get("alarm_window"),  # None = all day
+            "rules": watched, "rules_source": source,
+            "alarm_level": s.get("alarm_level"), "siren_level": s.get("siren_level"),
+            "duration_sec": s.get("duration_sec"), "cooldown_sec": s.get("cooldown_sec")}  # None = P2 uses its own configured default
+
+
+__all__ = ["ALARM_KEYS", "DEFAULT_RULES", "RULE_TARGET", "SPEED_DEFAULT_KEY", "alarm_view",
+           "effective_speed_default", "read_settings", "reconcile_speed_default",
+           "stored_speed_default", "write_setting", "write_speed_default"]
