@@ -559,9 +559,10 @@ v2.0 §9.5 要求可靠事件断线后在原 key 上补发、复用 `eid`。**�
   |---|---|---|
   | 缺 `recorded_path_id` | 1002 | `E_SCHEMA` |
   | `recorded_path_id` 格式不对、`loops` 不是 ≥ 0 的整数、`round_trip` 不是布尔、多余字段 | 1003 | `E_SCHEMA`（`detail.field` 指出字段） |
+  | 路径不存在、已删或未启用 | 1003 | `E_NOT_FOUND`，`detail = {reason: "route_not_found", field: "recorded_path_id", recorded_path_id}`；**提交时即拒，不入库**（与 `GOTO_KEYPOINT` 相同） |
   | 电量 ≤ 5 %、定位失效、录制中 | 同 §6.1 末表 | 同 §6.1 末表 |
 
-  - ⚠️ 路径不存在（或已删、未启用）**提交时不拒**：受理回 `accepted`，随后在派发前判失败，`state/task` 终态 `failed`、`result_code` 2001、`reason` 以 `PC-8: route ... is not in the current manifest` 开头。请下发前先核对 manifest。
+  - ~~⚠️ 路径不存在（或已删、未启用）**提交时不拒**：受理回 `accepted`，随后在派发前判失败……~~ —— 被替代（2026-11-13 当日，用户「加上检查」）：现在提交时即拒，见上表。路径在受理之后、派发之前被删的极少数情况，仍会在派发前判失败（`state/task` 终态 `failed`、2001、`reason` 以 `PC-8` 开头）。
 - **任务编号的对应**（与 `GOTO_KEYPOINT` 相同）：
   - `task_id` 原样作为机器人内部任务号；同一 `task_id` 换 `msg_id` 重发回 `duplicate`。
   - 受理回执 `xbrain/{rid}/cmd/task/ack`：`ref_msg_id` = 请求的 `msg_id`，`task_id` = 请求的 `task_id`，`task_type = "PATROL_ROUTE"`。
