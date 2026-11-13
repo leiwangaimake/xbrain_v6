@@ -198,9 +198,14 @@ hmi:
       plan_panel: { width_px: 370, max_height_px: 420 }
       status_bar: { height_px: 39 }
     fence:                            # U5: fence line by TYPE (17 S6.10.2A, user 2026-08-13)
-      active: { line: { style: "solid", color: "#2f88ff", width_px: 2.4 } }  # allow -> 活动区域: 亮蓝粗实线
-      forbid: { line: { style: "solid", color: "#ff2020", width_px: 2.4 } }  # forbid -> 禁入区域: 亮红粗实线
-      alarm:  { line: { style: "solid", color: "#ff2020", width_px: 2.4 } }  # zone -> 报警区域: 亮红粗实线
+      # 99 U183 (用户 2026-11-13): 围栏线宽 = 已录制路径的 1.5 倍. 路径屏幕 7 px (配置 3.5),
+      # 围栏屏幕 10.5 px, lineStroke 按配置值 x2 画, 所以写 5.25 (~~2.4~~).
+      active: { line: { style: "solid", color: "#2f88ff", width_px: 5.25 } }  # allow -> 活动区域: 亮蓝粗实线
+      forbid: { line: { style: "solid", color: "#ff2020", width_px: 5.25 } }  # forbid -> 禁入区域: 亮红粗实线
+      alarm:  { line: { style: "solid", color: "#ff2020", width_px: 5.25 } }  # zone -> 报警区域: 亮红粗实线
+      speed:  { line: { style: "solid", color: "#22c5ff", width_px: 5.25 } }  # speed_limit -> 限速区域: 亮蓝实线
+      # 99 U183: 未启用的围栏(任何类型)一律灰色虚线, 名字后加 (未启用)
+      disabled: { line: { style: "dashed", color: "#9a9a9a", width_px: 5.25 } }
     route:                            # U5: route line styles (17 S6.10.2A)
       # 用户 2026-11-12: 路径只画折线, 不再画采样点圆点; 屏幕线宽 = 原来路径上绿色圆点的直径 7 px.
       # 注意 hmi.js lineStroke 把所有线宽按配置值 x2 画 (2026-08-18 规则), 所以这里写 3.5.
