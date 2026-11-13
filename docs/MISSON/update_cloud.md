@@ -2,11 +2,11 @@
 
 | 项 | 内容 |
 |---|---|
-| 版本 | 2026-11-13（~~2026-11-11~~：围栏 U183～U188 一批加入，见 §0 第 7～9 项） |
+| 版本 | 2026-11-13（~~2026-11-11~~：围栏 U183～U188 一批加入，见 §0 第 7～9 项；U190 `PATROL_ROUTE` 见第 10 项） |
 | 机器人代码基线 | `main` = `79e030e`（2026-11-13，含围栏 `99` U183～U188）；~~`73af3ef`（2026-11-11）＋ U164~~。整机 `gj-001` |
 | 读者 | 甲方云端软件（Qt 端、云端语音文本、云端键盘遥控）开发同学 |
 | 基线文档 | ①《任务枚举_qt端v2.0》②《json格式文件_qt端v2.0》③《新建+Qt→后端心跳+key》④《PTZ控制契约_qt端v0.2草案》⑤《云端语音文本交互契约_v1.0》（2026-10-26）。本文只写**这些文档之后发生的变化**，以及原文没写清、联调必然会撞上的事实；没提到的条目按原文执行 |
-| 依据 | 机器人当前代码逐条核对（文件与函数名见各条），以及我方决策记录 `99` U96～U188 |
+| 依据 | 机器人当前代码逐条核对（文件与函数名见各条），以及我方决策记录 `99` U96～U190 |
 
 **标签说明**
 
@@ -19,7 +19,7 @@
 
 ---
 
-## 0. 先看这一页：联调前必须处理的九件事
+## 0. 先看这一页：联调前必须处理的十件事
 
 | # | 事项 | 不处理的后果 | 详见 |
 |---|---|---|---|
@@ -32,6 +32,7 @@
 | 7 | ★ 2026-11-13：对象清单里的围栏**按实际类型**上报（`keep_in` / `forbid_region` / `speed_limit_region` / `alarm_region`，带 `enabled`，未启用的也报）。**请先让 Qt 接受这几个类型，再升级机器人** | Qt 若按旧闭集拒收，整份对象清单被丢弃，地图上围栏全部消失 | §5.4 |
 | 8 | ★ 2026-11-13：新任务 **`SET_FENCE_CONFIG`**（禁止区 / 限速区增删改与启停、活动区域只能启停、统一限速值）；**`SET_ALARM_CONFIG` 改为部分更新**，时间段 / 目标 / 声光参数存到机器人上，新增目标类型 `animal_in_region`；**关闭围栏只能由云端** | 旧版 Qt 发不了禁止区和限速区；按整包覆盖理解会误删设置 | §6.4、§6.4A |
 | 9 | ★ 2026-11-13：**云端键盘只在录制时能开动机器人**；新增围栏事件（进出、撞线每 3 s 一条、对象到不了）和**报警区自主报警**事件（巡逻 / 导航途中自动声光驱离，不停车） | 不录制时按键无反应，被误判为故障；新事件无处展示 | §2、§4.3.x、§4.3.y、§4.3.z |
+| 10 | ★ 2026-11-13：新任务 **`PATROL_ROUTE`** 沿整条录制路径巡逻（路径、圈数、来回，0 圈 = 常驻）；`GOTO_KEYPOINT` 只走到末点，不能当整路径巡逻用 | 用 `GOTO_KEYPOINT` 凑整路径巡逻，机器人到末点就结束 | §6.1A |
 
 ---
 
@@ -533,6 +534,40 @@ v2.0 §9.5 要求可靠事件断线后在原 key 上补发、复用 `eid`。**�
   | 电量 ≤ 5 % | 2005 | `E_LOW_BATTERY` | `battery_critical` |
   | 定位失效 | 2001 | `E_DEGRADED` | — |
   | 录制中 | 2002 | `E_BUSY` | `teach_session_active` |
+
+### 6.1A `PATROL_ROUTE` 沿整条录制路径巡逻【新增 · `99` U190，2026-11-13】
+
+`GOTO_KEYPOINT` 只沿路径按航点走到末点（§6.1），不是巡完整条路径。巡逻整条录制路径用本任务（用户 2026-11-13 裁决「按建议做」）。走同一个 key `xbrain/{rid}/cmd/task`，信封与 `GOTO_KEYPOINT` 相同。
+
+```json
+{"v": 1, "rid": "gj-001", "ts": 1785732000.5, "seq": 12, "src": "qt_hmi",
+ "data": {"msg_id": "m-77", "task_id": "t-cloud-0042", "task_type": "PATROL_ROUTE",
+          "payload": {"recorded_path_id": "r-004", "loops": 2, "round_trip": false}}}
+```
+
+| 字段 | 必填 | 说明 |
+|---|---|---|
+| `recorded_path_id` | 是 | `r-[a-z0-9_]{1,40}`，取自 `state/geo/manifest` 的 `recorded_path` |
+| `loops` | 否 | 整数 ≥ 0，缺省 **1**。**0 = 常驻巡逻**，不会自己结束，只能用 `STOP_TASK` `cancel` 结束 |
+| `round_trip` | 否 | 布尔，缺省 `false`。`true` = 来回巡 |
+
+- `payload` 只允许这三个字段，多出的字段（例如写成 `laps`）回 1003，`detail.field` 指出是哪个。
+- **执行语义**（与语音「沿X号路径巡逻N圈」完全相同）：从机器人当前位置就近进入路径；**闭合路径**一圈 = 绕一周，`loops` 圈即绕 `loops` 周，`round_trip` 无意义；**开放路径**一遍 = 从一端走到另一端（第一遍先去较远的一端），`loops` 遍；`round_trip=true` 时一次来回算两遍（A→B→A），共 `2 × loops` 遍。圈数没有上限。
+- **拒绝**：
+
+  | 情形 | `error_code` | `detail.code` |
+  |---|---|---|
+  | 缺 `recorded_path_id` | 1002 | `E_SCHEMA` |
+  | `recorded_path_id` 格式不对、`loops` 不是 ≥ 0 的整数、`round_trip` 不是布尔、多余字段 | 1003 | `E_SCHEMA`（`detail.field` 指出字段） |
+  | 电量 ≤ 5 %、定位失效、录制中 | 同 §6.1 末表 | 同 §6.1 末表 |
+
+  - ⚠️ 路径不存在（或已删、未启用）**提交时不拒**：受理回 `accepted`，随后在派发前判失败，`state/task` 终态 `failed`、`result_code` 2001、`reason` 以 `PC-8: route ... is not in the current manifest` 开头。请下发前先核对 manifest。
+- **任务编号的对应**（与 `GOTO_KEYPOINT` 相同）：
+  - `task_id` 原样作为机器人内部任务号；同一 `task_id` 换 `msg_id` 重发回 `duplicate`。
+  - 受理回执 `xbrain/{rid}/cmd/task/ack`：`ref_msg_id` = 请求的 `msg_id`，`task_id` = 请求的 `task_id`，`task_type = "PATROL_ROUTE"`。
+  - 进度与终态 `xbrain/{rid}/state/task`：同一个 `task_id`；`task_type` 显示机内类型 **`patrol`**（§5.2），`route_id` 为 `recorded_path_id`。
+  - 例：请求 `msg_id=m-77, task_id=t-cloud-0042` → ack `{ref_msg_id: "m-77", task_id: "t-cloud-0042", task_type: "PATROL_ROUTE", result: "accepted"}` → `state/task` 中 `{task_id: "t-cloud-0042", task_type: "patrol", state: "running"}` → 终态 `{message_type: "result", task_id: "t-cloud-0042", state: "done"}`。
+- 暂停 / 恢复 / 取消用 `STOP_TASK`（§6.2）。`completed_count` / 进度百分比的现状偏差见 §5.2。
 
 ### 6.2 `STOP_TASK`【变更】
 

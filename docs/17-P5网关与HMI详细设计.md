@@ -2650,7 +2650,7 @@ uplink:                                 # ★★ §7.3 上行带宽账本(U50 ·
 
 | # | 事项 | 触发条件（何时必须完成） | 优先级 |
 |---|---|---|---|
-| **Q-P5-28** | ★ 甲方 `task_type` → 内部 key 的**翻译表**（5 类任务 ＋ 建议新增的 `ESTOP`） | ★ 第一次跑通一条 `GOTO_KEYPOINT` | **P0** |
+| **Q-P5-28** | ★ 甲方 `task_type` → 内部 key 的**翻译表**（5 类任务 ＋ 建议新增的 `ESTOP`）。★ 2026-11-13 现行开放集为 `xbrain/p5_gateway/inbound/task_router.py` `OPEN_TASK_TYPES`：另加 `SET_FENCE_CONFIG`（`99` U185，→ `cmd/geo`）与 `PATROL_ROUTE`（`99` U190，→ `cmd/task` submit `type=patrol`）；契约见 `docs/MISSON/update_cloud.md` §6.1A / §6.4A | ★ 第一次跑通一条 `GOTO_KEYPOINT` | **P0** |
 | **Q-P5-29** | ★ 内部 `event/**` / `state/**` → 甲方 key 的**投影表** | ★ 同上 | **P0** |
 | **Q-P5-30** | ★★★ **统一去重层**（`robot_id + msg_id`）—— ★ 我方现行是**每条 cmd key 各自按自己的 id 去重，没有统一层** | ★★★ **在 P5 收到第二条重复报文之前** —— 重放会**重复启动导航/录像**，这条不能等 | **P0** |
 | **Q-P5-31** | ★★ **入站计龄**：收包瞬间打本机单调钟，🚫 **不用甲方 `timestamp`**（墙钟，NTP 后跳会算出负年龄） | ★★ 与 `Q-P5-22` 同批 | **P0** |
