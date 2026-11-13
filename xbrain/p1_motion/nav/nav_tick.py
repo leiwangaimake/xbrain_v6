@@ -182,6 +182,9 @@ class NavOutput:
     # every value in it describes a LINEAR cap and 11 S9.6.5's argmax over the
     # reduction Delta is undefined for wz. OB-2 routes this out as an event.
     rotation: Optional[RotationEval] = None
+    # 99 U195: RNS's own zero reason this tick (no_way_through / contact_fuse)
+    # or None -- logged by the wiring; the limiter above names free_space.
+    rns_hold: Optional[str] = None
 
 
 class RnsCtx:
@@ -480,6 +483,14 @@ class NavTick:
         vx, vy, wz = apply_gate(gate, raw[0], raw[1], raw[2], self._holo,
                                 wz_max_radps=self._wz_max)
         limiter, limiter_all = attribute(gate, raw[0])
+        # 99 U195 (user 2026-11-13): when RNS itself zeroed the candidate (no
+        # way through / contact fuse) the gate saw raw 0 and attributed
+        # nothing, so a 4.5 min stall read "follow, limiter none". It is the
+        # blocked view in front: free_space, an existing limiter value.
+        rns_hold = (self._src.hold_reason()
+                    if source == BehaviorSource.RNS_AVOID.value else None)
+        if rns_hold is not None and limiter == "none":
+            limiter, limiter_all = "free_space", ("free_space",)
         # 12 S2.2 step 6b, between the speed gate and the fence exactly as the
         # step list orders it. It reads the GATED vx / vy: at this point in the
         # chain a tick whose vx the gate has already zeroed IS a spin, and
@@ -519,7 +530,7 @@ class NavTick:
             freshness=fresh.value, suspended=self._suspended,
             nav_state=self._src.nav_state().value,
             profile="obstacle_avoid" if downgraded else "patrol",
-            fence=fev, rotation=rot)
+            fence=fev, rotation=rot, rns_hold=rns_hold)
 
 
 def _clamp(v: float, lim: float) -> float:

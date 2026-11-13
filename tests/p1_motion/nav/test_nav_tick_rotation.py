@@ -874,11 +874,12 @@ class _FixedCandidateSource:
 
     name = BehaviorSource.RNS_AVOID.value
 
-    def __init__(self, vx, vy, wz):
+    def __init__(self, vx, vy, wz, hold=None):
         from xbrain.common.types import Mps
         from xbrain.p1_motion.rns.types import NavState, VelocityCandidate
         self._cand = VelocityCandidate(vx=Mps(vx), vy=Mps(vy), wz=wz)
         self._idle = NavState.FOLLOW
+        self._hold = hold  # 99 U195: the RNS hold reason this stub reports
 
     def is_active(self, ctx):
         return True
@@ -895,10 +896,13 @@ class _FixedCandidateSource:
     def nav_state(self):
         return self._idle
 
+    def hold_reason(self):
+        return self._hold  # 99 U195: None unless the test sets one
 
-def _tick_with(vx, vy, wz, *, wz_blind_radps=None, r_robot=None, ring=None):
+
+def _tick_with(vx, vy, wz, *, wz_blind_radps=None, r_robot=None, ring=None, hold=None):
     """One tick over the stub source, returning the NavOutput."""
-    tick = NavTick(_FixedCandidateSource(vx, vy, wz), P1Arbiter(dwell_ms=0),
+    tick = NavTick(_FixedCandidateSource(vx, vy, wz, hold), P1Arbiter(dwell_ms=0),
                    v_nom_mps=2.0, speed_up_hold_ms=3000, d_up_margin_m=0.5,
                    wz_max_rps=2.0, spec_max_vx_mps=2.0, holonomic=True,
                    rot_limits=rot_limits(wz_blind_radps=wz_blind_radps),
@@ -1033,3 +1037,42 @@ def test_tick_refuses_construction_without_the_rotation_block():
                    degraded_fix_cap_mps=0.5, cog_drive_fixed_mps=1.0, cog_drive_degraded_mps=0.6,
                    bridge_drive_fixed_mps=1.0,
                    float_fix_cap_mps=0.5, cog_drive_float_mps=0.6)
+
+
+# -- 99 U195 (user 2026-11-13): RNS's own zero is attributed, not "none" ----------
+def test_an_rns_hold_is_attributed_to_free_space_and_reported():
+    """The 20:20 4号线终点 stall read "follow, limiter none" for 4.5 min:
+    RNS returned zero itself and the gate, seeing raw 0, attributed nothing.
+    MUTATION: drop the U195 attribution -> limiter none -> red; attribute
+    without a hold reason -> a plain zero candidate reads free_space -> red;
+    drop rns_hold from NavOutput -> red."""
+    held = _tick_with(0.0, 0.0, 0.0, hold="no_way_through")
+    assert held.limiter == "free_space" and held.limiter_all == ("free_space",)
+    assert held.rns_hold == "no_way_through"  # the wiring logs this
+    assert "free_space" in set(GATE_LIMITER)  # an existing closed-set value
+    plain = _tick_with(0.0, 0.0, 0.0)  # zero with no reason given
+    assert plain.limiter == "none" and plain.rns_hold is None
+
+
+def test_an_rns_hold_never_overrides_a_real_gate_limiter():
+    """A gate cut (here the estop) keeps its own name; U195 only fills the
+    "none" gap. MUTATION: overwrite unconditionally -> estop reads free_space
+    -> red."""
+    import dataclasses  # replace() on the frozen NavInputs
+    tick = NavTick(_FixedCandidateSource(0.0, 0.0, 0.0, "contact_fuse"), P1Arbiter(dwell_ms=0),
+                   v_nom_mps=2.0, speed_up_hold_ms=3000, d_up_margin_m=0.5,
+                   wz_max_rps=2.0, spec_max_vx_mps=2.0, holonomic=True,
+                   rot_limits=rot_limits(wz_blind_radps=None), r_robot_m=None,
+                   degraded_fix_cap_mps=0.5, cog_drive_fixed_mps=1.0, cog_drive_degraded_mps=0.6,
+                   bridge_drive_fixed_mps=1.0, float_fix_cap_mps=0.5, cog_drive_float_mps=0.6)
+    out = tick.run(dataclasses.replace(_inp(1000), estop=True))
+    assert out.limiter == "estop" and out.rns_hold == "contact_fuse"
+
+
+def test_the_nav_loop_status_logs_the_rns_hold():
+    """MUTATION: drop rns_hold from the status dict -> red (static: the
+    status method needs both planes)."""
+    src = (Path(__file__).resolve().parents[3] / "xbrain" / "p1_motion" / "runtime"
+           / "nav_wiring.py").read_text(encoding="utf-8")
+    assert '"rns_hold": out.rns_hold if out else None' in src
+

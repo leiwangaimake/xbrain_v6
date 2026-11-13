@@ -31,7 +31,7 @@ in, not restructure):
 from __future__ import annotations
 
 import math
-from typing import Optional
+from typing import Any, Optional
 
 from xbrain.common.types.units import Mps
 
@@ -93,6 +93,13 @@ from .wallfollow import (
     wall_vanished,
 )
 from .watchdog import ProgressWatchdog, WatchdogResult, no_progress_failure
+
+#: 99 U195: RNS's own zero reasons (hold_reason) and the limiter both report.
+#: free_space is an existing gate.limiter value ("f(d_free) dominates", 11
+#: S9.6.5) -- the blocked view in front is exactly that; no closed-set change.
+HOLD_NO_WAY = "no_way_through"
+HOLD_CONTACT = "contact_fuse"
+HOLD_LIMITER = "free_space"
 
 # 11 S1.6.1 consumer timeouts on the three perception keys. T-50/T-51 are
 # the profile's two tiers (already literal at their use sites); these two
@@ -172,6 +179,9 @@ class RnsSource:
         self._grid_ingest_ms: Optional[int] = None
         self._watchdog: Optional[ProgressWatchdog] = None
         self._wall: Optional[WallFollowState] = None
+        # 99 U195: why this tick's output is zero by RNS's own choice (no way
+        # through / contact fuse), or None. Read by NavTick for attribution.
+        self._hold_reason: Optional[str] = None
         self._s_star = float("-inf")     # monotone best arc progress (RNS-N-15)
         self._last_pose = None
         self._last_now = None
@@ -332,6 +342,35 @@ class RnsSource:
 
     def nav_state(self) -> NavState:
         return self._state
+
+    def hold_reason(self) -> Optional[str]:
+        """99 U195: the reason RNS zeroed this tick itself, or None --
+        HOLD_NO_WAY ("no_way_through") or HOLD_CONTACT ("contact_fuse")."""
+        return self._hold_reason
+
+    def _hold_no_way(self, now_dt_ms: int, profile: Any,
+                     zero: VelocityCandidate) -> VelocityCandidate:
+        """Hold because this frame offers no thread / detour (20 S5.4), and
+        let the progress watchdog bound it (S7.3A).
+
+        99 U195 (user 2026-11-13, the 20:20 4号线终点 stall): the two
+        no-way-out holds used to `return zero` straight away, ABOVE the
+        watchdog tick in section E, so their comment "the progress watchdog
+        bounds a hold that never clears" was false -- the robot sat 4.5 min
+        in FOLLOW with v = wz = 0, no limiter and no timeout. The tick here
+        uses the same watchdog, mode and arc progress as section E; the
+        limiter passed is free_space (the blocked view is the cause), which
+        is not one of the heading / rtk limiters the watchdog skips."""
+        self._hold_reason = HOLD_NO_WAY
+        if self._watchdog is not None and profile is not None:
+            boundary = any(d is not None for d in profile.d_block)
+            wd = self._watchdog.tick(self._s_star, now_dt_ms, self._state.value,
+                                     False, HOLD_LIMITER, boundary)
+            if wd == WatchdogResult.REPORT_NO_PROGRESS:
+                # bounded: the route fails watchdog_no_progress, which P3
+                # turns into a suspended task (99 U175, nav_stalled)
+                self._fail(no_progress_failure(HOLD_LIMITER, self._watchdog.exhausted))
+        return zero
 
     def ring_counts(self, *, pose_xy, yaw_rad, r_inner_m: float,
                     r_outer_m: float, now_ms: int, free_max_age_ms: int):
@@ -555,6 +594,7 @@ class RnsSource:
         route_cfg = cfg["route"]
         zero = VelocityCandidate(vx=Mps(0.0), vy=Mps(0.0), wz=0.0)
         caps = {"mission": v_nom}
+        self._hold_reason = None  # 99 U195: set again below only when RNS holds
 
         # ── A. perception age / health gates (20 S3.1, T-50/T-51) ────────────
         profile = snap.profile if snap is not None else None
@@ -909,8 +949,9 @@ class RnsSource:
                         # and no wall-follow to fall back on -> hold. "Stop"
                         # is the result of having no way out (20 S5.4); the
                         # next tick re-asks fresh perception, and the progress
-                        # watchdog bounds a hold that never clears (S7.3A).
-                        return zero
+                        # watchdog bounds a hold that never clears (S7.3A) --
+                        # true only since 99 U195 (see _hold_no_way).
+                        return self._hold_no_way(dt_ms, profile, zero)
             elif self._state == NavState.DETOUR:
                 self._detour_dwell += 1
                 d_sub = math.hypot(pose[0] - self._subgoal_world[0],
@@ -984,7 +1025,7 @@ class RnsSource:
                             self._subgoal_world = None
                             self._subgoal_clearance_m = None
                             self._transition(NavState.FOLLOW)
-                            return zero
+                            return self._hold_no_way(dt_ms, profile, zero)  # 99 U195
                         if sel is not None:
                             self._subgoal_clearance_m = sel.clearance_m
                             self._subgoal_world = self._body_to_world(
@@ -1061,6 +1102,7 @@ class RnsSource:
                                          + yaw - theta_des))
                 if ang_off < math.pi / 3:
                     v = 0.0
+                    self._hold_reason = HOLD_CONTACT  # 99 U195: say why
                     break
 
         # ── progress watchdog (20 S7.3A, RNS-N-15) -- placed HERE, after the

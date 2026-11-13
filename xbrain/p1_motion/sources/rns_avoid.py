@@ -108,6 +108,10 @@ class RnsAvoidSource:
     def nav_state(self) -> NavState:
         return self._rns.nav_state()
 
+    def hold_reason(self) -> Optional[str]:
+        """99 U195: why RNS zeroed this tick itself (RnsSource.hold_reason)."""
+        return self._rns.hold_reason()
+
     def mission_loaded(self) -> bool:
         """True from load_* until cancel or the host TAKES the terminal latch.
         mutant: derive from nav_state() != IDLE -> true after an estop with no

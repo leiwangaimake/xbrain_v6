@@ -416,6 +416,40 @@ def test_no_way_through_holds_instead_of_wall_following():
     assert NavState.WALL_FOLLOW not in states  # nothing to hug any more
     assert outs[-1] is not None and outs[-1].vx.value == 0.0  # held
     assert rns.take_failure() is None  # a hold is not a failure (the watchdog bounds it)
+    assert rns.hold_reason() == "no_way_through"  # 99 U195: and says why
+    now += 50  # the row is gone next tick: open ground
+    rns.compute(_Ctx(perception=wb.build(PerceptionSnapshot(
+        profile=uniform_free(t_capture_mono_ms=now - 20, t_seg_mono_ms=None),
+        objects=_objs(t=now - 20), status=healthy_status(t_publish_mono_ms=now - 50))),
+        now_mono_ms=now))
+    assert rns.hold_reason() is None  # 99 U195: cleared every tick, never stale
+
+
+def test_a_no_way_through_hold_is_bounded_by_the_watchdog():
+    # 99 U195 (user 2026-11-13, the 20:20 4号线终点 stall): the hold used to
+    # return above the watchdog tick, so it never timed out -- 4.5 min in
+    # FOLLOW with v = wz = 0. Same scene as above with a short watchdog
+    # (0.5 s window, 2 windows) so the bound shows inside 3 s. mutants: drop
+    # the watchdog tick from _hold_no_way -> no failure -> reddens; pass a
+    # heading limiter (skipped by the watchdog) -> no failure -> reddens.
+    cfg = _cfg()  # shipped values
+    cfg["rns"]["watchdog"]["window_s"] = 0.5  # short, for the bench
+    cfg["rns"]["watchdog"]["report_after_windows"] = 2
+    rns = _goto_source(cfg)  # goto 20 m ahead
+    wb = WorldBuilder(cfg["rns"]["world"], cfg["rns"]["class_map"])  # production builder
+    row = _objs(("car", 0.9, _box(2.0, 2.5, -4.0, 4.0)), t=0)  # wider than the view
+    failure = None  # the terminal, once it fires
+    for k in range(60):  # 3 s
+        now = 10_000 + 50 * k  # tick time
+        snap = wb.build(PerceptionSnapshot(
+            profile=uniform_free(t_capture_mono_ms=now - 20, t_seg_mono_ms=None),  # view header
+            objects=replace(row, t_capture_mono_ms=now - 20, t_publish_mono_ms=now - 10),
+            status=healthy_status(t_publish_mono_ms=now - 50)))
+        rns.compute(_Ctx(perception=snap, now_mono_ms=now))  # standing still
+        failure = failure or rns.take_failure()  # latch the first terminal
+    assert failure is not None, "the no-way-through hold never timed out"
+    assert failure.reason.value == "watchdog_no_progress"  # bounded, then P3 suspends (U175)
+    assert failure.detail.get("limiter") == "free_space"  # and the report says why
 
 
 def _goto_source(cfg) -> RnsSource:

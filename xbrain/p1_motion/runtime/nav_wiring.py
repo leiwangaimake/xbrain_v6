@@ -126,6 +126,8 @@ from xbrain.p1_motion.teleop.velocity import (  # 99 U134 teleop drive
     speeds_from_mode,
     teleop_velocity,
 )
+from xbrain.p1_motion.runtime.stall_diag import (  # 99 U195 diagnostics
+    STILL_EPS, StallDiag, describe_stall)
 from xbrain.p1_motion.nav.route_intake import RouteAssembler, RouteIntakeError
 from xbrain.p1_motion.path import gnss_pose
 from xbrain.p1_motion.path.local_frame import LocalFrameError
@@ -331,6 +333,8 @@ class NavRuntime:
         # id, state) _on_teach last logged, and the recording speed tier
         # _teleop_drive last logged (fixed | degraded | stop | voice).
         self._teach_seen: Tuple[Optional[str], Optional[str]] = (None, None)
+        # 99 U195 diagnostics: a route run standing still writes what it saw
+        self._stall = StallDiag()
         self._rec_tier: Optional[str] = None
         self._subs: List[Any] = []                 # strong refs (CLAUDE.md 4.3)
         # The generation quadruped currently holds, learned from
@@ -534,6 +538,7 @@ class NavRuntime:
                 "source": out.source if out else None,
                 "nav_state": out.nav_state if out else None,
                 "limiter": out.limiter if out else None,
+                "rns_hold": out.rns_hold if out else None,  # 99 U195
                 "route_state": self._host.route_state,
                 "ctrl_state": self._ctrl.state,
                 "health": self._health_state, **self._counts}
@@ -1170,6 +1175,19 @@ class NavRuntime:
                         recording_kind=self._recording_kind_now(now_ms))  # 99 U186
         out = self._tick.run(inp)
         self._cur = out
+        # 99 U195 diagnostics (user 2026-11-13: frequent mid-route stalls the
+        # log could not explain): a route run whose output is zero on every
+        # axis for START_AFTER_S writes one line with the view, the objects,
+        # the hold reason and the newest RNS audit records; again every
+        # REPEAT_S; and "end" when it moves. Nothing is written otherwise.
+        stall_dur = self._stall.duration_s(t0)  # before observe() may reset it
+        stall = self._stall.observe(
+            t0, self._host.route_state == "running" and out.source == "rns_avoid",
+            abs(out.vx) < STILL_EPS and abs(out.vy) < STILL_EPS and abs(out.wz) < STILL_EPS)
+        if stall is not None:
+            _logger.warning("p1 stall %s: %s", stall, describe_stall(
+                out, snap, pose, self._src.rns.audit.drain(),
+                self._stall.duration_s(t0) if stall != "end" else stall_dur))
         if out.fence is not None:
             # 11 S9A.9: the transitions of this tick's geometry -> events.
             self._fence_latest = out.fence
