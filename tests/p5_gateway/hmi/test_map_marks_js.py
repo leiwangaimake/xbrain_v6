@@ -109,6 +109,7 @@ def test_mark_style_reads_the_config_and_falls_back_to_the_same_look():
     fallback = {"kpRadiusPx": 22, "kpRingPx": 4, "kpFill": "#ffffff",  # same look as the yaml
                 "kpRing": "#ff1f1f", "dockFill": "#ffd400", "homeFill": "#22c55e",  # colours
                 "discOutline": "#1a1a1a", "discOutlinePx": 1, "numColor": "#000000",  # disc edge
+                "labelGapPx": 4,  # 2026-11-12: name gap right of the disc
                 "robotPx": 36, "robotColor": "#ff1f1f"}  # arrow
     assert got[1] == fallback  # nothing configured
     assert (got[2]["kpRadiusPx"], got[2]["robotPx"]) == (22, 36)  # zero / negative refused
@@ -184,3 +185,17 @@ def test_the_goto_pin_is_a_waypoint_disc_and_the_disc_is_tappable():
     got = _node('[keypointHitPx(14, {waypoint: {radius_px: 22, ring_px: 4}}),'  # disc 24 > 14
                 ' keypointHitPx(30, {waypoint: {radius_px: 22, ring_px: 4}})]')  # snap larger
     assert got == [24, 30]  # the larger of the two
+
+
+
+def test_a_waypoint_name_starts_just_right_of_its_disc_at_any_zoom():
+    """User 2026-11-12: the name sits right of the disc, centred on it, tight.
+    Outer radius 24 px + gap 4 px = 28 px right of the centre, same y. At 0.05
+    m/px that is 1.4 m, at 0.2 m/px 5.6 m. MUTATION: keep the old "2 m above"
+    anchor -> y changes / x unchanged -> red; gap in metres not px -> the two
+    zooms give the same offset -> red; ignore label_gap_px -> red."""
+    got = _node("[keypointLabelAnchor(10, 20, 24, 4, 0.05), keypointLabelAnchor(10, 20, 24, 4, 0.2),"
+                " markStyle({waypoint: {label_gap_px: 9}}).labelGapPx]")  # two zooms + config
+    assert got[0] == pytest.approx([11.4, 20])  # 28 px x 0.05 m/px right, same height
+    assert got[1] == pytest.approx([15.6, 20])  # 28 px x 0.2 m/px right
+    assert got[2] == 9  # the configured gap wins

@@ -208,6 +208,10 @@
   const DISC_OUTLINE_FALLBACK = "#1a1a1a";  // 1 px dark edge on yellow / green
   const DISC_OUTLINE_PX_FALLBACK = 1.0;
   const GRID_LINE_COLOR_FALLBACK = "#2a2a2a";  // grid line, half the old #555555
+  // 2026-11-12 (user): a waypoint name sits to the RIGHT of its disc, centred on
+  // it vertically and right against it; the gap between the disc's outer edge
+  // and the first character, in screen px.
+  const KEYPOINT_LABEL_GAP_PX_FALLBACK = 4;
 
   // The marks' look from ui_config. A missing or non-positive size falls back
   // (a zero radius would hide every keypoint without a word).
@@ -223,6 +227,7 @@
              discOutline: w.disc_outline_color || DISC_OUTLINE_FALLBACK,
              discOutlinePx: pos(w.disc_outline_px, DISC_OUTLINE_PX_FALLBACK),
              numColor: w.number_color || "#000000",
+             labelGapPx: pos(w.label_gap_px, KEYPOINT_LABEL_GAP_PX_FALLBACK),
              robotPx: pos(r.size_px, ROBOT_ARROW_PX_FALLBACK),
              robotColor: r.color || MARK_RED_FALLBACK };
   }
@@ -284,6 +289,13 @@
     return [[0, -s], [-s * 0.7, s], [0, s * 0.4], [s * 0.7, s]].map(([px, py]) => [
       px * Math.cos(a) - py * Math.sin(a) + x,
       px * Math.sin(a) + py * Math.cos(a) + y]);
+  }
+  // Where a waypoint name starts (2026-11-12, user): just right of the disc's
+  // outer edge, on the disc's own horizontal centre line (the text is drawn
+  // with dominant-baseline central). Screen px are turned into map metres with
+  // the current mpp, so the name stays tight to the disc at every zoom.
+  function keypointLabelAnchor(cx, cy, outerPx, gapPx, mpp) {
+    return [cx + (outerPx + gapPx) * mpp, cy];
   }
   // </map-marks>
 
@@ -544,6 +556,11 @@
     svg.querySelectorAll("circle.keypoint-disc").forEach((c) => c.setAttribute("r", dr));
     svg.querySelectorAll("text.keypoint-num").forEach((t) => {
       t.style.fontSize = (numFontPx(t.textContent, outer) * mpp).toFixed(3) + "px"; });
+    // waypoint names: right of the disc, tight (keypointLabelAnchor)
+    svg.querySelectorAll("text.keypoint-label").forEach((t) => {
+      const a = keypointLabelAnchor(parseFloat(t.dataset.cx), parseFloat(t.dataset.cy),
+                                    outer, ms.labelGapPx, mpp);
+      t.setAttribute("x", a[0]); t.setAttribute("y", a[1]); });
     sizeGotoPins();                        // W2 target dots: constant screen size
   }
 
@@ -584,7 +601,12 @@
       let done = false;
       for (const [ox, oy] of cand) {
         const dx = ox * (wpx * 0.5 + 4), dy = oy * (hpx + 2);
-        const box = { x1: sx + dx - 1, y1: sy + dy - hpx, x2: sx + dx + wpx, y2: sy + dy + 2 };
+        // a waypoint name is drawn centred on its anchor (dominant-baseline
+        // central, 2026-11-12); every other label sits on its baseline
+        const central = t.classList.contains("keypoint-label");
+        const box = central
+          ? { x1: sx + dx - 1, y1: sy + dy - hpx / 2, x2: sx + dx + wpx, y2: sy + dy + hpx / 2 }
+          : { x1: sx + dx - 1, y1: sy + dy - hpx, x2: sx + dx + wpx, y2: sy + dy + 2 };
         if (!placed.some((p) => hit(box, p))) {
           if (dx || dy) { t.setAttribute("x", ax + dx * mpp); t.setAttribute("y", ay + dy * mpp); }
           placed.push(box);
@@ -934,8 +956,14 @@
         }
       }
       if (w.name) {
-        $("keypointLayer").appendChild(
-          label(xy[0], xy[1] - 2, "keypoint-label", w.name));
+        // 2026-11-12 (user): the name right of the disc, centred, tight to it.
+        // The disc centre is kept on the element; updateGridAndDots places the
+        // text from it on every view change (the gap is screen px, so its map
+        // length changes with zoom). ~~2 m above the point, left-aligned~~
+        // superseded: 2 map metres grew and shrank with zoom.
+        const lt = label(xy[0], xy[1], "keypoint-label", w.name);
+        lt.dataset.cx = xy[0]; lt.dataset.cy = xy[1];
+        $("keypointLayer").appendChild(lt);
       }
     }
     updateGridAndDots();     // size the dots just drawn to a constant screen radius

@@ -189,6 +189,9 @@ body { margin: 0; overflow: hidden; background: var(--bg); color: var(--ink);
    discs -- colours and sizes from hmi.web.waypoint via hmi.js markStyle. The
    number is centred on the disc; its size is set per zoom by updateGridAndDots. */
 .keypoint-disc { stroke-opacity: 1; fill-opacity: 1; vector-effect: non-scaling-stroke; }
+/* 2026-11-12 (user): a waypoint name starts right of its disc and is centred
+   on it vertically (hmi.js keypointLabelAnchor places it). */
+.keypoint-label { text-anchor: start; dominant-baseline: central; }
 .keypoint-num { text-anchor: middle; dominant-baseline: central; font-weight: 700;
   font-family: var(--font-map-family); pointer-events: none; }
 .keypoint circle { stroke-width: 2; }
