@@ -91,6 +91,10 @@ fence:                                # 12 S7 clipping constants (fence/clip.py)
   contact_repeat_s: 3.0
   contact_release_m: 0.5
   contact_release_s: 2.0
+  # 99 U191 (用户 2026-11-13 裁决 15 秒): P3 多久没下发 cmd/fence, P1 判围栏源失联
+  # (state/fence src_state = stale) 并上报一次 fence_source_stale; P1 继续执行最后
+  # 一份, 不降级. P3 每 5 s 保活重发, 15 s = 连丢三次. ~~11 S9A.4 原写 30 s~~.
+  source_stale_s: 15.0
 # ===========================================================================
 # 旋转许可 (12 S6A) -- 落地 11 S10.3.2 R-3. 本段全部键属[安全参数], 不支持热更新
 # (CFG-31). 本段[没有] enabled 开关 -- 裁决 RC-D7: 一个 enabled:false 就是一条
