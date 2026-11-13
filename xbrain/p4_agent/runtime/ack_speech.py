@@ -199,7 +199,8 @@ _REC_START_BY_REASON = {
     "fence_type_missing": "围栏名字里要说明类型: 活动区域, 报警区域, 限速区域或禁止区域",  # no keyword
     "activity_area_exists": "已经有活动区域围栏{existing}了, 只能有一个活动区域, 没有开始录制",  # FS-5A
 }
-#: 99 U176: teach.fence_speed_limit_mps unset -- only 限速区域 is refused.
+#: 99 U176 / U185: the speed default unconfigured -- only 限速区域 is refused
+#: (production always has it: p3 refuses to start without fence.speed_limit_*).
 _REC_START_NO_SPEED_LIMIT = "现在不能录制限速区域围栏: 限速值没有配置"  # the other kinds still record
 _REC_START_QUALITY = "现在不能开始录制: 定位不是RTK固定解"  # check 3
 _REC_START_UNHEALTHY = "现在不能开始录制: 设备状态不允许移动"  # check 4
@@ -812,7 +813,7 @@ def _start_sentence(cmd: Dict[str, Any], ack: Dict[str, Any], detail: Dict[str, 
     name = (cmd.get("start") or {}).get("name") or ""  # the name said
     reason = detail.get("reason")  # told apart below
     if (reason == "recording_config_missing"  # 99 U176: told apart by the key P3 names
-            and "teach.fence_speed_limit_mps" in (detail.get("missing") or [])):  # the U176 key
+            and "fence.speed_limit_default_mps" in (detail.get("missing") or [])):  # the U185 key
         return _REC_START_NO_SPEED_LIMIT  # 99 U176: only this kind is refused
     if reason in _REC_START_BY_REASON:  # a reason with its own sentence
         return _REC_START_BY_REASON[reason].format(  # by reason

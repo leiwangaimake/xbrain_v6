@@ -228,7 +228,7 @@ def test_a_waypoint_saved_out_of_reach_is_told():  # F06 + 99 U184
     ("E_GEO_INVALID", {"reason": "activity_area_exists", "existing": "营区活动区域围栏"},
      "已经有活动区域围栏营区活动区域围栏了, 只能有一个活动区域, 没有开始录制"),
     ("E_TEACH_STATE", {"reason": "recording_config_missing",
-                       "missing": ["teach.fence_speed_limit_mps"]},
+                       "missing": ["fence.speed_limit_default_mps"]},  # 99 U185 key
      "现在不能录制限速区域围栏: 限速值没有配置"),  # MUTATION: generic config sentence -> red
     ("E_TEACH_STATE", {"reason": "recording_config_missing", "missing": ["teach.sample_hz"]},
      "现在不能开始录制: 录制参数没有配置"),  # the U132 keys keep theirs
