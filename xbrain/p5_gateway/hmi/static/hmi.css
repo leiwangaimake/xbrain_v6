@@ -63,13 +63,16 @@ body { margin: 0; overflow: hidden; background: var(--bg); color: var(--ink);
 .estop-btn:disabled { background: #7a7a7a; border-color: #9a9a9a; color: #e8e8e8;
   cursor: not-allowed; }
 .estop-btn.armed { animation: estop-pulse 1.4s ease-in-out infinite; }
-@keyframes estop-pulse { 50% { box-shadow: 0 0 0 4px rgba(230,57,50,.28); } }
+/* The pulse keeps the raised edge (see the press block below) and adds the ring. */
+@keyframes estop-pulse { 50% { box-shadow: 0 5px 0 var(--edge), 0 7px 12px rgba(0,0,0,.45),
+                                           0 0 0 4px rgba(230,57,50,.28); } }
 /* degraded: the stop still gets through, so the whole button turns yellow and stays
    pressable -- yellow says "works, but slow", grey would say "gone". The white label
    is kept (user 2026-11-10); the text-shadow only keeps it legible on yellow. */
 .estop-btn.degraded:not(:disabled) { background: #e6b800; border-color: #ffd21f;
   text-shadow: 0 1px 2px rgba(0,0,0,.65); }
 .estop-btn.degraded:hover:not(:disabled) { background: #ffcc00; }
+.estop-btn.degraded:not(:disabled) { --edge: #8a6e00; }
 
 /* Chassis lock button (99 U159). Same box, font and white label as the ESTOP
    button (user 2026-11-11); only the fill says the state: deep red = locked
@@ -82,8 +85,30 @@ body { margin: 0; overflow: hidden; background: var(--bg); color: var(--ink);
 .chassis-lock-btn.locked { background: #8b0000; border-color: #b01010; cursor: pointer; }
 .chassis-lock-btn.locked:hover:not(:disabled) { background: #a00000; }
 .chassis-lock-btn.locked.confirm { animation: chassis-lock-arm 1s ease-in-out infinite; }
-@keyframes chassis-lock-arm { 50% { box-shadow: 0 0 0 4px rgba(255,255,255,.35); } }
+@keyframes chassis-lock-arm { 50% { box-shadow: 0 5px 0 var(--edge), 0 7px 12px rgba(0,0,0,.45),
+                                                0 0 0 4px rgba(255,255,255,.35); } }
 .chassis-lock-btn.unlocked { background: #10a83c; border-color: #34d05f; cursor: default; }
+.chassis-lock-btn.locked { --edge: #4a0000; }
+.chassis-lock-btn.unlocked { --edge: #0a6326; }
+
+/* Press and release (user 2026-11-13: "a pressed-and-sprung look, so it feels like
+   a button; now it feels dead"). At rest an enabled button stands on a darker
+   5 px edge with a soft drop shadow; while held (:active) it sinks 4 px onto the
+   edge and darkens a little, and the transition lets it spring back on release. --edge is the darker
+   shade of each state's fill (set per state above). The armed / confirm pulses
+   animate box-shadow, and an animation outranks a plain rule, so the pressed rule
+   stops the pulse for as long as the finger is down. Disabled (grey) buttons stay
+   flat and never move: a button that cannot act must not look like it can. */
+.estop-btn, .chassis-lock-btn { --edge: #6e0c0f; position: relative;
+  box-shadow: 0 5px 0 var(--edge), 0 7px 12px rgba(0,0,0,.45);
+  transition: transform 120ms ease-out, box-shadow 120ms ease-out, filter 120ms ease-out;
+  -webkit-tap-highlight-color: transparent; touch-action: manipulation; user-select: none; }
+.estop-btn:active:not(:disabled), .chassis-lock-btn:active:not(:disabled) {
+  animation: none; transform: translateY(4px); filter: brightness(.88);
+  box-shadow: 0 1px 0 var(--edge), 0 2px 3px rgba(0,0,0,.45);
+  transition-duration: 40ms; }
+.estop-btn:disabled, .chassis-lock-btn:disabled, .chassis-lock-btn.unknown {
+  box-shadow: none; transform: none; }
 /* Battery gauges (99 U160): two slots A / B after the chassis-lock button.
    The A / B label uses the ESTOP label's font (white, 22px bold; user
    2026-11-11, no "电池" title). Inside the gauge a present pack alternates
