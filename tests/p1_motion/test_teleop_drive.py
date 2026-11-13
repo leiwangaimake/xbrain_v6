@@ -127,6 +127,22 @@ def test_a_holder_kept_by_dwell_does_not_drive_another_sources_command():  # att
     assert out.source == "teleop_keyboard" and out.raw_vx == 0.0  # dwell holder drives zero
 
 
+def _bind_rec(me, teach=(True, 1.0), kind="route"):  # 99 U186: a recording runs
+    """The cloud keyboard drives only while a recording runs (99 U186), so
+    the cases that drive it give the minimal self a fresh recording and the
+    two methods _teleop_drive calls; refusals are collected in me.puts."""
+    me.puts = []  # what a refusal published
+    me._teach, me._teach_kind = teach, kind  # state/teach as P3 sends it
+    me._kbd_refused_ms, me._seq, me._event_boot = None, {"event": 0}, "b0"  # refusal episode
+    me._counts = {"publish_fail": 0}  # publish failures
+    me._gen = SimpleNamespace(put=lambda k, v: me.puts.append((k, json.loads(v))))  # the bus
+    if not hasattr(me._cfg, "recording_state_stale_ms"):  # U179 freshness
+        me._cfg.recording_state_stale_ms = 3000
+    me._recording_kind_now = lambda now: NavRuntime._recording_kind_now(me, now)  # bound
+    me._note_keyboard_refused = lambda now: NavRuntime._note_keyboard_refused(me, now)
+    return me
+
+
 def _teleop_inp(now, cmd, **kw):  # NavInputs with a teleop candidate
     from dataclasses import replace  # frozen dataclass
     return replace(_inp(now, teleop=True, **kw), teleop_cmd=cmd,
@@ -138,6 +154,7 @@ def test_on_mode_and_teleop_drive():  # nav_wiring methods on a minimal self
     """MUTATION: _teleop_drive ignores the speeds -> no command / wrong scale -> red."""
     me = SimpleNamespace(_teleop_lock=threading.Lock(), _teleop=TeleopTracker(),
                          _teleop_speeds=None, _cfg=SimpleNamespace(holonomic=True))  # what they read
+    _bind_rec(me)  # 99 U186: the cloud keyboard needs a recording
     me._teleop.observe("keyboard_cloud", now_mono_ms=1000, deadman=True, axes={"wz": -1.0})  # d held
     assert NavRuntime._teleop_drive(me, 1100) == (None, None)  # no state/mode yet: nothing
     frame = json.dumps({"schema": "state_mode_v1", "move_speed": {"mps": 0.5},
@@ -153,7 +170,7 @@ def test_one_tick_hands_teleop_to_navinputs():  # static wiring check
            / "nav_wiring.py").read_text(encoding="utf-8")  # the module source
     assert "teleop_cmd, teleop_source = self._teleop_drive(now_ms, pose)" in src  # per tick, with the pose (U179)
     assert "teleop_cmd=teleop_cmd, teleop_source=teleop_source," in src  # handed to the tick
-    assert "teleop_unconditional=self._teleop_unconditional)" in src  # 99 U150 flag handed too
+    assert "teleop_unconditional=self._teleop_unconditional," in src  # 99 U150 flag handed too
     assert "declare_subscriber(STATE_MODE_TOPIC" in src  # speeds subscribed
 
 
@@ -202,6 +219,7 @@ def test_only_the_cloud_keyboard_is_unconditional():  # the user's scope
     me = SimpleNamespace(_teleop_lock=threading.Lock(), _teleop=TeleopTracker(),
                          _teleop_speeds=TeleopSpeeds(move_mps=0.5, turn_radps=0.6),
                          _cfg=SimpleNamespace(holonomic=True), _teleop_unconditional=False)
+    _bind_rec(me)  # 99 U186: a recording runs
     me._teleop.observe("keyboard_cloud", now_mono_ms=1000, deadman=True, axes={"wz": 1.0})
     NavRuntime._teleop_drive(me, 1100)
     assert me._teleop_unconditional is True  # the recording-time keyboard
@@ -244,6 +262,7 @@ def _rec_me(teach):  # a minimal NavRuntime self for _teleop_drive / _on_teach
                                               recording_teleop_degraded_mps=1.0,
                                               recording_state_stale_ms=3000),
                          _teleop_unconditional=False, _teach=teach, _rec_tier=None)
+    _bind_rec(me, teach=teach)  # 99 U186: the gate reads the same state/teach
     me._teleop.observe("keyboard_cloud", now_mono_ms=1000, deadman=True, axes={"vx": 1.0})
     me._log_rec_tier = lambda tier, mps, pose: NavRuntime._log_rec_tier(me, tier, mps, pose)
     return me
@@ -265,12 +284,14 @@ def test_a_recording_drives_at_the_fix_speed_not_the_voice_speed():
 
 
 def test_no_recording_or_a_stale_one_keeps_the_voice_speed():
-    """MUTATION: drop the freshness check -> a recording heard 10 s ago still
-    drives at 2.0 -> red; treat 'idle' as recording -> red."""
-    assert NavRuntime._teleop_drive(_rec_me((False, 1.0)), 1100, _L1)[0] == pytest.approx((0.5, 0.0, 0.0))
+    """99 U186 (user 2026-11-13): outside a recording the cloud keyboard is
+    REFUSED. ~~it kept the voice speed (U179)~~ -- superseded. A recording
+    heard 10 s ago is no recording. MUTATION: drop the freshness check -> the
+    stale recording drives -> red; treat 'idle' as recording -> red."""
+    assert NavRuntime._teleop_drive(_rec_me((False, 1.0)), 1100, _L1) == (None, None)  # no recording
     stale = _rec_me((True, 1.0))  # recording last heard at t = 1.0 s
     stale._teleop.observe("keyboard_cloud", now_mono_ms=10950, deadman=True, axes={"vx": 1.0})  # keys held at 11 s
-    assert NavRuntime._teleop_drive(stale, 11000, _L1)[0] == pytest.approx((0.5, 0.0, 0.0))  # 10 s old
+    assert NavRuntime._teleop_drive(stale, 11000, _L1) == (None, None)  # 10 s old: refused
 
 
 def test_state_teach_sets_the_recording_flag():

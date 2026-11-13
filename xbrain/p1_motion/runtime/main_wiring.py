@@ -264,7 +264,8 @@ def run_voice_loop_wiring(chassis_cfg: ChassisClientConfig,
                     "dedup_key": ev.dedup_key,
                     "dedup_window_s": ev.dedup_window_s,
                     "detail": {"kind": ev.kind, "poly_id": ev.poly_id,
-                               "poly_name": ev.poly_name, "role": "warning",
+                               "poly_name": ev.poly_name, "role": ev.role,  # 99 U186
+                               "speed_limit_mps": ev.speed_limit_mps,
                                "episode_id": ev.episode_id},
                     # WALL-CLOCK-OK(record): 11 S6.1 Event.ts, the moment this
                     # zone transition happened; it is also p5's dedup-window
@@ -464,8 +465,9 @@ def run_voice_loop_wiring(chassis_cfg: ChassisClientConfig,
                     active = fence_holder.active
                     plat, plon = pose.get("lat"), pose.get("lon")
                     if active is not None and plat is not None and plon is not None:
+                        # 99 U186: speed zones are announced on entry / exit too
                         _publish_zone_events(zone_tracker.observe(
-                            plat, plon, active.warning_polygons()))
+                            plat, plon, active.warning_polygons() + active.speed_limit_polygons()))
                     if now - last_clock >= 1.0:   # 1 Hz state/clock mirror (P1-13)
                         cs = gnss_pose.mirror_clock(clock_cache["data"])
                         cenv = gnss_pose.stamp_envelope(

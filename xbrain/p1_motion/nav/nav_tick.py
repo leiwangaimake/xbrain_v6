@@ -148,6 +148,11 @@ class NavInputs:
     # health, the fence and the rotation permit do not touch it. True only
     # while that device is the one driving (nav_wiring._teleop_drive).
     teleop_unconditional: bool = False
+    # 99 U186: what the cloud keyboard is recording -- "route" | "fence" | None
+    # (state/teach session.kind while a recording runs). A ROUTE recording is
+    # stopped at the effective boundary of the activity area / a forbid zone
+    # (user 2026-11-13: "录路径拦停, 没有减速段"); a fence recording is not.
+    recording_kind: Optional[str] = None
 
 
 @dataclass(frozen=True)
@@ -551,6 +556,16 @@ def _unconditional_teleop_impl(tick: "NavTick", inp: "NavInputs", raw: Tuple[flo
         fev = evaluate(inp.fence, tick._fence, xy=inp.pose_xy, yaw_rad=inp.yaw_rad,
                        vx=vx, vy=vy, fix_type=inp.fix_type,
                        heading_valid=inp.heading_valid, hi_factor=1.0)
+        if (inp.recording_kind == "route" and not inp.estop and fev is not None
+                and any(p.hard_now for p in fev.per_poly)):  # the estop's label wins
+            # 99 U186: a route recording stops AT the boundary -- the clip's
+            # result is taken only once a boundary's zero cap is active (at
+            # or past the effective line, now or predicted), so there is no
+            # slow-down band before it; inside the area the keyboard stays
+            # unconditional (U150). The clip keeps the inward / sliding part,
+            # so the operator can drive back (12 S7.2).
+            vx, vy = fev.vx, fev.vy
+            limiter = "fence"
     return NavOutput(
         vx=vx, vy=vy, wz=wz, raw_vx=raw[0], raw_vy=raw[1], raw_wz=raw[2],
         v_max=tick._spec_vx, limiter=limiter, limiter_all=[limiter] if limiter != "none" else [],

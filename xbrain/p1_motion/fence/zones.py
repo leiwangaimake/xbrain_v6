@@ -35,7 +35,7 @@ E-1/E-2/E-3(S9A.9 三条硬规则)在这里的落地:
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Dict, List, Sequence
+from typing import Dict, List, Optional, Sequence
 
 from xbrain.common.fence.geom import Polygon, point_in_polygon
 
@@ -59,6 +59,10 @@ class ZoneEvent:
     poly_name: str
     episode_id: int
     dedup_key: str      # 'fence:zone:{poly_id}:{ep}' | 'fence:zone_exit:{poly_id}:{ep}'
+    # 99 U186: the zone's role -- warning, or speed_limit (entering / leaving a
+    # 限速区域 is announced too, user 2026-11-13) -- and a speed zone's limit
+    role: str = "warning"
+    speed_limit_mps: Optional[float] = None
 
     @property
     def dedup_window_s(self) -> int:
@@ -91,6 +95,9 @@ class ZoneTracker:
         # poly_id -> 最近一次已知的 poly_name. 围栏被删而机器人还在区内时, 用它
         # 补一条 zone_exit(此时新集里已无该多边形, 取不到 name).
         self._name: Dict[str, str] = {}
+        # 99 U186: poly_id -> (role, speed_limit_mps) as last seen, for the same
+        # synthesized exit
+        self._role: Dict[str, tuple] = {}
 
     def observe(self, lat: float, lon: float,
                 warning_polys: Sequence) -> List[ZoneEvent]:
@@ -107,14 +114,18 @@ class ZoneTracker:
             inside = point_in_polygon(lat, lon, Polygon(points=tuple(poly.vertices)))
             was = self._inside.get(pid, False)
             ep = self._episode.get(pid, 0)
+            role = getattr(poly, "role", "warning")  # 99 U186: warning or speed_limit
+            speed = getattr(poly, "speed_limit_mps", None)
+            self._role[pid] = (role, speed)
             if inside and not was:
+                # 报警区进入是 alarm; 限速区进入只是提示 (info) -- 99 U186
                 events.append(ZoneEvent(
-                    "zone_enter", "alarm", pid, poly.name, ep,
-                    _enter_key(pid, ep)))
+                    "zone_enter", "alarm" if role == "warning" else "info", pid, poly.name, ep,
+                    _enter_key(pid, ep), role, speed))
                 self._inside[pid] = True
             elif was and not inside:
                 events.append(ZoneEvent(
-                    "zone_exit", "info", pid, poly.name, ep, _exit_key(pid, ep)))
+                    "zone_exit", "info", pid, poly.name, ep, _exit_key(pid, ep), role, speed))
                 self._inside[pid] = False
                 self._episode[pid] = ep + 1        # E-2: 退出后 +1
         # 报警区被删(commit 换集)而机器人还在其内 -> 补一条 zone_exit, 否则云端
@@ -123,9 +134,10 @@ class ZoneTracker:
         for pid in list(self._inside.keys()):
             if self._inside.get(pid) and pid not in seen:
                 ep = self._episode.get(pid, 0)
+                role, speed = self._role.get(pid, ("warning", None))  # as last seen
                 events.append(ZoneEvent(
                     "zone_exit", "info", pid, self._name.get(pid, ""), ep,
-                    _exit_key(pid, ep)))
+                    _exit_key(pid, ep), role, speed))
                 self._inside[pid] = False
                 self._episode[pid] = ep + 1
         return events

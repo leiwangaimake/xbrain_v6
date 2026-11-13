@@ -99,6 +99,7 @@ from xbrain.p1_motion.fence.clip import (
     FenceEval,
     compile_fence,
 )
+from xbrain.p1_motion.fence.contact import ContactEvent, ContactTracker  # 99 U186
 from xbrain.p1_motion.fence.episodes import FenceEpisodeTracker
 from xbrain.p1_motion.gate.accel_limit import AccelLimits
 from xbrain.p1_motion.nav.arb_state import SUSPENDED_SOFT_ESTOP, ArbVisibility
@@ -244,6 +245,11 @@ class NavRuntime:
         self._fence_key: Optional[Tuple[str, int]] = None
         self._fence_latest: Optional[FenceEval] = None
         self._episodes = FenceEpisodeTracker()
+        # 99 U186: boundary contact (撞线) on the activity area / a forbid zone,
+        # repeated every fence.contact_repeat_s while it lasts (fence/contact.py)
+        self._contacts = ContactTracker(cfg.fence_contact_repeat_s,
+                                        cfg.fence_contact_release_m,
+                                        cfg.fence_contact_release_s)
         # 12 S6A.8 OB-2 / 12 S15 #54. Same shape and same reason as the fence
         # tracker above it: the permit says what is true THIS tick, the cloud
         # and the HMI need to know when it changed. Level to edge, 20 Hz in,
@@ -315,6 +321,11 @@ class NavRuntime:
         # 99 U179: (recording active, monotonic s of the state/teach frame);
         # one tuple store by the Rust callback, read once per tick.
         self._teach: Tuple[bool, float] = (False, -1e9)
+        # 99 U186: the running recording's kind ("route" | "fence"), None
+        # outside one; and the monotonic ms of the last refused cloud-keyboard
+        # frame (one report per refusal episode, see _note_keyboard_refused)
+        self._teach_kind: Optional[str] = None
+        self._kbd_refused_ms: Optional[int] = None
         # Change-only log state (user request 2026-11-13: a cloud recording left
         # no trace of its session or of the keyboard speed used): the (session
         # id, state) _on_teach last logged, and the recording speed tier
@@ -690,6 +701,8 @@ class NavRuntime:
         sess = body.get("session") if isinstance(body, dict) else None
         state = sess.get("state") if isinstance(sess, dict) else None
         self._teach = (state in _RECORDING_STATES, time.monotonic())
+        kind = sess.get("kind") if isinstance(sess, dict) else None  # 99 U186
+        self._teach_kind = kind if state in _RECORDING_STATES and kind in ("route", "fence") else None
         # Log each session transition once (1 Hz frames repeat the same state):
         # start, pause, finalizing, naming, end -- with P3's own stats, so a
         # recording can be reconstructed from the P1 log alone.
@@ -717,6 +730,12 @@ class NavRuntime:
         if drive is None:
             return None, None
         device, axes = drive
+        if device == "keyboard_cloud" and self._recording_kind_now(now_ms) is None:
+            # 99 U186 (user 2026-11-13): "键盘开车当前仅仅在路径, 围栏录制的时候才
+            # 生效, 其他情况下键盘开车是被系统禁止的". Until now the cloud
+            # keyboard drove at the voice speed with no recording running.
+            self._note_keyboard_refused(now_ms)
+            return None, None
         speeds = self._teleop_speeds
         if pose is not None and speeds is not None:
             active, rx = self._teach
@@ -744,6 +763,61 @@ class NavRuntime:
         # limits only); the other teleop devices keep the shared gate.
         self._teleop_unconditional = device == "keyboard_cloud"
         return cmd, source_for(device)
+
+    def _recording_kind_now(self, now_ms: int) -> Optional[str]:
+        """99 U186: the running recording's kind if state/teach is fresh
+        (within recording_state_stale_ms, the U179 freshness), else None."""
+        active, rx = self._teach
+        if active and now_ms / 1000.0 - rx <= self._cfg.recording_state_stale_ms / 1000.0:
+            return self._teach_kind or "route"  # an unknown kind is the stricter route
+        return None
+
+    def _note_keyboard_refused(self, now_ms: int) -> None:
+        """99 U186: one event/warn/teleop per refusal episode -- a new
+        episode starts when no refused frame came for 2 s, so holding a key
+        does not report at 20 Hz, and pressing it again later does. P4 says
+        "现在没有在录制, 键盘不能控制机器人"."""
+        last, self._kbd_refused_ms = self._kbd_refused_ms, now_ms
+        if last is not None and now_ms - last <= 2000:
+            return  # the same episode
+        self._seq["event"] += 1
+        try:
+            self._gen.put("event/warn/teleop", json.dumps({
+                "eid": "kbd-%s-%d" % (self._event_boot, self._seq["event"]),
+                "title": "keyboard_refused",
+                # one row per refusal episode: a key, and window 0 with the
+                # rising ts, so a later episode is not folded into the first
+                "dedup_key": "teleop:keyboard_refused", "dedup_window_s": 0,
+                "detail": {"kind": "keyboard_refused", "reason": "not_recording",
+                           "device": "keyboard_cloud"},
+                # WALL-CLOCK-OK(record): 11 S6.1 Event.ts, the moment it was refused
+                "src": "p1_motion", "ts": time.time(),
+            }, ensure_ascii=False).encode("utf-8"))
+        except Exception as exc:      # noqa: BLE001 -- a report, never the drive path
+            self._counts["publish_fail"] += 1
+            _logger.error("p1 keyboard refusal event failed: %s", exc)
+
+    def _publish_contact_event(self, ce: ContactEvent, inp: NavInputs, held: Any) -> None:
+        """99 U186: event/{sev}/fence for one boundary-contact row, the same
+        envelope the 11 S9A.9 fence events use (fence/contact.py says why the
+        window is 0)."""
+        self._seq["event"] += 1
+        try:
+            self._gen.put("event/%s/fence" % ce.severity, json.dumps({
+                "eid": "contact-%s-%d" % (self._event_boot, self._seq["event"]),
+                "title": ce.kind,
+                "dedup_key": ce.dedup_key, "dedup_window_s": ce.dedup_window_s,
+                "detail": {"kind": ce.kind, "episode_id": ce.episode_id,
+                           "rev": None if held is None else held.rev,
+                           "poly_id": ce.poly_id, "poly_name": ce.poly_name, "role": ce.role,
+                           "recording": ce.recording,
+                           "d_eff_m": None if ce.d_eff_m is None else round(ce.d_eff_m, 2),
+                           "fix_type": inp.fix_type},
+                "src": "p1_motion", "ts": inp.ts_wall_s,
+            }, ensure_ascii=False).encode("utf-8"))
+        except Exception as exc:      # noqa: BLE001
+            self._counts["publish_fail"] += 1
+            _logger.error("p1 contact event publish failed: %s", exc)
 
     def _log_rec_tier(self, tier: str, mps: Optional[float], pose: Any) -> None:
         """Log the keyboard speed tier when it changes while keys are held
@@ -1092,7 +1166,8 @@ class NavRuntime:
                         ring=self._ring_sample(pose, snap, now_ms),
                         mode_hold=mode_hold,
                         teleop_cmd=teleop_cmd, teleop_source=teleop_source,
-                        teleop_unconditional=self._teleop_unconditional)  # 99 U150
+                        teleop_unconditional=self._teleop_unconditional,  # 99 U150
+                        recording_kind=self._recording_kind_now(now_ms))  # 99 U186
         out = self._tick.run(inp)
         self._cur = out
         if out.fence is not None:
@@ -1101,6 +1176,11 @@ class NavRuntime:
             held = self._fence_holder.active
             for fe in self._episodes.observe(out.fence, rev=None if held is None else held.rev):
                 self._publish_fence_event(fe, out, inp, held)
+            # 99 U186: boundary contact, repeated while it lasts
+            for ce in self._contacts.observe(out.fence, now_s=now_ms / 1000.0,
+                                             rev=None if held is None else held.rev,
+                                             recording=inp.recording_kind):
+                self._publish_contact_event(ce, inp, held)
         if out.rotation is not None:
             # 12 S6A.8 OB-2 / 12 S15 #54: step 6b's verdict leaves as an event
             # or it does not leave at all. OB-1 bars gate.limiter and OB-4

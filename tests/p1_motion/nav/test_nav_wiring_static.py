@@ -171,8 +171,9 @@ def test_every_published_event_carries_both_a_dedup_key_and_a_window():
             assert '"dedup_window_s"' in block, (
                 "%s: the %s event payload sets a dedup_key with NO window -- "
                 "record_dao merges those unconditionally" % (name, who))
-    # nav / fence / rotation / arbitration + main_wiring's zone rows.
-    assert total == 5, "the set of p1 event publishers changed (%d found)" % total
+    # nav / fence / rotation / arbitration + main_wiring's zone rows, plus the
+    # 99 U186 pair: boundary contact (contact) and the keyboard refusal (kbd).
+    assert total == 7, "the set of p1 event publishers changed (%d found)" % total
 
 
 def test_the_fix_quality_speeds_reach_navtick_by_name():

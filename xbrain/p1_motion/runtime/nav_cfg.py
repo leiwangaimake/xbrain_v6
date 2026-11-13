@@ -76,6 +76,11 @@ class NavConfig:
     recording_teleop_fixed_mps: float
     recording_teleop_degraded_mps: float
     recording_state_stale_ms: float
+    # 99 U186: boundary contact (撞线) reporting (fence/contact.py) -- the hold
+    # period (user: 3 s, configurable) and the release hysteresis
+    fence_contact_repeat_s: float
+    fence_contact_release_m: float
+    fence_contact_release_s: float
     # 99 U151 heading-deadlock climb (path/climb.py): the track segment that
     # gives the climb heading, and the longest climb on it.
     climb_track_seg_m: float
@@ -361,6 +366,9 @@ def build_nav_config(p1_tree: Mapping[str, Any], rns_tree: Mapping[str, Any]) ->
         recording_teleop_fixed_mps=_pos(p1_tree, "nav.recording_teleop_fixed_mps"),  # 99 U179
         recording_teleop_degraded_mps=_pos(p1_tree, "nav.recording_teleop_degraded_mps"),
         recording_state_stale_ms=_pos(p1_tree, "nav.recording_state_stale_ms"),
+        fence_contact_repeat_s=_pos(p1_tree, "fence.contact_repeat_s"),  # 99 U186
+        fence_contact_release_m=_pos(p1_tree, "fence.contact_release_m"),
+        fence_contact_release_s=_pos(p1_tree, "fence.contact_release_s"),
         climb_track_seg_m=_pos(p1_tree, "nav.climb_track_seg_m"),  # 99 U151
         climb_max_s=_pos(p1_tree, "nav.climb_max_s"),  # 99 U151
         heading_bridge_max_s=_pos(p1_tree, "nav.heading_bridge_max_s"),  # 99 U152
