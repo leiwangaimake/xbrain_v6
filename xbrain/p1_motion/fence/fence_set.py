@@ -387,8 +387,10 @@ def build_fence_runtime_state(held: Optional[HeldFenceSet], *,
 
 
 def _active_name(held: HeldFenceSet) -> str:
-    """active.name: 取 allow 围栏的 name(营区名), 没有则空. allow 恒有且仅 1
-    (FV-3), 是整个可行区的名字. HeldPolygon 没存 winding 但存了 name/role."""
+    """active.name: 取 allow 围栏的 name(营区名), 没有则空. allow 至多 1 个
+    (FV-3), 是整个可行区的名字. HeldPolygon 没存 winding 但存了 name/role.
+    99 U183: ~~allow 恒有且仅 1~~ -- 活动区域可以不存在(云端可关掉它), 空集也会
+    下发(用来清空), 此时 name 为空串."""
     for p in held.polygons:
         if p.role == "allow":
             return p.name

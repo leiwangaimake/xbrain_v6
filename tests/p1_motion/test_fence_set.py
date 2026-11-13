@@ -333,3 +333,18 @@ def test_priority_is_required_and_a_boolean_is_refused():
     for bad in (True, 10.5, "0", None):
         with pytest.raises(FenceSetError, match="priority"):
             compile_fence_set(_wire_nocrc([dict(nopri, priority=bad)]))
+
+
+def test_an_empty_set_replaces_the_held_one_so_nothing_is_enforced():
+    """99 U183: P3 broadcasts an EMPTY set when nothing is in force (the cloud
+    switched the activity area / every fence off). P1 must take it and hold
+    no polygon -- clip.evaluate then passes speed through (S9A.7 disabled).
+    Before U183 P3 went silent instead and P1 kept the old set for ever.
+    MUTATION: refuse a set with no polygons -> accept raises, the old set stays
+    -> red."""
+    holder = FenceSetHolder()
+    holder.accept(_wire(rev=1))
+    held = holder.accept(_wire(polys=[], rev=2))
+    assert holder.active is held and held.rev == 2 and held.polygons == ()
+    state = build_fence_runtime_state(held, now_mono_s=10.0, applied_mono_s=10.0)
+    assert state["active"]["name"] == ""  # no activity area: no camp name
