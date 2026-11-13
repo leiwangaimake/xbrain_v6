@@ -268,19 +268,18 @@ def _estop(cmd_id: str, payload: Dict) -> Dict[str, Any]:
 
 
 def _alarm(cmd_id: str, payload: Dict) -> List[Dict[str, Any]]:
-    """SET_ALARM_CONFIG -> N 条 cmd/geo fence(warning) upsert (fan-out).
+    """SET_ALARM_CONFIG -> N 条 cmd/geo fence(warning) upsert + 至多 1 条 set_fence_defaults.
 
     *** 报警配置不是一处 alarm_config, 是跨多落点的配置事务(方案 v0.1).
-    alarm_region 在我方就是 fence 的 warning role(11 S9A.2, 旧名 zone); 规则
-    (person/vehicle_in_region)与声光(alarm_level/siren_level)走 cmd/config 的
-    suspicion_rules(批B/C, 11 R4.5/R6.1). 早先本函数把全部塞进一条畸形
-    cmd/geo({alarm_config, regions}), p3 的 geo 解析器认不出(缺 type/geo_id/
-    obj)直接抛 E_SCHEMA -- 报警配置到 p3 就断了. 本函数改为字段级拆解: 每个
-    region 投影成一条 p3 认识的 fence upsert.
+    alarm_region 在我方就是 fence 的 warning role(11 S9A.2, 旧名 zone). 早先本
+    函数把全部塞进一条畸形 cmd/geo({alarm_config, regions}), p3 的 geo 解析器认
+    不出(缺 type/geo_id/obj)直接抛 E_SCHEMA -- 报警配置到 p3 就断了. 本函数改为
+    字段级拆解: 每个 region 投影成一条 p3 认识的 fence upsert.
 
-    *** 批A 只投影 regions(几何). rules/声光在批B/C 追加为 cmd/config 命令.
-    => 本批过后, 只带 regions 的报警配置能落库; 只改 rules/声光(regions 为空)
-    的暂时 fan-out 出 0 条 -- 那条路径由批B 补(批B 起至少有一条 cmd/config).
+    *** 99 U187: 时间段 / rules / 声光标量不再"只校验不生效"(原 D-8): 出现的字段
+    合成一条 cmd/geo set_fence_defaults, 由 P3 存入 fence_settings 并随 cmd/fence
+    广播给 P2. 部分更新: 缺席 = 不变, null = 删除(回默认). 早先设想的 cmd/config
+    suspicion_rules 落点不再采用 -- 报警设置是现场数据, 与围栏同库同 rev.
 
     *** keep_in 一律拒, 且理由要逐字可读.
     v2.0 S3.4 逐字: "regions[] 只允许 alarm_region, 禁止 keep_in. 营区 keep-in
@@ -308,7 +307,27 @@ def _alarm(cmd_id: str, payload: Dict) -> List[Dict[str, Any]]:
     # 每个 region 展开成 1~2 条 fence 命令(见 _region_to_fence: enabled=true 的
     # upsert 要 upsert + 激活两条). cmd_id 是占位 -- 网关 fan-out 时给每条子命令
     # 打唯一子 cmd_id(见 cloud_wiring._handle_task). flatten 成一维.
-    return [c for region in regions for c in _region_to_fence(cmd_id, region)]
+    cmds = [c for region in regions for c in _region_to_fence(cmd_id, region)]
+    # 99 U187: the time window, the rules and the siren scalars are stored on
+    # the robot (P3 fence_settings, broadcast to P2 on cmd/fence) through one
+    # cmd/geo set_fence_defaults carrying exactly the fields present -- the
+    # partial-update semantics (absent = unchanged, null = deleted).
+    # ~~format-checked only, never applied~~ (D-8).
+    settings = {robot: payload[cloud] for cloud, robot in _ALARM_SETTING_KEYS if cloud in payload}
+    if settings:
+        cmds.append({"cmd_id": cmd_id, "action": "set_fence_defaults",
+                     "origin": CLOUD_ORIGIN, "obj": settings})
+    if not cmds:  # nothing at all to apply
+        raise InboundReject(build_error_fields(
+            errors.E_SCHEMA, "nothing to configure: no regions and no alarm settings",
+            {"field": "regions"}))
+    return cmds
+
+
+#: 99 U187: SET_ALARM_CONFIG field -> the robot's fence_settings key
+_ALARM_SETTING_KEYS = (("alarm_window", "alarm_window"), ("rules", "alarm_rules"),
+                       ("alarm_level", "alarm_level"), ("siren_level", "siren_level"),
+                       ("duration_sec", "duration_sec"), ("cooldown_sec", "cooldown_sec"))
 
 
 def _region_to_fence(cmd_id: str, region: Dict) -> List[Dict[str, Any]]:

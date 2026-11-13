@@ -59,7 +59,9 @@ LON_MIN, LON_MAX = -180.0, 180.0
 
 #: v2.0 S2.4 报警标量闭集/范围.
 ALARM_LEVELS = (1, 2)
-RULE_TYPES = ("person_in_region", "vehicle_in_region")
+RULE_TYPES = ("person_in_region", "vehicle_in_region",
+              # 99 U187 (user 2026-11-13: "动物也报, 看感知模型识别的情况; 鸟类不报")
+              "animal_in_region")
 ALARM_ROLES = ("include", "exclude")
 REGION_OPS = ("upsert", "delete", "set_state")
 
@@ -181,22 +183,29 @@ def validate_alarm(payload: Dict[str, Any]) -> None:
 
     keep_in 的拒绝仍在 task_router._alarm(它要早于本函数, 因为 keep_in 是
     安全边界, 拒绝理由要逐字). 本函数补标量范围 + rules + regions 结构.
+
+    99 U187 (user 2026-11-13): a PARTIAL update -- every top-level field is
+    optional; absent = unchanged on the robot, null = deleted (the robot's
+    default then applies: all day for alarm_window, people in every warning
+    zone for rules), a value = overrides. ~~all six fields required~~: a
+    time window could neither be left as it was nor deleted.
     """
-    _enum(_req(payload, "alarm_level"), ALARM_LEVELS, "alarm_level")
-    _range(_number(_req(payload, "siren_level"), "siren_level"),
-           0, 100, "siren_level")
-    _range(_number(_req(payload, "duration_sec"), "duration_sec"),
-           1, 20, "duration_sec")
-    _range(_number(_req(payload, "cooldown_sec"), "cooldown_sec"),
-           0.5, 600.0, "cooldown_sec")
+    if payload.get("alarm_level") is not None:
+        _enum(payload["alarm_level"], ALARM_LEVELS, "alarm_level")
+    for key, lo, hi in (("siren_level", 0, 100), ("duration_sec", 1, 20),
+                        ("cooldown_sec", 0.5, 600.0)):
+        if payload.get(key) is not None:
+            _range(_number(payload[key], key), lo, hi, key)
 
-    window = _req(payload, "alarm_window")
-    if not isinstance(window, dict):
-        raise _invalid("alarm_window", "alarm_window must be an object")
-    for edge in ("start", "end"):
-        _regex(_req(window, edge), _HHMM_RE, "alarm_window.%s" % edge, "HH:mm")
+    window = payload.get("alarm_window")
+    if window is not None:  # start > end = across midnight (e.g. 20:00 ~ 08:00)
+        if not isinstance(window, dict):
+            raise _invalid("alarm_window", "alarm_window must be an object")
+        for edge in ("start", "end"):
+            _regex(_req(window, edge), _HHMM_RE, "alarm_window.%s" % edge, "HH:mm")
 
-    _validate_rules(payload)
+    if payload.get("rules") is not None:
+        _validate_rules(payload)
     _validate_regions(payload)
 
 
@@ -212,6 +221,10 @@ def _validate_rules(payload: Dict[str, Any]) -> None:
         if not isinstance(_req(rule, "enabled"), bool):
             raise _invalid("%s.enabled" % base, "enabled must be a boolean")
         _enum(_req(rule, "alarm_role"), ALARM_ROLES, "%s.alarm_role" % base)
+        if rule["alarm_role"] != "include":  # 99 U187: exclusion rules are not built
+            raise InboundReject(build_error_fields(
+                errors.E_CONFIG_INVALID, "only alarm_role include is supported",
+                {"field": "%s.alarm_role" % base}))
         applies = _req(rule, "applies_to")
         if not isinstance(applies, list):
             raise _invalid("%s.applies_to" % base, "applies_to must be an array")

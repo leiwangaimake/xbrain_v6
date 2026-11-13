@@ -93,14 +93,18 @@ _ALARM_REGION = {"id": "f-x", "op": "upsert", "base_rev": 0, "name": "zone",
 _DISABLED_REGION = dict(_ALARM_REGION, enabled=False)
 
 
-def _alarm_body(regions, msg_id="m-1"):
-    """一份合法 v2.0 SET_ALARM_CONFIG 报文, regions 由调用方给."""
+def _alarm_body(regions, msg_id="m-1", settings=False):
+    """一份合法 v2.0 SET_ALARM_CONFIG 报文, regions 由调用方给.
+    99 U187: 部分更新 -- 默认只带 regions (各 D 用例测的是区域的扇出与终态);
+    settings=True 时再带时间段 / 规则 / 声光, 它们多扇出一条 set_fence_defaults."""
+    payload = {"regions": regions}
+    if settings:
+        payload.update({"alarm_level": 1, "siren_level": 70, "duration_sec": 5,
+                        "cooldown_sec": 2.0,
+                        "alarm_window": {"start": "22:00", "end": "05:00"},
+                        "rules": []})
     return _qt_task(data={
-        "msg_id": msg_id, "task_type": "SET_ALARM_CONFIG",
-        "payload": {"alarm_level": 1, "siren_level": 70, "duration_sec": 5,
-                    "cooldown_sec": 2.0,
-                    "alarm_window": {"start": "22:00", "end": "05:00"},
-                    "rules": [], "regions": regions}})
+        "msg_id": msg_id, "task_type": "SET_ALARM_CONFIG", "payload": payload})
 
 
 def _qt_task(**over):
@@ -1777,3 +1781,37 @@ def test_a_configuration_that_changes_nothing_in_force_is_done_at_once():
     _accept_one_alarm(session, in_force=False)  # stored, nothing in force changed
     res = _task_results(session)  # terminal results so far
     assert len(res) == 1 and res[0]["state"] == "done"  # at once, done
+
+
+def test_alarm_settings_fan_out_to_one_set_fence_defaults():
+    """99 U187: the window / rules / siren fields reach the robot as ONE
+    cmd/geo set_fence_defaults carrying exactly the fields present (renamed
+    rules -> alarm_rules); the regions still fan out as before.
+    MUTATION: settings dropped (format-checked only, the old D-8) -> red."""
+    from xbrain.p5_gateway.inbound.task_router import route  # the fan-out itself
+    cmds = route(_alarm_body([_ALARM_REGION], settings=True)["data"])  # region + settings
+    actions = [c["action"] for _k, c in cmds]  # what goes to P3
+    assert actions == ["upsert", "set_state", "set_fence_defaults"]
+    assert cmds[2][1]["obj"] == {"alarm_window": {"start": "22:00", "end": "05:00"},
+                                 "alarm_rules": [], "alarm_level": 1, "siren_level": 70,
+                                 "duration_sec": 5, "cooldown_sec": 2.0}
+
+
+def test_alarm_settings_only_is_one_child_and_absent_is_unchanged():
+    """99 U187 partial update: only the siren level -> exactly one
+    set_fence_defaults with only that key (absent keys stay unchanged on the
+    robot); an empty payload is refused, not a silent no-op success.
+    MUTATION: every key always sent (absent sent as null = deleted) -> red."""
+    from xbrain.p5_gateway.inbound.task_router import route, InboundReject
+    body = _qt_task(data={"msg_id": "m-2", "task_type": "SET_ALARM_CONFIG",
+                          "payload": {"siren_level": 40}})
+    cmds = route(body["data"])  # one child only
+    assert [c["action"] for _k, c in cmds] == ["set_fence_defaults"]
+    assert cmds[0][1]["obj"] == {"siren_level": 40}  # nothing else touched
+    empty = _qt_task(data={"msg_id": "m-3", "task_type": "SET_ALARM_CONFIG", "payload": {}})
+    try:
+        route(empty["data"])
+    except InboundReject:
+        pass  # refused
+    else:
+        raise AssertionError("an empty SET_ALARM_CONFIG must be refused")

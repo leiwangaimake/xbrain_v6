@@ -217,12 +217,21 @@ def test_rule_type_and_role_closed_sets():
     from xbrain.p5_gateway.inbound.field_validate import validate_alarm
 
     bad_type = copy.deepcopy(_GOOD_ALARM)
-    bad_type["rules"][0]["type"] = "animal_in_region"
+    bad_type["rules"][0]["type"] = "bird_in_region"  # 99 U187: animal_in_region is legal now
     assert _reject_fields(validate_alarm, bad_type)["error_code"] == 1003
 
     bad_role = copy.deepcopy(_GOOD_ALARM)
     bad_role["rules"][0]["alarm_role"] = "maybe"
     assert _reject_fields(validate_alarm, bad_role)["error_code"] == 1003
+
+    # 99 U187: animal_in_region accepted; an exclusion rule is in the closed
+    # set but not built -> E_CONFIG_INVALID, never silently stored as include
+    animal = copy.deepcopy(_GOOD_ALARM)
+    animal["rules"][0]["type"] = "animal_in_region"
+    validate_alarm(animal)  # no raise
+    excl = copy.deepcopy(_GOOD_ALARM)
+    excl["rules"][0]["alarm_role"] = "exclude"
+    assert _reject_fields(validate_alarm, excl)["error_code"] == 3001  # E_CONFIG_INVALID, not a schema miss
 
 
 def test_enabled_rule_needs_nonempty_region_ids():
