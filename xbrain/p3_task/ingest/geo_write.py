@@ -63,7 +63,8 @@ from xbrain.p3_task.state.geo_events import (  # noqa: F401  (re-export)
     GEO_EVENT_WARN,
 )
 from xbrain.p3_task.state.geo_rev import content_hash
-from xbrain.p3_task.teach.validate import ring_within  # 99 U176 inside the activity area
+from xbrain.p3_task.teach.validate import ring_overlap, ring_within  # 99 U184 layout checks
+from xbrain.p3_task.fence.reach import fence_reports  # 99 U184 unreachable objects
 
 #: 11 S6.2 event/{sev}/geo detail.type closed set, info half + warn half. These
 #: are the audit trail of who changed the map; S7.10 is explicit that the event
@@ -159,30 +160,66 @@ def _ring(geom_json: str):
         return None
 
 
-async def fence_activation_refusal(conn, fence_id: str) -> Optional[Dict[str, Any]]:
-    """99 U176 (user 2026-11-12: "其他围栏都必须在活动区域内, 否则无意义"):
-    the refusal detail for enabling this fence, or None. A fence other than
-    the activity area (allow) is enabled only inside an ENABLED activity area:
-    without one the FenceSet is not even broadcast (S9A.1A FS-5A), so the
-    "enabled" fence would do nothing while the operator was told it took
-    effect. The allow itself is not checked here (the S9A.1A trigger keeps it
-    to one)."""
+async def fence_activation_notes(ctx: GeoContext, fence_id: str) -> Dict[str, Any]:
+    """99 U184 (user 2026-11-13): what switching this fence on should TELL the
+    operator -- never a refusal. {} when there is nothing to say, else:
+      * warnings: [{code: outside_activity_area, activity_area}] for a fence
+        other than the activity area lying outside the active one ("如果在外
+        系统不报错, 但是永远到不了");
+      * unreachable: the reach.fence_reports entries (an activity area leaving
+        waypoints / routes outside, a forbid zone covering them).
+    ~~99 U176 fence_activation_refusal: refuse outside / with no active area~~
+    superseded 2026-11-13; with no activity area the fence is simply in force
+    (99 U183). The fence's own role / name / ring ride along for the caller
+    (the robot-position note is made in the wiring, which holds the pose)."""
+    conn = ctx.fence_conn
     cur = await conn.execute(
         "SELECT name, role, geom_json FROM fences WHERE fence_id=?", (fence_id,))
     row = await cur.fetchone()
-    if row is None or row[1] == "allow":
+    ring = _ring(row[2]) if row is not None else None
+    if ring is None:
+        return {}
+    name, role = row[0] or "", row[1]
+    notes: Dict[str, Any] = {}
+    if role != "allow":
+        cur = await conn.execute(
+            "SELECT name, geom_json FROM fences WHERE role='allow' AND state='active' "
+            "AND tombstone=0")
+        allow = await cur.fetchone()
+        outer = _ring(allow[1]) if allow is not None else None
+        if outer is not None and not ring_within(ring, outer):
+            notes["warnings"] = [{"code": "outside_activity_area",
+                                  "activity_area": allow[0] or ""}]
+    if ctx.geo_conn is not None:
+        unreachable = await fence_reports(ctx.geo_conn, role, name, ring)
+        if unreachable:
+            notes["unreachable"] = unreachable
+    return notes
+
+
+async def forbid_overlap_refusal(conn, fence_id: str, role: str,
+                                 ring) -> Optional[Dict[str, Any]]:
+    """99 U184: the refusal detail for writing this fence geometry, or None. A
+    forbid zone may not overlap a warning zone, a speed-limit zone or another
+    forbid zone, from either side (teach/validate.check_fence_layout says why);
+    every live fence counts, switched on or not. The fence's own row is left
+    out, so re-sending a fence's geometry does not clash with itself."""
+    if role not in ("forbid", "warning", "speed_limit") or not ring:
         return None
     cur = await conn.execute(
-        "SELECT name, geom_json FROM fences WHERE role='allow' AND state='active' "
-        "AND tombstone=0")
-    allow = await cur.fetchone()
-    if allow is None:
-        return {"reason": "activity_area_inactive", "name": row[0]}
-    inner, outer = _ring(row[2]), _ring(allow[1])
-    if inner is None or outer is None or not ring_within(inner, outer):
-        return {"reason": "outside_activity_area", "name": row[0],
-                "activity_area": allow[0]}
-    return None
+        "SELECT fence_id, name, role, geom_json FROM fences WHERE tombstone=0 "
+        "AND state<>'deleted' AND fence_id<>? ORDER BY fence_id", (fence_id,))
+    clash = []
+    for _fid, oname, orole, geom in await cur.fetchall():
+        if not (role == "forbid" and orole in ("forbid", "warning", "speed_limit")
+                or role != "forbid" and orole == "forbid"):
+            continue
+        other = _ring(geom)
+        if other is not None and ring_overlap(ring, other):
+            clash.append(oname or "")
+    if not clash:
+        return None
+    return {"reason": "forbid_overlap", "fences": clash}
 
 
 def conflict_error(cmd: GeoCommand, row) -> GeoCommandError:
@@ -289,6 +326,12 @@ async def apply_upsert(cmd: GeoCommand, ctx: GeoContext,
             return replay_duplicate(logged)
         row = await _current_row(conn, parsed.table, parsed.pk_col, cmd.geo_id)
         await _fill_anchor_length(conn, parsed)
+        if parsed.table == "fences":  # 99 U184: a forbid zone overlapping
+            refusal = await forbid_overlap_refusal(
+                conn, cmd.geo_id, parsed.columns.get("role"),
+                _ring(parsed.columns.get("geom_json") or ""))
+            if refusal is not None:
+                raise GeoCommandError(E_GEO_INVALID, "forbid_overlap", refusal)
         if parsed.table == "waypoints" and parsed.columns.get("type") == "dock":
             await _refuse_dock_off_route(ctx, conn, parsed.columns["rtk_lat"],
                                          parsed.columns["rtk_lon"])  # 99 U146
@@ -485,10 +528,12 @@ async def apply_set_state(cmd: GeoCommand, ctx: GeoContext,
                 f"{cmd.geo_id!r} is deleted; set_state cannot revive it")
         if cmd.base_rev != row[0] and not cmd.force:
             raise conflict_error(cmd, row)
+        # 99 U184: switching a fence on is never refused for where it lies;
+        # what it leaves out of reach is reported in the ack (and, by the
+        # wiring, as an event). ~~U176: refused outside the activity area~~.
+        notes: Dict[str, Any] = {}
         if cmd.type == "fence" and target == "active" and row[2] != "active":
-            refusal = await fence_activation_refusal(conn, cmd.geo_id)
-            if refusal is not None:
-                raise GeoCommandError(E_GEO_INVALID, refusal["reason"], refusal)
+            notes = await fence_activation_notes(ctx, cmd.geo_id)
         rev = row[0] + 1
         # The fence quota triggers fire on THIS update (S9A.1A: <= 5 active, at
         # most 1 allow), which is why activation is where they had to exist --
@@ -499,6 +544,7 @@ async def apply_set_state(cmd: GeoCommand, ctx: GeoContext,
             (target, rev, provenance_for(cmd, cmd.obj), now_ms, cmd.geo_id))
         detail = {"geo_id": cmd.geo_id, "rev": rev, "state": target,
                   "previous_state": row[2]}
+        detail.update(notes)
         await write_cmd_log(conn, cmd, "accepted", "OK", detail, now_ms)
         await conn.commit()
         return ApplyResult("accepted", "OK", detail,

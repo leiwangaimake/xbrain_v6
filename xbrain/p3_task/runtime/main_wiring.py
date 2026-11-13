@@ -530,6 +530,30 @@ async def _amain(stop_flag: dict, heartbeat_period_s: float,
                 gen.put(key, json.dumps(
                     body, ensure_ascii=False).encode("utf-8"))
 
+            # 99 U184 (user 2026-11-13): waypoints / routes a fence leaves out of
+            # reach are REPORTED, never refused -- one event/warn/fence per
+            # report entry (11 S6.2 fence category, channel alarm), from the
+            # unreachable list an accepted geo or teach ack carries. Same eid
+            # scheme as the geo audit events (boot token + seq).
+            from xbrain.p3_task.fence.reach import (  # noqa: PLC0415
+                fence_row, robot_note, unreachable_event)
+            _reach_evt_seq = [0]
+
+            def _report_unreachable(detail: dict, trigger: str) -> None:
+                for entry in (detail or {}).get("unreachable") or ():
+                    _reach_evt_seq[0] += 1
+                    try:
+                        gen.put("event/warn/fence", json.dumps({
+                            "eid": "reach-%s-%d" % (_geo_evt_boot, _reach_evt_seq[0]),
+                            "title": "objects_unreachable",
+                            "detail": unreachable_event(entry, trigger),
+                            "src": "p3_task",
+                            # WALL-CLOCK-OK(record): 11 S6.1 Event.ts of this report
+                            "ts": time.time(),
+                        }, ensure_ascii=False).encode("utf-8"))
+                    except Exception as exc:      # noqa: BLE001 -- the write stays accepted
+                        _logger.error("p3 unreachable event failed: %s", exc)
+
             # 11 S2.2.2 state/task = "event + 1 Hz". Both halves publish through
             # this one builder: the transition callback awaits it (event) and the
             # loop calls it every TASK_STATE_PERIOD_S (floor). Reading the db each
@@ -1703,14 +1727,33 @@ async def _amain(stop_flag: dict, heartbeat_period_s: float,
                     # specifies "on change plus a 0.1 Hz floor", and the change
                     # is what the HMI is waiting to redraw.
                     while not geo_queue.empty():
+                        _gp = geo_queue.get_nowait()
                         ack = await handle_geo_payload(
-                            geo_queue.get_nowait(), geo_ctx,
+                            _gp, geo_ctx,
                             now_ms=_now_wall_ms(), on_event=_emit_geo_event)
+                        _gd = ack.get("detail") if isinstance(ack.get("detail"), dict) else None
+                        if (ack.get("result") == "accepted" and _gd is not None
+                                and isinstance(_gp, dict) and _gp.get("type") == "fence"
+                                and _gd.get("state") == "active"
+                                and _gd.get("previous_state") not in (None, "active")):
+                            # 99 U184: a fence just switched on -- say where the
+                            # robot stands if it can now only drive back in / out
+                            # (the pose lives here, not in the applier).
+                            try:
+                                _fr = await fence_row(fence_conn, _gd.get("geo_id"))
+                                _pose = state_cache.get("pose") or {}
+                                _note = None if _fr is None else robot_note(
+                                    _fr[0], _fr[2], _pose.get("lat"), _pose.get("lon"))
+                                if _note is not None:
+                                    _gd["robot"] = {"note": _note, "fence": _fr[1]}
+                            except Exception as exc:      # noqa: BLE001 -- note only
+                                _logger.error("p3 robot position note failed: %s", exc)
                         geo_ack_pub.put(json.dumps(
                             ack, ensure_ascii=False).encode("utf-8"))
                         if ack.get("result") == "accepted":
                             last_geo = 0.0
                             last_fence = 0.0
+                            _report_unreachable(_gd, "enable")
                     # 11 S12A: feed the caches, sample the pose, answer every
                     # cmd/teach. Sampling runs BEFORE the commands so a finish
                     # arriving in the same pass includes the point just taken.
@@ -1756,6 +1799,7 @@ async def _amain(stop_flag: dict, heartbeat_period_s: float,
                             if _auto.get("reason") != "no_named_session":
                                 last_teach = 0.0
                                 last_geo = last_fence = 0.0
+                                _report_unreachable(_auto, "save")  # 99 U184
                             _base = dict(_brief, kind="teach.expired", cause=expired)
                             if _auto.get("saved"):
                                 _ap = _auto.get("applied") or {}
@@ -1885,6 +1929,7 @@ async def _amain(stop_flag: dict, heartbeat_period_s: float,
                         if t_ack.get("result") == "accepted":
                             last_geo = 0.0
                             last_fence = 0.0
+                            _report_unreachable(t_ack.get("detail"), "save")  # 99 U184
                         last_teach = 0.0          # state change -> publish now
                     # F-5 (11 S4.6.4): if the cloud link is L3, inject one
                     # return_home BEFORE the tick so it is dispatched this pass.

@@ -74,8 +74,9 @@ from xbrain.p3_task.teach.session import (
     clamp_limits,
 )
 from xbrain.common.geo.roles import fence_role_for_name  # 99 U176 type from name
+from xbrain.p3_task.fence.reach import fence_reports, object_reports  # 99 U184 unreachable
 from xbrain.p3_task.teach.validate import (
-    check_activity_area,  # 99 U176 inside the activity area
+    check_fence_layout,  # 99 U184 overlap refused, outside the activity area told
     merge_degenerate,
     validate_fence,
     validate_route,
@@ -618,7 +619,9 @@ class TeachRuntime:
         return detail
 
     async def _fence_start_refusal(self, name: str):
-        """99 U176: (code, detail) refusing a fence recording start, or None."""
+        """99 U176: (code, detail) refusing a fence recording start, or None.
+        99 U184: ~~any other fence with no activity area -> activity_area_missing~~
+        superseded 2026-11-13 -- fences are recorded in any order."""
         role = fence_role_for_name(name)
         if role is None:  # no type keyword, or two
             return E_GEO_INVALID, {"reason": "fence_type_missing", "name": name}
@@ -626,18 +629,16 @@ class TeachRuntime:
         if role == "allow" and allow is not None:  # FS-5A: one activity area
             return E_GEO_INVALID, {"reason": "activity_area_exists", "name": name,
                                    "existing": allow[0]}
-        if role != "allow" and allow is None:  # nothing for it to sit in
-            return E_GEO_INVALID, {"reason": "activity_area_missing", "name": name}
         if role == "speed_limit" and self._fence_speed_limit_mps is None:
             return E_TEACH_STATE, {"reason": "recording_config_missing",
                                    "missing": ["teach.fence_speed_limit_mps"]}
         return None
 
     async def _fence_layout(self):
-        """(activity area as (name, ring, state) or None, [(name, ring)] of the
-        other fences) from fence.db, live rows only. The active allow wins if there
-        were ever two; a draft one counts too (it is recorded before it is
-        enabled, and the other fences are recorded against it)."""
+        """(activity area as (name, ring, state) or None, [(name, ring, role)]
+        of the other fences) from fence.db, live rows only. The active allow wins
+        if there were ever two; a draft one counts too (it is recorded before it
+        is enabled, and the other fences are recorded against it)."""
         cur = await self._fence_conn.execute(
             "SELECT name, role, state, geom_json FROM fences "
             "WHERE tombstone=0 AND state<>'deleted' ORDER BY fence_id")
@@ -651,7 +652,7 @@ class TeachRuntime:
                 if allow is None or state == "active":
                     allow = (name or "", ring, state)
             else:
-                others.append((name or "", ring))
+                others.append((name or "", ring, role))
         return allow, others
 
     def _validate(self, session: TeachSession, *, activate: bool,
@@ -665,9 +666,9 @@ class TeachRuntime:
             v = validate_fence(
                 points, dropped_by_quality=self._recorder.dropped_by_quality,
                 robot_at=robot_at, activate=activate)
-            if layout is not None:  # 99 U176, at save time
-                check_activity_area(v, merge_degenerate(points), role=role,
-                                    activity_area=layout[0], enclosed=layout[1])
+            if layout is not None:  # at save time (99 U176 / U184)
+                check_fence_layout(v, merge_degenerate(points), role=role,
+                                   activity_area=layout[0], others=layout[1])
             return v
         return validate_route(
             points, dropped_by_quality=self._recorder.dropped_by_quality)
@@ -687,11 +688,9 @@ class TeachRuntime:
             layout = await self._fence_layout()
         validation = self._validate(session, activate=activate, role=role,
                                     layout=layout)
-        if (activate and role not in (None, "allow") and layout[0] is not None
-                and layout[0][2] != "active"):
-            # 99 U176: enabled now, it would sit in an area not yet in force
-            # (the FenceSet is not even broadcast without an active allow)
-            validation.add("activity_area_inactive", activity_area=layout[0][0])
+        # ~~99 U176: activate with the activity area not in force ->
+        # activity_area_inactive, blocking~~ -- gone with U184 (no activity
+        # area is legal); _commit stores a draft whatever activate says anyway.
         if not validation.ok:
             raise TeachStateError(
                 E_TEACH_GEOMETRY, "geometry validation failed",
@@ -716,6 +715,10 @@ class TeachRuntime:
                                path_points=points, now_ms=now_ms,
                                state="active", created_by="teach")
             total_len = self._recorder.length_m
+            # 99 U184: a route crossing a forbid zone in force, or leaving the
+            # activity area in force, is saved and reported
+            unreachable = await object_reports(self._fence_conn, name=name,
+                                               points=points)
         else:
             geo_id = await self._mint_id(self._fence_conn, "fences", "f-", name)
             await self._ensure_name_free(self._fence_conn, "fences", name,
@@ -736,6 +739,9 @@ class TeachRuntime:
                                state="draft", created_by="teach",
                                speed_limit_mps=speed)
             total_len = self._recorder.length_m
+            # 99 U184: what this activity area / forbid zone will leave out of
+            # reach once switched on -- told now, while the operator is there
+            unreachable = await fence_reports(self._geo_conn, role, name, points)
         session.apply("save")
         session.close_reason = "saved"
         await self._clear_buffer(session.session_id)
@@ -748,6 +754,8 @@ class TeachRuntime:
                   # save for an activation: a recorded fence is stored as a
                   # DRAFT and F15 is what puts it in force.
                   "activated": False}
+        if unreachable:  # 99 U184: P3 wiring raises the event, P4 says it
+            detail["unreachable"] = unreachable
         self._session = None
         self._recorder = None
         return detail
@@ -890,11 +898,18 @@ class TeachRuntime:
                               rtk_alt=pose.get("alt"), yaw_deg=yaw,
                               now_ms=now_ms, state="active",
                               created_by="teach")
-        return teach_ack(cmd.cmd_id, "accepted", "OK",
-                         {"applied": {"geo_id": geo_id, "name": name,
-                                      "kind": kind, "yaw_deg": yaw,
-                                      "from_snapshot": snap is not None},
-                          "warn": [] if yaw is not None else ["no_heading"]})
+        detail = {"applied": {"geo_id": geo_id, "name": name,
+                              "kind": kind, "yaw_deg": yaw,
+                              "from_snapshot": snap is not None},
+                  "warn": [] if yaw is not None else ["no_heading"]}
+        # 99 U184: a point inside a forbid zone in force, or outside the
+        # activity area in force, is saved and reported (never refused)
+        unreachable = await object_reports(
+            self._fence_conn, name=name,
+            points=[(float(pose["lat"]), float(pose["lon"]))])
+        if unreachable:
+            detail["unreachable"] = unreachable
+        return teach_ack(cmd.cmd_id, "accepted", "OK", detail)
 
     # ---------------------------------------------------------- broadcast --
 

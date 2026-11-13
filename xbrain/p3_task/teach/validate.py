@@ -42,16 +42,19 @@ from xbrain.p3_task.teach.sampling import haversine_m
 #: asks -- "may this be saved" -- is one membership test.
 BLOCKING_ISSUES = frozenset({"too_few_points", "too_few_vertices",
                              "self_intersect", "area_too_small",
-                             # 99 U176: every other fence must lie inside the
-                             # one activity area (allow), and an activity area
-                             # must enclose the fences already there
-                             "outside_activity_area", "activity_area_missing",
-                             "activity_area_excludes", "fence_type_missing",
-                             # and enabling one needs that area enabled
-                             "activity_area_inactive"})
+                             # 99 U176: the name must declare one type
+                             "fence_type_missing",
+                             # 99 U184: a forbid zone overlapping a warning,
+                             # speed-limit or other forbid zone
+                             "forbid_overlap"})
+# ~~U176: outside_activity_area / activity_area_missing / activity_area_excludes
+# / activity_area_inactive blocking~~ -- 99 U184 (user 2026-11-13): saved and
+# told, never refused; activity_area_missing is gone (no activity area is legal).
 ADVISORY_ISSUES = frozenset({"degenerate_edge", "auto_closed",
                              "close_gap_large", "robot_outside",
-                             "outside_active_fence", "low_quality_ratio"})
+                             "outside_active_fence", "low_quality_ratio",
+                             "outside_activity_area", "activity_area_excludes",
+                             "activity_area_inactive"})
 
 #: S12A.7 defaults, both marked as awaiting field calibration in the contract.
 #: They are recording-quality thresholds, not common.safety.* parameters: the
@@ -163,30 +166,68 @@ def point_in_ring(point: Tuple[float, float],
     return inside
 
 
-def check_activity_area(v: Validation, points: Sequence[Tuple[float, float]], *,
-                        role: Optional[str],
-                        activity_area: Optional[Tuple[str, Sequence[Tuple[float, float]]]],
-                        enclosed: Sequence[Tuple[str, Sequence[Tuple[float, float]]]] = ()) -> None:
-    """99 U176 (user 2026-11-12: "其他围栏都必须在活动区域内, 否则无意义"),
-    added to a fence's validation:
-      * an activity area (role allow) must enclose every fence already there
-        (`enclosed`, name + ring) -> activity_area_excludes;
-      * any other fence needs the activity area (`activity_area`, name + ring)
-        -> activity_area_missing, and must lie inside it -> outside_activity_area.
-    All three are blocking, as is a name declaring no type (role None,
-    fence_type_missing): such a fence has no role to be saved under."""
+def check_fence_layout(v: Validation, points: Sequence[Tuple[float, float]], *,
+                       role: Optional[str],
+                       activity_area: Optional[Tuple[str, Sequence[Tuple[float, float]]]],
+                       others: Sequence[Tuple[str, Sequence[Tuple[float, float]], str]] = ()
+                       ) -> None:
+    """A fence's place among the others, added to its validation at save time.
+    `activity_area` is the activity area's (name, ring) or None, `others` the
+    other live fences as (name, ring, role).
+
+    99 U184 (user 2026-11-13), replacing 99 U176's refusals:
+      * a forbid zone may not overlap a warning zone, a speed-limit zone or
+        another forbid zone (the overlapped part of the first two would be
+        unreachable, and two forbid zones overlapping should be one) ->
+        forbid_overlap, BLOCKING, checked from either side;
+      * a fence outside the activity area is saved, and told: it can never be
+        reached -> outside_activity_area, advisory; an activity area that
+        leaves fences outside -> activity_area_excludes, advisory;
+      * no activity area at all is not an issue: the other fences are in
+        force without one (99 U183).
+    ~~U176: activity_area_missing / outside_activity_area /
+    activity_area_excludes all blocking~~ superseded 2026-11-13 -- the user
+    ruled "如果在外系统不报错, 但是永远到不了".
+    A name declaring no type (role None) stays blocking (fence_type_missing):
+    such a fence has no role to be saved under."""
     if role is None:
         v.add("fence_type_missing")
         return
+    clash = [name for name, ring, orole in others
+             if (role == "forbid" and orole in _FORBID_CLASH_ROLES
+                 or role in _FORBID_CLASH_ROLES and role != "forbid" and orole == "forbid")
+             and ring_overlap(points, ring)]
+    if clash:
+        v.add("forbid_overlap", fences=clash)
     if role == "allow":
-        outside = [name for name, ring in enclosed if not ring_within(ring, points)]
+        outside = [name for name, ring, orole in others
+                   if orole != "allow" and not ring_within(ring, points)]
         if outside:
             v.add("activity_area_excludes", fences=outside)
-        return
-    if activity_area is None:
-        v.add("activity_area_missing")
-    elif not ring_within(points, activity_area[1]):
+    elif activity_area is not None and not ring_within(points, activity_area[1]):
         v.add("outside_activity_area", activity_area=activity_area[0])
+
+
+#: 99 U184: the roles a forbid zone may not overlap (forbid itself included)
+_FORBID_CLASH_ROLES = frozenset({"forbid", "warning", "speed_limit"})
+
+
+def ring_overlap(a: Sequence[Tuple[float, float]],
+                 b: Sequence[Tuple[float, float]]) -> bool:
+    """99 U184: do rings a and b share any area? An edge crossing, or one ring
+    holding a vertex of the other (which covers full containment both ways).
+    Rings that only TOUCH along a shared edge share no area and do not count:
+    _segments_intersect reports proper crossings only, and the rule is about
+    an area that becomes unreachable, which a shared edge does not create."""
+    if len(a) < 3 or len(b) < 3:
+        return False
+    n, m = len(a), len(b)
+    for i in range(n):
+        a1, a2 = a[i], a[(i + 1) % n]
+        for j in range(m):
+            if _segments_intersect(a1, a2, b[j], b[(j + 1) % m]):
+                return True
+    return point_in_ring(a[0], b) or point_in_ring(b[0], a)
 
 
 def validate_route(points: Sequence[Tuple[float, float]], *,

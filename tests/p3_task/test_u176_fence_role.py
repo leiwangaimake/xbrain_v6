@@ -13,15 +13,15 @@ names the mutant it kills:
     no type (until then every recorded fence was a forbid zone, and nothing
     could create the activity area FS-5A needs, so none ever took effect);
   * a recording start is refused before anything is recorded: no type
-    (fence_type_missing), a second activity area (activity_area_exists), any
-    other fence with no activity area (activity_area_missing), a 限速区域
-    while teach.fence_speed_limit_mps is unset (by key name);
-  * at save, a fence other than the activity area must lie inside it
-    (outside_activity_area), and an activity area must enclose the fences
-    already there (activity_area_excludes) -- both close the session as
-    invalid_geometry;
-  * enabling (cmd/geo set_state active, F15 and the cloud) a fence other than
-    the activity area needs the activity area enabled and the fence inside it.
+    (fence_type_missing), a second activity area (activity_area_exists), a
+    限速区域 while teach.fence_speed_limit_mps is unset (by key name);
+  * 99 U184 (user 2026-11-13) turned the rest into hints: fences are recorded
+    in any order (~~activity_area_missing refused~~); a fence outside the
+    activity area, and an activity area leaving fences out, are SAVED with an
+    advisory issue (~~both closed the session as invalid_geometry~~);
+    enabling a fence outside the activity area, or with none enabled, is
+    accepted and the ack says so (~~refused~~). The U184 rules themselves
+    (forbid overlap, unreachable objects) are pinned in test_u184_fence_layout.
 """
 from __future__ import annotations  # postponed annotations
 
@@ -31,7 +31,7 @@ import aiosqlite  # in-memory dbs
 import pytest  # marker, parametrize
 import pytest_asyncio  # async fixture
 
-from xbrain.common.errors import E_GEO_INVALID, E_TEACH_GEOMETRY, E_TEACH_STATE  # expected codes
+from xbrain.common.errors import E_GEO_INVALID, E_TEACH_STATE  # expected codes
 from xbrain.common.geo.roles import fence_role_for_name  # under test
 from xbrain.p3_task.ingest.geo_apply import GeoContext, handle_geo_payload  # the set_state path
 from xbrain.p3_task.ingest.geo_commit import commit_fence  # seed rows
@@ -167,12 +167,11 @@ async def test_an_untyped_name_is_refused_at_start(rt):  # fence_type_missing
 
 
 @pytest.mark.asyncio  # async case
-async def test_another_fence_needs_an_activity_area_first(rt):  # activity_area_missing
-    """MUTATION: let a forbid start with no allow -> armed -> red."""
-    for name in ("北门禁止区域围栏", "东门报警区域围栏"):  # two non-allow kinds
-        ack = await _start(rt, name)  # nothing to sit in
-        assert ack["result"] == "rejected" and ack["detail"]["reason"] == "activity_area_missing"
-    assert not rt.active  # never armed
+async def test_fences_are_recorded_in_any_order(rt):  # 99 U184
+    """No activity area yet: a forbid zone still records. MUTATION: put the
+    U176 activity_area_missing refusal back -> rejected -> red."""
+    ack = await _start(rt, "北门禁止区域围栏")  # nothing to sit in, and fine
+    assert ack["result"] == "accepted" and rt.active  # armed
 
 
 @pytest.mark.asyncio  # async case
@@ -204,26 +203,28 @@ async def test_the_activity_area_then_a_fence_inside_it(rt):  # the user's order
 
 
 @pytest.mark.asyncio  # async case
-async def test_a_fence_across_the_activity_area_is_not_saved(rt):  # outside_activity_area
-    """MUTATION: drop check_activity_area at save -> saved -> red."""
+async def test_a_fence_across_the_activity_area_is_saved_and_told(rt):  # 99 U184
+    """"如果在外系统不报错, 但是永远到不了". MUTATION: outside_activity_area
+    back in BLOCKING_ISSUES -> not saved -> red; the issue dropped -> P4 has
+    nothing to say -> red."""
     await _seed(rt._fence_conn, "f-a", "营区活动区域围栏", "allow", _AREA)  # the area
     fin = await _record(rt, "北门禁止区域围栏", _ACROSS)  # half outside
-    assert fin["result"] == "rejected" and fin["code"] == E_TEACH_GEOMETRY  # closed
-    assert fin["detail"]["close_reason"] == "invalid_geometry"  # no finalizing left
-    assert _blocking(fin) == [{"code": "outside_activity_area",
-                               "activity_area": "营区活动区域围栏"}]  # P4 says it
-    assert await _row(rt, "北门禁止区域围栏") is None  # nothing written
+    assert fin["result"] == "accepted" and fin["detail"]["saved"] is True  # saved
+    assert {"code": "outside_activity_area", "activity_area": "营区活动区域围栏"} in \
+        fin["detail"]["validation"]["issues"]  # P4 says it
+    assert await _row(rt, "北门禁止区域围栏") == ("forbid", "draft", None)  # written
 
 
 @pytest.mark.asyncio  # async case
 async def test_an_activity_area_must_enclose_the_fences_already_there(rt):  # excludes
-    """The area was deleted and is re-recorded smaller. MUTATION: skip the
-    enclosed check for allow -> saved, leaving the warning fence outside -> red."""
+    """The area was deleted and is re-recorded smaller: saved (99 U184), and
+    the fence left outside is named. MUTATION: skip the check for allow ->
+    nothing to tell -> red; back to blocking -> not saved -> red."""
     await _seed(rt._fence_conn, "f-w", "东门报警区域围栏", "warning", _ACROSS)  # left behind
     fin = await _record(rt, "营区活动区域围栏", _AREA)  # does not reach it
-    assert fin["result"] == "rejected"  # closed
-    assert _blocking(fin) == [{"code": "activity_area_excludes",
-                               "fences": ["东门报警区域围栏"]}]  # names it
+    assert fin["result"] == "accepted" and fin["detail"]["saved"] is True  # saved
+    assert {"code": "activity_area_excludes", "fences": ["东门报警区域围栏"]} in \
+        fin["detail"]["validation"]["issues"]  # names it
 
 
 @pytest.mark.asyncio  # async case
@@ -248,9 +249,10 @@ async def _enable(ctx, fid, n):  # cmd/geo set_state active, as F15 / the cloud 
 
 
 @pytest.mark.asyncio  # async case
-async def test_enabling_needs_the_activity_area_enabled_and_the_fence_inside_it():
-    """MUTATION: drop fence_activation_refusal -> the warning fence is enabled
-    under a draft area (and the FenceSet is never broadcast) -> red."""
+async def test_enabling_is_never_refused_for_where_a_fence_lies():  # 99 U184
+    """With no activity area enabled the fence is simply in force (U183); a
+    fence outside the enabled area is enabled and the ack says so.
+    MUTATION: refuse again -> rejected -> red; warning dropped -> red."""
     geo, fence = await _open(GEO_DB_STATEMENTS), await _open(FENCE_DB_STATEMENTS)  # dbs
     ctx = GeoContext(geo_conn=geo, fence_conn=fence, task_conn=None)  # as p3 builds it
     try:
@@ -258,16 +260,13 @@ async def test_enabling_needs_the_activity_area_enabled_and_the_fence_inside_it(
         await _seed(fence, "f-w", "东门报警区域围栏", "warning", _INSIDE)  # inside
         await _seed(fence, "f-x", "北门禁止区域围栏", "forbid", _ACROSS)  # across (cloud-made)
         early = await _enable(ctx, "f-w", 1)  # area not enabled yet
-        assert (early["result"], early["code"], early["detail"]["reason"]) == (
-            "rejected", E_GEO_INVALID, "activity_area_inactive")
+        assert early["result"] == "accepted" and "warnings" not in early["detail"]
         assert (await _enable(ctx, "f-a", 2))["result"] == "accepted"  # the area itself
-        assert (await _enable(ctx, "f-w", 3))["result"] == "accepted"  # now it takes effect
         across = await _enable(ctx, "f-x", 4)  # half outside
-        assert across["result"] == "rejected" and across["detail"] == {
-            "reason": "outside_activity_area", "name": "北门禁止区域围栏",
-            "activity_area": "营区活动区域围栏"}
+        assert across["result"] == "accepted" and across["detail"]["warnings"] == [
+            {"code": "outside_activity_area", "activity_area": "营区活动区域围栏"}]
         cur = await fence.execute("SELECT fence_id FROM fences WHERE state='active' ORDER BY fence_id")
-        assert [r[0] for r in await cur.fetchall()] == ["f-a", "f-w"]  # exactly those
+        assert [r[0] for r in await cur.fetchall()] == ["f-a", "f-w", "f-x"]  # all in force
     finally:
         await geo.close()  # cleanup
         await fence.close()  # cleanup
