@@ -268,6 +268,53 @@ d_mode:
   deter_texts_supported: false
 
 
+# --- auto_alarm: warning-zone autonomous alarm (99 U188, 14 S6) ----------------
+# User ruling 2026-11-13: during a path patrol or a point-to-point navigation,
+# with the robot inside an enabled warning zone (报警区域), a watched target in
+# THAT zone raises an alarm: event + siren and red/blue for duration_sec + the
+# spoken warning once; the robot keeps moving ("不停车, 也响警笛"). The window,
+# the watched targets and the siren scalars come from the cloud (99 U187, P3
+# fence_settings, broadcast on cmd/fence); the values here are the robot side.
+# Every key required: a missing one refuses P2 startup (CLAUDE.md 3.6).
+auto_alarm:
+  # running task types that are judged (P3 task_type). patrol = path patrol,
+  # goto = point-to-point navigation (user: "对路径巡逻和PTP导航...都要支持").
+  task_types: [patrol, goto]
+  # perception model class names per target group (the model's own names,
+  # ros2_ws/perception/config/class_schema_94.json). 人 = person + bicycle +
+  # motorcycle (a rider is a person); 车 = the vehicles; 动物 = animals except
+  # bird -- the user ruled birds out, and the loader refuses a group that lists
+  # bird. Whether an animal is reported depends on the model recognising it.
+  class_groups:
+    person: [person, bicycle, motorcycle]
+    vehicle: [car, bus, truck, heavy_machinery]
+    animal: [cat, dog, horse, sheep, cow, elephant, bear, zebra, giraffe]
+  # detections below this confidence are ignored. Initial value: one step
+  # above RNS world.object_min_confidence 0.4 (99 U114), because a false alarm
+  # sounds the siren; tune on site.
+  min_confidence: 0.5
+  # state/pose older than this = position unknown -> zone rules suspended.
+  # state/pose is 10 Hz; 0.5 s is five missed frames (11 T-09a order).
+  pose_max_age_s: 0.5
+  # rt/perception/objects older than this = nothing seen this tick (tracks
+  # frozen, neither entering nor leaving). Inference runs at 20-30 Hz.
+  objects_max_age_s: 0.5
+  # 11 S9A.15 CAL-12 band h = k_h * cov_h_m + h_min_m, and the asymmetric
+  # persistence (exit >= 4 x enter, enforced by HysteresisConfig).
+  # Initial values; tune on site.
+  k_h: 1.0
+  h_min_m: 0.5
+  enter_persist_s: 1.0
+  exit_persist_s: 4.0
+  # used when the cloud never sent cooldown_sec / duration_sec (or deleted
+  # them). The cloud ranges are 0.5..600 s and 1..20 s (update_cloud S6.4).
+  default_cooldown_s: 30.0
+  default_duration_s: 5.0
+  # spoken once after the siren (14 S7.3.3 warn_01, speech_presets.yaml
+  # p-warn_leave; ASCII comma per CLAUDE.md 2.2 user ruling 2026-08-11).
+  speech_text: "您已进入管制区域,请立即离开"
+
+
 # --- mode_motion: NAV-50 D/B motion behavior (14 S5.6.3, CFG-40) ------------
 # This is the ONLY mapping from mode -> BehaviorCommand.
 # p1_motion.yaml MUST NOT redefine keep_dist_m / max_speed_mps.

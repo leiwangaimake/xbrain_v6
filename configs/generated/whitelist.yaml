@@ -107,6 +107,7 @@ processes:
     - health/ai
     - health/bit
     - rt/audio/play
+    - rt/perception/objects
     - state/chassis_basic
     - state/chassis_device
     - state/chassis_motion
@@ -118,6 +119,7 @@ processes:
     - state/power
     - state/robot
     - state/targets
+    - state/task
   p4_agent:
     pub:
     - cmd/approval
