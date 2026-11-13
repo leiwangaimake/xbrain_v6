@@ -120,6 +120,7 @@ from xbrain.p1_motion.path.climb import Climb, TrackHeading  # 99 U151
 from xbrain.p1_motion.path.heading_bridge import BRIDGE, HeadingBridge  # 99 U152
 from xbrain.p1_motion.teleop.velocity import (  # 99 U134 teleop drive
     TeleopSpeeds,
+    recording_move_mps,  # 99 U179
     source_for,
     speeds_from_mode,
     teleop_velocity,
@@ -146,6 +147,11 @@ CMD_BEHAVIOR_TOPIC = "cmd/motion/behavior"                # P1-3 (99 U99)
 #: 99 U134: P2's voice-set move / turn speed (11 S4.3 move_speed.mps /
 #: turn_speed.radps), the speed a teleop axis of 1.0 drives at.
 STATE_MODE_TOPIC = "state/mode"
+#: 99 U179: P3's recording session (11 S12A.5), event + 1 Hz -- P1 picks the
+#: teleop speed by fix / heading while a recording runs.
+STATE_TEACH_TOPIC = "state/teach"
+#: 11 S12A.5 session states in which the keys drive a recording.
+_RECORDING_STATES = frozenset({"recording", "paused"})
 #: 11 S3.5 behavior as narrowed by 99 U90 R-8 (a): the only values a P2 mode
 #: change produces. Anything else is refused LOUDLY (CLAUDE.md 3.5: an
 #: out-of-set value is never reinterpreted) -- a mis-spelled "hold" silently
@@ -279,7 +285,8 @@ class NavRuntime:
                              # 99 U142: float / dgps cap and the L2 (COG) speed
                              degraded_fix_cap_mps=cfg.degraded_fix_cap_mps,
                              cog_drive_fixed_mps=cfg.cog_drive_fixed_mps,
-                             cog_drive_degraded_mps=cfg.cog_drive_degraded_mps)
+                             cog_drive_degraded_mps=cfg.cog_drive_degraded_mps,
+                             bridge_drive_fixed_mps=cfg.bridge_drive_fixed_mps)  # 99 U178
         self._host = MissionHost(self._src, relmove_limits=cfg.relmove,
                                  holonomic=cfg.holonomic, now_mono_ms=now_ms)
         self._health = HealthFactorSlot(cfg.health_degrade_ms, cfg.health_dead_ms)
@@ -303,6 +310,9 @@ class NavRuntime:
         # Written by the Rust callback as one reference store, read once per
         # tick (the same single-store argument as estop_epoch below).
         self._teleop_speeds: Optional[TeleopSpeeds] = None
+        # 99 U179: (recording active, monotonic s of the state/teach frame);
+        # one tuple store by the Rust callback, read once per tick.
+        self._teach: Tuple[bool, float] = (False, -1e9)
         self._subs: List[Any] = []                 # strong refs (CLAUDE.md 4.3)
         # The generation quadruped currently holds, learned from
         # rt/chassis/state and echoed back on every cmd_vel (11:1722 makes the
@@ -429,6 +439,9 @@ class NavRuntime:
         # 99 U134: the voice-set speeds a teleop key drives at
         self._subs.append(self._gen.declare_subscriber(STATE_MODE_TOPIC,
                                                        self._on_mode))
+        # 99 U179: the recording session, for the recording teleop speed
+        self._subs.append(self._gen.declare_subscriber(STATE_TEACH_TOPIC,
+                                                       self._on_teach))
         # *** RT plane, not the general plane (11 S1.1.6 P1-24, added 2026-09-17).
         #
         # ! The anchor used to read P1-20. That row is rt/chassis/fault (the
@@ -661,7 +674,16 @@ class NavRuntime:
         if speeds is not None:
             self._teleop_speeds = speeds
 
-    def _teleop_drive(self, now_ms: int):
+    def _on_teach(self, sample: Any) -> None:
+        """state/teach from P3 (99 U179): whether a recording runs. RUST
+        THREAD: decode and one tuple store. A body without a session state
+        reads as no recording (the safe direction: the normal move speed)."""
+        body = unwrap_body(_load_json(sample))
+        sess = body.get("session") if isinstance(body, dict) else None
+        state = sess.get("state") if isinstance(sess, dict) else None
+        self._teach = (state in _RECORDING_STATES, time.monotonic())
+
+    def _teleop_drive(self, now_ms: int, pose: Any = None):
         """(teleop_cmd, teleop_source) for this tick (99 U134), or (None, None).
 
         The arbitration winner's axes at the latest voice-set speeds; None
@@ -672,8 +694,22 @@ class NavRuntime:
         if drive is None:
             return None, None
         device, axes = drive
-        cmd = teleop_velocity(axes, self._teleop_speeds,
-                              holonomic=self._cfg.holonomic)
+        speeds = self._teleop_speeds
+        if pose is not None and speeds is not None:
+            active, rx = self._teach
+            # 99 U179: while a recording runs (state/teach fresh within
+            # recording_state_stale_ms) the move speed comes from the fix /
+            # heading, not from the voice setting; a stale frame falls back to
+            # the voice speed (at most 1.0), the slower side.
+            if active and now_ms / 1000.0 - rx <= self._cfg.recording_state_stale_ms / 1000.0:
+                mps = recording_move_mps(pose.fix_type, pose.heading_source,
+                                         bool(pose.heading_valid),
+                                         self._cfg.recording_teleop_fixed_mps,
+                                         self._cfg.recording_teleop_degraded_mps)
+                if mps is None:
+                    return None, None  # lost position during a recording: do not move
+                speeds = TeleopSpeeds(move_mps=mps, turn_radps=speeds.turn_radps)
+        cmd = teleop_velocity(axes, speeds, holonomic=self._cfg.holonomic)
         if cmd is None:
             return None, None
         # 99 U150: the cloud keyboard drives unconditionally (estop and chassis
@@ -997,7 +1033,7 @@ class NavRuntime:
         # NavInputs, the host gate f(d_free), the rotation ring sample -- reads
         # the object world snapshot, never the raw profile arrays (WP-6).
         snap = self._world.build(self._perception.latest(now_ms))
-        teleop_cmd, teleop_source = self._teleop_drive(now_ms)  # 99 U134
+        teleop_cmd, teleop_source = self._teleop_drive(now_ms, pose)  # 99 U134 / U179
         if teleop_cmd is not None and self._bmt is not None and self._bmt.active:
             # an operator at the keys outranks a basic-motion run in progress
             # (manual over automatic, 12 S4.2); the executor must not keep

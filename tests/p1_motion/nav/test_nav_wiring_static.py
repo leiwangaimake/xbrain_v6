@@ -60,9 +60,11 @@ def test_subscriptions_are_held_and_undeclared():
     # (99 U99) -- the subscription R-8 (a) found missing on this side.
     # STATE_MODE_TOPIC since 2026-11-05: the voice-set speeds a teleop key
     # drives at (99 U134).
+    # STATE_TEACH_TOPIC since 2026-11-13: the recording session, for the
+    # recording teleop speed (99 U179).
     assert sorted(subs) == ["CMD_BEHAVIOR_TOPIC", "CMD_FACTOR_TOPIC",
                             "CMD_RELMOVE_TOPIC", "CMD_ROUTE_TOPIC",
-                            "STATE_MODE_TOPIC"]
+                            "STATE_MODE_TOPIC", "STATE_TEACH_TOPIC"]
     assert "s.undeclare()" in _NAV
 
 
@@ -179,5 +181,6 @@ def test_the_fix_quality_speeds_reach_navtick_by_name():
     construct, and the behaviour behind these names is pinned in
     test_fix_quality_caps.py. MUTATION: swap the fixed / degraded COG fields
     (1.0 on a dgps position) -> red."""
-    for arg in ("degraded_fix_cap_mps", "cog_drive_fixed_mps", "cog_drive_degraded_mps"):
+    for arg in ("degraded_fix_cap_mps", "cog_drive_fixed_mps", "cog_drive_degraded_mps",
+                "bridge_drive_fixed_mps"):  # 99 U178
         assert "%s=cfg.%s" % (arg, arg) in _NAV, arg  # each from its own field

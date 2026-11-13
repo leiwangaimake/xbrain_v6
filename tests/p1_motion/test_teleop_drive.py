@@ -151,7 +151,7 @@ def test_one_tick_hands_teleop_to_navinputs():  # static wiring check
     """MUTATION: compute the drive but not pass it -> red."""
     src = (Path(__file__).resolve().parents[2] / "xbrain" / "p1_motion" / "runtime"
            / "nav_wiring.py").read_text(encoding="utf-8")  # the module source
-    assert "teleop_cmd, teleop_source = self._teleop_drive(now_ms)" in src  # computed per tick
+    assert "teleop_cmd, teleop_source = self._teleop_drive(now_ms, pose)" in src  # per tick, with the pose (U179)
     assert "teleop_cmd=teleop_cmd, teleop_source=teleop_source," in src  # handed to the tick
     assert "teleop_unconditional=self._teleop_unconditional)" in src  # 99 U150 flag handed too
     assert "declare_subscriber(STATE_MODE_TOPIC" in src  # speeds subscribed
@@ -212,3 +212,70 @@ def test_only_the_cloud_keyboard_is_unconditional():  # the user's scope
     NavRuntime._teleop_drive(hmi, 1100)
     assert hmi._teleop_unconditional is False  # HMI keeps the shared gate
 
+
+
+
+# -- 99 U179 (user ruling 2026-11-13): the recording teleop speed ------------------
+from xbrain.p1_motion.teleop.velocity import recording_move_mps  # noqa: E402
+
+
+@pytest.mark.parametrize("fix,src,valid,want", [
+    ("rtk_fixed", "dual_antenna", True, 2.0),  # the best case only
+    ("rtk_fixed", "cog", True, 1.0),  # COG heading: degraded
+    ("rtk_fixed", "bridge", True, 1.0),  # IMU bridge: degraded
+    ("rtk_fixed", None, False, 1.0),  # no heading yet: still a position, degraded
+    ("rtk_fixed", "dual_antenna", False, 1.0),  # an invalid L1 is not L1
+    ("rtk_float", "dual_antenna", True, 1.0),  # float: degraded
+    ("dgps", "dual_antenna", True, 1.0),  # dgps: degraded
+    ("single", "dual_antenna", True, None),  # lost: do not move
+    ("no_fix", None, False, None),  # lost
+    (None, None, False, None),  # unknown: lost
+])
+def test_the_recording_speed_follows_the_fix_and_heading(fix, src, valid, want):
+    """MUTATION: 2.0 on any rtk_fixed -> COG / bridge get 2.0 -> red; drive on
+    single -> 1.0 -> red; ignore heading_valid -> red."""
+    assert recording_move_mps(fix, src, valid, 2.0, 1.0) == want
+
+
+def _rec_me(teach):  # a minimal NavRuntime self for _teleop_drive / _on_teach
+    me = SimpleNamespace(_teleop_lock=threading.Lock(), _teleop=TeleopTracker(),
+                         _teleop_speeds=TeleopSpeeds(move_mps=0.5, turn_radps=0.6),
+                         _cfg=SimpleNamespace(holonomic=True, recording_teleop_fixed_mps=2.0,
+                                              recording_teleop_degraded_mps=1.0,
+                                              recording_state_stale_ms=3000),
+                         _teleop_unconditional=False, _teach=teach)
+    me._teleop.observe("keyboard_cloud", now_mono_ms=1000, deadman=True, axes={"vx": 1.0})
+    return me
+
+
+_L1 = SimpleNamespace(fix_type="rtk_fixed", heading_source="dual_antenna", heading_valid=True)
+_COG = SimpleNamespace(fix_type="rtk_fixed", heading_source="cog", heading_valid=True)
+_LOST = SimpleNamespace(fix_type="single", heading_source=None, heading_valid=False)
+
+
+def test_a_recording_drives_at_the_fix_speed_not_the_voice_speed():
+    """Full forward key: 2.0 on L1 + fixed, 1.0 on COG, nothing when lost;
+    the turn keeps the voice speed. MUTATION: ignore the recording -> 0.5 ->
+    red; return the voice speed when lost -> 0.5 -> red."""
+    me = _rec_me((True, 1.0))  # a recording heard at t = 1.0 s
+    assert NavRuntime._teleop_drive(me, 1100, _L1)[0] == pytest.approx((2.0, 0.0, 0.0))
+    assert NavRuntime._teleop_drive(me, 1100, _COG)[0] == pytest.approx((1.0, 0.0, 0.0))
+    assert NavRuntime._teleop_drive(me, 1100, _LOST) == (None, None)  # do not move
+
+
+def test_no_recording_or_a_stale_one_keeps_the_voice_speed():
+    """MUTATION: drop the freshness check -> a recording heard 10 s ago still
+    drives at 2.0 -> red; treat 'idle' as recording -> red."""
+    assert NavRuntime._teleop_drive(_rec_me((False, 1.0)), 1100, _L1)[0] == pytest.approx((0.5, 0.0, 0.0))
+    stale = _rec_me((True, 1.0))  # recording last heard at t = 1.0 s
+    stale._teleop.observe("keyboard_cloud", now_mono_ms=10950, deadman=True, axes={"vx": 1.0})  # keys held at 11 s
+    assert NavRuntime._teleop_drive(stale, 11000, _L1)[0] == pytest.approx((0.5, 0.0, 0.0))  # 10 s old
+
+
+def test_state_teach_sets_the_recording_flag():
+    """MUTATION: count 'idle' / 'finalizing' as recording -> red."""
+    me = SimpleNamespace(_teach=(False, -1e9))
+    for state, want in (("recording", True), ("paused", True), ("idle", False), ("finalizing", False)):
+        frame = json.dumps({"schema": "teach_state_v1", "session": {"state": state}})
+        NavRuntime._on_teach(me, SimpleNamespace(payload=frame.encode("utf-8")))
+        assert me._teach[0] is want, state

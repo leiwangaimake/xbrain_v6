@@ -151,7 +151,7 @@ def test_the_climb_runs_at_the_cog_fixed_speed(fix, want):
     COG speed, never the 0.5 cap that would pin it at the COG threshold.
     MUTATION: no term on rtk_fixed -> the climb runs at 2.0 -> red; give it
     the 0.5 cap -> red."""
-    assert quality_caps(fix, "climb", 0.5, 1.0, 0.6) == want
+    assert quality_caps(fix, "climb", 0.5, 2.0, 0.6, 1.0) == want  # COG 2.0 (U178), climb 1.0
 
 
 @pytest.mark.parametrize("bad", [0.0, -1.0, None, True])

@@ -108,3 +108,31 @@ def teleop_velocity(axes: Dict[str, Any], speeds: Optional[TeleopSpeeds], *,
     vy = _axis(axes, "vy") * speeds.move_mps if holonomic else 0.0  # strafe, holonomic only
     wz = _axis(axes, "wz") * speeds.turn_radps  # turn, left positive
     return vx, vy, wz  # a candidate, gated by NavTick
+
+
+#: 99 U179: the fixes a recording may drive on -- the same line as 99 U142
+#: draws for tasks (single / no_fix is a lost position: nothing moves).
+_RECORDING_FIXES = frozenset({"rtk_fixed", "rtk_float", "dgps"})
+
+
+def recording_move_mps(fix_type: Optional[str], heading_source: Optional[str],
+                       heading_valid: bool, fixed_mps: float,
+                       degraded_mps: float) -> Optional[float]:
+    """The teleop move speed while a recording runs (99 U179, user ruling
+    2026-11-13), or None when the position is lost (do not move).
+
+        rtk_fixed + a valid dual-antenna (L1) heading   -> fixed_mps (2.0)
+        rtk_float / dgps, or a COG / bridge / climb / no heading -> degraded_mps (1.0)
+        single / no_fix / unknown                        -> None
+
+    It REPLACES the voice-set move speed during a recording (outside one the
+    P2 move_speed still applies). The cloud keyboard stays unconditional
+    (99 U150): the user ruled that a recording is a manual act watched on the
+    PTZ video, with the space-bar estop, so no obstacle gate is added here.
+    A missing heading is not a lost position: recording needs the position,
+    and a COG heading only appears once the robot moves."""
+    if fix_type not in _RECORDING_FIXES:
+        return None  # lost position: the keys drive nothing
+    if fix_type == "rtk_fixed" and heading_valid and heading_source == "dual_antenna":
+        return fixed_mps  # the best case only
+    return degraded_mps  # degraded but legal

@@ -173,7 +173,7 @@ def test_the_bridge_runs_like_the_climb(fix, want):
     antenna runs at 2.0). MUTATION: no term on rtk_fixed -> the bridge runs
     at the 2.0 top speed -> red; like a plain heading on float -> the 0.5 cap
     holds it at the COG threshold -> red."""
-    assert quality_caps(fix, "bridge", 0.5, 1.0, 0.6) == want
+    assert quality_caps(fix, "bridge", 0.5, 2.0, 0.6, 1.0) == want  # COG 2.0 (U178), bridge 1.0
 
 
 # -- the pose view ---------------------------------------------------------------------

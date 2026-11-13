@@ -50,7 +50,8 @@ def _stack():
     tick = NavTick(src, P1Arbiter(dwell_ms=200), v_nom_mps=1.0, speed_up_hold_ms=3000, d_up_margin_m=0.5, wz_max_rps=1.2,
                    spec_max_vx_mps=2.0, holonomic=True,
                    rot_limits=rot_limits(), r_robot_m=None,
-                   degraded_fix_cap_mps=0.5, cog_drive_fixed_mps=1.0, cog_drive_degraded_mps=0.6)
+                   degraded_fix_cap_mps=0.5, cog_drive_fixed_mps=1.0, cog_drive_degraded_mps=0.6,
+                   bridge_drive_fixed_mps=1.0)
     return src, tick
 
 
@@ -166,7 +167,8 @@ def test_ctor_refuses_unset_limits():
         NavTick(src, P1Arbiter(), v_nom_mps=1.0, speed_up_hold_ms=3000, d_up_margin_m=0.5, wz_max_rps=None,
                 spec_max_vx_mps=2.0, holonomic=True,
                 rot_limits=rot_limits(), r_robot_m=None,
-                   degraded_fix_cap_mps=0.5, cog_drive_fixed_mps=1.0, cog_drive_degraded_mps=0.6)
+                   degraded_fix_cap_mps=0.5, cog_drive_fixed_mps=1.0, cog_drive_degraded_mps=0.6,
+                   bridge_drive_fixed_mps=1.0)
 
 
 # ---- adapter entries ---------------------------------------------------------
@@ -216,7 +218,8 @@ def test_max_profile_obstacle_avoid_caps_the_nominal():
     tick = NavTick(src, P1Arbiter(dwell_ms=200), v_nom_mps=1.0, speed_up_hold_ms=3000, d_up_margin_m=0.5, wz_max_rps=1.2,
                    spec_max_vx_mps=2.0, holonomic=True, v_obstacle_avoid_mps=0.5,
                    rot_limits=rot_limits(), r_robot_m=None,
-                   degraded_fix_cap_mps=0.5, cog_drive_fixed_mps=1.0, cog_drive_degraded_mps=0.6)
+                   degraded_fix_cap_mps=0.5, cog_drive_fixed_mps=1.0, cog_drive_degraded_mps=0.6,
+                   bridge_drive_fixed_mps=1.0)
     _goto(src, 5000)
     oa = HealthView(1.0, True, "obstacle_avoid", "ok", 100)
     outs = [tick.run(_inp(5000 + 50 * k, health=oa)) for k in range(10)]

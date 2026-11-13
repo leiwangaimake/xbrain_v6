@@ -65,6 +65,13 @@ class NavConfig:
     degraded_fix_cap_mps: float
     cog_drive_fixed_mps: float
     cog_drive_degraded_mps: float
+    # 99 U178: the climb / IMU-bridge speed on rtk_fixed (nav.bridge_drive_fixed_mps)
+    bridge_drive_fixed_mps: float
+    # 99 U179: the teleop move speed while a recording runs -- rtk_fixed + L1 /
+    # degraded but legal -- and how old state/teach may be before it lapses
+    recording_teleop_fixed_mps: float
+    recording_teleop_degraded_mps: float
+    recording_state_stale_ms: float
     # 99 U151 heading-deadlock climb (path/climb.py): the track segment that
     # gives the climb heading, and the longest climb on it.
     climb_track_seg_m: float
@@ -344,6 +351,10 @@ def build_nav_config(p1_tree: Mapping[str, Any], rns_tree: Mapping[str, Any]) ->
         degraded_fix_cap_mps=_pos(p1_tree, "nav.degraded_fix_cap_mps"),
         cog_drive_fixed_mps=_pos(p1_tree, "nav.cog_drive_fixed_mps"),
         cog_drive_degraded_mps=_pos(p1_tree, "nav.cog_drive_degraded_mps"),
+        bridge_drive_fixed_mps=_pos(p1_tree, "nav.bridge_drive_fixed_mps"),  # 99 U178
+        recording_teleop_fixed_mps=_pos(p1_tree, "nav.recording_teleop_fixed_mps"),  # 99 U179
+        recording_teleop_degraded_mps=_pos(p1_tree, "nav.recording_teleop_degraded_mps"),
+        recording_state_stale_ms=_pos(p1_tree, "nav.recording_state_stale_ms"),
         climb_track_seg_m=_pos(p1_tree, "nav.climb_track_seg_m"),  # 99 U151
         climb_max_s=_pos(p1_tree, "nav.climb_max_s"),  # 99 U151
         heading_bridge_max_s=_pos(p1_tree, "nav.heading_bridge_max_s"),  # 99 U152

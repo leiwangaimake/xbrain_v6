@@ -36,7 +36,7 @@ from xbrain.p1_motion.path import gnss_pose  # i_fix table
 
 pytestmark = pytest.mark.no_device  # pure logic
 
-CAP, COG, COG_LOW = 0.5, 1.0, 0.6  # degraded_fix_cap / cog_drive_fixed / cog_drive_degraded
+CAP, COG, COG_LOW, BRIDGE = 0.5, 2.0, 0.6, 1.0  # degraded cap / COG fixed / COG degraded / bridge (U178)
 
 
 # -- the decision table ------------------------------------------------------------
@@ -44,18 +44,19 @@ CAP, COG, COG_LOW = 0.5, 1.0, 0.6  # degraded_fix_cap / cog_drive_fixed / cog_dr
     ("rtk_fixed", "dual_antenna", (None, None)),  # full speed: nothing added
     ("rtk_float", "dual_antenna", (CAP, None)),   # float: capped
     ("dgps", "dual_antenna", (CAP, None)),        # dgps: capped, NOT stopped (was i_fix 0)
-    ("rtk_fixed", "cog", (None, COG)),            # L2 on a good fix: 1.0
+    ("rtk_fixed", "cog", (None, COG)),            # L2 on a good fix: 2.0 (99 U178, was 1.0)
     ("rtk_float", "cog", (None, COG_LOW)),        # L2 on float: 0.6, not 1.0
     ("dgps", "cog", (None, COG_LOW)),             # COG beats the cap: 0.5 would starve COG
     ("rtk_fixed", None, (None, None)),            # no valid heading: the gate vetoes anyway
-    ("rtk_fixed", "bridge", (None, COG)),         # 99 U153: only L1 + fixed runs at 2.0
-    ("rtk_fixed", "climb", (None, COG)),          # 99 U153: likewise
+    ("rtk_fixed", "bridge", (None, BRIDGE)),      # 99 U178: the bridge keeps its own 1.0
+    ("rtk_fixed", "climb", (None, BRIDGE)),       # 99 U178: likewise
 ])
 def test_quality_caps(fix, source, want):
     """MUTATION: check the fix before the source -> dgps + cog gets the 0.5
     cap and COG drops to blind -> red; drop dgps from the capped set -> red;
-    one COG speed for every fix -> float + cog runs at 1.0 -> red."""
-    assert quality_caps(fix, source, CAP, COG, COG_LOW) == want  # (fix_cap, cog_drive)
+    one COG speed for every fix -> float + cog runs at 1.0 -> red; the bridge
+    on the COG speed again (pre-U178) -> bridge at 2.0 -> red."""
+    assert quality_caps(fix, source, CAP, COG, COG_LOW, BRIDGE) == want  # (fix_cap, cog_drive)
 
 
 def test_float_and_dgps_factor_is_one_single_still_vetoes():
@@ -80,10 +81,12 @@ def test_the_fix_cap_is_a_named_term():
     assert g.v_max_fwd == pytest.approx(CAP) and g.cuts[0][0] == "rtk"  # capped and attributed
 
 
-def test_the_fixed_fix_cog_speed_is_one_metre_per_second():
-    """MUTATION: one COG speed for all fixes (0.6) -> red."""
-    g = _gate(cog_drive_mps=COG)  # rtk_fixed + COG, profile 2.0
-    assert g.v_max_fwd == pytest.approx(COG) and g.cuts[0][0] == "heading"  # 1.0, named
+def test_the_fixed_fix_cog_speed_is_the_configured_cog_term():
+    """The COG speed is its own named term (2.0 since 99 U178, was 1.0). The
+    profile / spec are raised above it here so the term is the one that cuts.
+    MUTATION: one COG speed for all fixes (0.6) -> red; drop the term -> 3.0 -> red."""
+    g = _gate(cog_drive_mps=COG, v_nom_mps=3.0, spec_max_vx_mps=3.0)  # rtk_fixed + COG
+    assert g.v_max_fwd == pytest.approx(COG) and g.cuts[0][0] == "heading"  # 2.0, named
 
 
 def test_the_cog_speed_replaces_the_fix_cap():

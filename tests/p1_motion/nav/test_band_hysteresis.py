@@ -144,7 +144,8 @@ def _stack(hold_ms=3000):
                    spec_max_vx_mps=2.0, holonomic=True,
                    speed_up_hold_ms=hold_ms, d_up_margin_m=0.5,
                    rot_limits=rot_limits(), r_robot_m=None,
-                   degraded_fix_cap_mps=0.5, cog_drive_fixed_mps=1.0, cog_drive_degraded_mps=0.6)
+                   degraded_fix_cap_mps=0.5, cog_drive_fixed_mps=1.0, cog_drive_degraded_mps=0.6,
+                   bridge_drive_fixed_mps=1.0)
     goal = translate_relative_move(
         {"cmd_id": "rm-1", "dx_m": 15.0, "dy_m": 0.0, "dyaw_rad": 0.0},
         pose_xy=(0.0, 0.0), yaw_rad=0.0, heading_valid=True, holonomic=True, limits=LIM)
@@ -185,4 +186,5 @@ def test_nav_tick_refuses_a_null_hysteresis_leaf():
         NavTick(src, P1Arbiter(), v_nom_mps=2.0, wz_max_rps=1.2, spec_max_vx_mps=2.0,
                 holonomic=True, speed_up_hold_ms=None, d_up_margin_m=0.5,
                 rot_limits=rot_limits(), r_robot_m=None,
-                   degraded_fix_cap_mps=0.5, cog_drive_fixed_mps=1.0, cog_drive_degraded_mps=0.6)
+                   degraded_fix_cap_mps=0.5, cog_drive_fixed_mps=1.0, cog_drive_degraded_mps=0.6,
+                   bridge_drive_fixed_mps=1.0)
