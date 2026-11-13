@@ -357,6 +357,31 @@
   - `reason`：`inside_forbid`（被禁止区盖住）/ `outside_activity_area`（在活动区域外）。`objects` 为航点与路径名（含充电站、返航终点站）；路径只要有一个点在内就列出。
 - 机器人**不拒绝**这些操作，只上报；云端请提示操作员调整围栏或对象。
 
+#### 4.3.z 报警区自主报警【新增 · `99` U188，2026-11-13】
+
+- **何时报**：机器人在执行**路径巡逻或点到点导航**，且**自身在某个已启用的报警区域内**；该区域里出现 `SET_ALARM_CONFIG` 规则所列的目标（缺省只报人），并在报警时间段内（§6.4）。机器人不在报警区内时不判断。目标持续约 1 s 才报，同一区域两次报警至少间隔 `cooldown_sec`。
+- **报警事件** `event/error/alarm`（机内 `event/alarm/intrusion`，级别 `alarm` 按 §4.1 映射为 `error`），`detail` 按 v2.0 §5.2 八项**由机器人填好**：
+
+  ```json
+  {"alarm_type": "person_in_region", "matched_rule": "person_in_region",
+   "zone_hits": ["f-yard"], "track_id": 12, "dwell_s": null,
+   "wpos": {"latitude": 34.69712, "longitude": 135.50531, "altitude_m": null, "valid": true, "sigma_m": 0.02},
+   "fence_set_id": "fs-site", "rev": 7,
+   "zone_id": "f-yard", "zone_name": "北门报警区域",
+   "targets": [{"track_id": 12, "cls": "person", "group": "person", "conf": 0.91,
+                "d_inside_m": 3.4, "lat": 34.69712, "lon": 135.50531}],
+   "rules_source": "cloud", "window": {"start": "22:00", "end": "05:00"},
+   "alarm_level": 1, "siren_level": 70, "duration_sec": 5.0, "cooldown_sec": 30.0,
+   "heading_level": 1, "fix_type": "rtk_fixed", "deterrent": "started"}
+  ```
+  - `alarm_type`：`person_in_region` / `vehicle_in_region` / ★ **新增 `animal_in_region`**（取编号最小的那个目标所属的类）。区里同时有多个目标时只报一条，`targets` 全部列出；`track_id` / `wpos` 指编号最小的那个。
+  - `wpos` 由机器人位置与航向推算，误差约 0.3 m（1 m/s 时）；`dwell_s` 不提供，恒为 `null`。
+  - `deterrent`（声光驱离的执行结果）：`started` 已响警笛 / `busy` 上一次驱离还在进行 / `not_idle` 机器人正处于对讲、喊话或驱离模式，未自动驱离 / `refused` 三合一设备拒绝或离线（★ 设备送修期间恒为 `refused`）。
+- **驱离动作**：警笛 + 红蓝灯持续 `duration_sec` 秒，然后喊一次「您已进入管制区域，请立即离开」；**机器人不停车**，继续巡逻 / 导航（用户裁决）。
+- **区域判定暂停 / 恢复**：巡逻或导航中、在报警区内，定位（非 RTK 固定 / 浮点）或航向失效时 `event/warn/alarm` `title = "zone_rules_suspended"`，恢复（或任务结束）时 `event/info/alarm` `title = "zone_rules_resumed"`；`detail.reason` 为 `position_invalid` / `heading_invalid`。各一条，不持续。
+- **时钟未同步**：报警时间段按全天判，发一次 `event/warn/alarm` `title = "alarm_clock_unsynced"`（同步恢复后再失步会再发一次）。
+- 以上三类的机内类别都是 `intrusion`，上云统一映射为 v2.0 `alarm` 类（§4.1）；后两类的 `alarm_type` 由网关补为 `system_alarm`。
+
 ### 4.4 断线补发【偏差·待修】
 
 v2.0 §9.5 要求可靠事件断线后在原 key 上补发、复用 `eid`。**目前机器人没有在 v2.0 事件 key 上补发**：
@@ -547,6 +572,7 @@ v2.0 §9.5 要求可靠事件断线后在原 key 上补发、复用 `eid`。**�
 - 区域的 `applies_to`：**只做格式校验，不生效** —— 报什么目标以 `rules[]` 为准。
 - 报文里既没有 `regions[]`、也没有任何上表字段时整条拒绝：1003，`E_SCHEMA`。~~`regions[]` 为空时整条拒绝：1006，`E_NOT_IMPLEMENTED`。~~（被替代，~ 2026-11-13）
 - 只改上表字段、不改区域时，机器人执行的围栏不变，受理后**立即**回 `done`。
+- ★ U188：这些设置用于报警区自主报警，报警事件与驱离行为见 §4.3.z。`alarm_level` 只随事件上报，不改变机器人动作；`siren_level`（0–100）按比例设警笛幅度，未设置时用机器人调好的值。
 - 终态 result：
   - 机器人生效围栏版本前进即回 `done`，`detail` 为空（没有 `active_rev`、`played_times`、`stop_reason`）。
   - 6 s 内未前进回 `failed`、2002。
