@@ -335,6 +335,8 @@
     arbitration: "仲裁", payload: "载荷", ptz: "云台", health: "健康", system: "系统",
     geo: "地图", perception: "感知", bit: "自检", chassis: "底盘", teach: "录制",
     fence: "围栏",
+    // 99 U188: P2's warning-zone autonomous alarm is the first intrusion producer
+    intrusion: "报警",
   };
   // ~~intrusion / audio / voice (and a planned mode_change)~~ removed 2026-11-12
   // (user): no process publishes events of these categories (grep of every
@@ -366,6 +368,9 @@
     health_factor_degraded: "健康度降级, 已限速", broadcast_fault: "广播故障",
     "ptz deadman stop": "云台遥控松手, 已停止", grant: "仲裁授予", release: "仲裁释放",
     preempt: "仲裁抢占", suspend: "仲裁挂起", rearm: "仲裁重新武装",
+    // 99 U188 warning-zone autonomous alarm (p2 runtime/alarm_wiring.py titles)
+    zone_intrusion: "报警区域发现可疑目标", zone_rules_suspended: "报警区域判定暂停(定位或航向失效)",
+    zone_rules_resumed: "报警区域判定恢复", alarm_clock_unsynced: "时钟未同步, 报警时段按全天",
   };
   const EV_ARB_CN = { grant: "占用", release: "释放", preempt: "抢占" };
 

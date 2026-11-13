@@ -1143,6 +1143,21 @@ def test_an_alarm_event_carries_every_required_detail_field():
     assert d["alarm_type"] == "system_alarm"
 
 
+def test_the_p2_zone_alarm_reaches_the_cloud_with_its_own_fields():
+    """99 U188: P2's warning-zone alarm carries the v2.0 fields itself; the
+    gateway keeps them, animal_in_region included (99 U187 rule type).
+    MUTATION: animal_in_region not in ALARM_TYPES -> system_alarm -> red."""
+    bridge, session = _bridge()
+    wpos = {"latitude": 34.7, "longitude": 135.5, "altitude_m": None, "valid": True, "sigma_m": 0.02}
+    bridge.publish_event("alarm", "intrusion", {"eid": "a-1", "detail": {
+        "alarm_type": "animal_in_region", "matched_rule": "animal_in_region",
+        "zone_hits": ["f-yard"], "track_id": 4, "dwell_s": None, "wpos": wpos,
+        "fence_set_id": "fs", "rev": 3}})
+    d = json.loads(session.puts[0][1].decode("utf-8"))["data"]["detail"]
+    assert d["alarm_type"] == "animal_in_region" and d["track_id"] == 4  # kept
+    assert d["wpos"] == wpos and d["zone_hits"] == ["f-yard"]  # not replaced by the null shell
+
+
 def test_comm_events_get_a_machine_readable_code():
     """v2.0 S5.1 code 必填且机器可读; comm 事件此前发空串."""
     from xbrain.p5_gateway.event.comm_events import comm_event_code

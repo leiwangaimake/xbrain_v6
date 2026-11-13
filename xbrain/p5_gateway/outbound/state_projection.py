@@ -325,7 +325,11 @@ INTERNAL_TO_V2_EVENT_CATEGORY = {
 ALARM_DETAIL_REQUIRED = ("alarm_type", "fence_set_id", "rev", "matched_rule",
                          "zone_hits", "dwell_s", "track_id", "wpos")
 ALARM_TYPES = ("person_in_region", "vehicle_in_region", "rtk_lost",
-               "heading_degraded", "heading_recovered", "system_alarm")
+               "heading_degraded", "heading_recovered", "system_alarm",
+               # 99 U188: the warning-zone alarm for an animal; the rule type
+               # animal_in_region was added to SET_ALARM_CONFIG by 99 U187
+               # (update_cloud S6.4), its alarm_type follows.
+               "animal_in_region")
 
 
 def to_v2_event_category(value: str) -> str:

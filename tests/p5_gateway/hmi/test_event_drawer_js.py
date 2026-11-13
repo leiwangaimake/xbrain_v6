@@ -175,8 +175,18 @@ def test_categories_without_a_producer_are_not_mapped():
     (intrusion / audio / voice; mode switching was never mapped). An event of
     such a cat would still show, under its raw cat and title. MUTATION: the
     rows back in EV_CAT_CN -> red."""
-    for cat in ("intrusion", "audio", "voice", "mode_change"):  # no producer in xbrain/
+    # ~~intrusion~~ left this list 2026-11-13: P2's autonomous alarm publishes it (99 U188)
+    for cat in ("audio", "voice", "mode_change"):  # no producer in xbrain/
         assert _text({"cat": cat, "title": "x"}) == {"cat": cat, "text": "x"}  # raw, not dropped
+
+
+def test_the_zone_alarm_events_are_worded():
+    """99 U188: the four P2 titles in Chinese under 报警. MUTATION: a row
+    missing -> the raw title shows -> red."""
+    assert _text({"cat": "intrusion", "title": "zone_intrusion"}) == {
+        "cat": "报警", "text": "报警区域发现可疑目标"}
+    for t in ("zone_rules_suspended", "zone_rules_resumed", "alarm_clock_unsynced"):  # the rest
+        assert _text({"cat": "intrusion", "title": t})["text"] != t  # worded, not raw
 
 
 def test_pinned_alarms_skip_live_families_old_ones_and_infos():
