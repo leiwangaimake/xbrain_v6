@@ -182,15 +182,24 @@ def main(argv: Optional[list] = None) -> int:
                 "p3_task config: teach.record_warn_before_s=%r must be a non-empty "
                 "list of positive seconds below teach.record_duration_s (99 U163)", _tw)
             return 78
-        # 99 U176: the ceiling of a recorded 限速区域 fence. null is allowed
-        # (that one kind of recording is refused by key name at start); a
-        # value given must be a finite positive speed.
-        _tfs = _teach.get("fence_speed_limit_mps")
-        if _tfs is not None and (isinstance(_tfs, bool) or not isinstance(_tfs, (int, float))
-                                 or not math.isfinite(_tfs) or _tfs <= 0.0):
-            _logger.error(
-                "p3_task config: teach.fence_speed_limit_mps=%r must be null or a "
-                "positive speed in m/s (99 U176)", _tfs)
+        # 99 U185: the speed-limit default of 限速区域 fences (0.6 by the
+        # user's ruling, written in p3_task.yaml) and the bounds a cloud value
+        # must fall in. Required: without them a speed zone has no limit.
+        # ~~99 U176 teach.fence_speed_limit_mps (null refused the recording)~~.
+        _fence = (_cfg.get("fence") or {}) if hasattr(_cfg, "get") else {}
+        _fsp = {}
+        for _fk in ("default", "min", "max"):
+            _fv = _fence.get("speed_limit_%s_mps" % _fk)
+            if (isinstance(_fv, bool) or not isinstance(_fv, (int, float))
+                    or not math.isfinite(_fv) or _fv <= 0.0):
+                _logger.error("p3_task config: fence.speed_limit_%s_mps=%r must be a "
+                              "positive speed in m/s (99 U185)", _fk, _fv)
+                return 78
+            _fsp[_fk] = float(_fv)
+        if not _fsp["min"] <= _fsp["default"] <= _fsp["max"]:
+            _logger.error("p3_task config: fence.speed_limit_default_mps=%r must lie in "
+                          "[speed_limit_min_mps, speed_limit_max_mps] = [%r, %r] (99 U185)",
+                          _fsp["default"], _fsp["min"], _fsp["max"])
             return 78
         # 99 U142 / 11 S3.3.3: how long single / no_fix must last before the
         # running task is suspended and the alarm raised, and how long a usable
@@ -245,7 +254,7 @@ def main(argv: Optional[list] = None) -> int:
             teach_min_dist_m=float(_teach["min_dist_m"]),
             teach_record_duration_s=float(_teach["record_duration_s"]),
             teach_record_warn_before_s=[float(w) for w in _teach["record_warn_before_s"]],
-            teach_fence_speed_limit_mps=None if _tfs is None else float(_tfs),
+            fence_speed_limit=_fsp,
             rtk_lost_sustain_s=float(_rtk["lost_sustain_s"]),
             rtk_recover_sustain_s=float(_rtk["recover_sustain_s"]),
             low_battery={k: float(_lb[k]) for k in _lb_keys})

@@ -140,6 +140,8 @@ def test_main_refuses_to_start_without_the_radius(monkeypatch, route, rc):
                      "record_duration_s": 10800, "record_warn_before_s": [600, 60]},  # U132 pair
            "route": route,  # a resolved p3 config
            "rtk_loss": {"lost_sustain_s": 1.0, "recover_sustain_s": 2.0},  # 99 U142 pair
+           "fence": {"speed_limit_default_mps": 0.6, "speed_limit_min_mps": 0.1,
+                     "speed_limit_max_mps": 2.0},  # 99 U185
            "low_battery": {"trigger_soc_pct": 20.0, "stop_soc_pct": 5.0,
                            "cloud_alarm_period_s": 2.0,  # 99 U146 rule
                            "charge_full_soc_pct": 100.0,  # 99 U157

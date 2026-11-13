@@ -231,6 +231,11 @@ CREATE TABLE IF NOT EXISTS fences (
   -- change never takes effect, with no error anywhere.
   priority      INTEGER NOT NULL DEFAULT 0,     -- 11 S9A.2 painter order (S9.4)
   speed_limit_mps REAL CHECK (speed_limit_mps IS NULL OR speed_limit_mps > 0),
+  -- 99 U185: 1 = the zone carries its OWN limit (sent with it by the cloud),
+  -- 0 = it follows the default (fence_settings, else p3_task.yaml
+  -- fence.speed_limit_default_mps); speed_limit_mps then holds the default as
+  -- of the last change, rewritten whenever the default moves (fence/settings).
+  speed_limit_own INTEGER NOT NULL DEFAULT 0 CHECK (speed_limit_own IN (0,1)),
   num           INTEGER,                        -- 1..99 voice "2 hao wei lan" (F15)
   alias_json    TEXT NOT NULL DEFAULT '[]',
   state         TEXT NOT NULL DEFAULT 'active', -- draft|active|disabled|deleted
@@ -330,9 +335,22 @@ GEO_DB_STATEMENTS = (
 )
 
 
+# 99 U185: fence-wide settings the cloud sets (and may delete). One row per
+# key; today only speed_limit_default_mps. Absent row = not set, the configured
+# default applies (fence/settings.py).
+DDL_FENCE_SETTINGS = """
+CREATE TABLE IF NOT EXISTS fence_settings (
+  key         TEXT PRIMARY KEY,
+  value_json  TEXT NOT NULL,
+  updated_ms  INTEGER NOT NULL
+);
+""".strip()
+
+
 FENCE_DB_STATEMENTS = (
     DDL_FENCES,
     DDL_GEO_CMD_LOG,
+    DDL_FENCE_SETTINGS,
     "DROP TRIGGER IF EXISTS trg_fence_total_quota;",
     "DROP TRIGGER IF EXISTS trg_fence_single_allow;",
     "DROP TRIGGER IF EXISTS trg_fence_total_quota_upd;",
@@ -423,6 +441,9 @@ ADDED_COLUMNS = {
         # calibrated" rather than a 0.0 that would read as "stop here" (3.1).
         ("priority", "INTEGER NOT NULL DEFAULT 0"),
         ("speed_limit_mps", _SPEED_LIMIT_COLDEF),
+        # 99 U185: an existing speed zone follows the default (0) -- it was
+        # recorded with the configured value, which is what the default is
+        ("speed_limit_own", "INTEGER NOT NULL DEFAULT 0 CHECK (speed_limit_own IN (0,1))"),
     ),
 }
 

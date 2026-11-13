@@ -127,6 +127,7 @@ MATRIX = [
     ("delete",    "fence",    False, {"cloud"}),
     ("upsert",    "route",    True,  {"cloud"}),      # force spans every action
     ("resync",    None,       False, {"cloud"}),
+    ("set_fence_defaults", None, False, {"cloud"}),   # 99 U185 speed-limit default
     # Reads are open to every channel including wecom (no side effect).
     ("get",       "route",    False, {"cloud", "wecom", "hmi", "voice"}),
     ("list",      None,       False, {"cloud", "wecom", "hmi", "voice"}),

@@ -75,6 +75,7 @@ from xbrain.p3_task.teach.session import (
 )
 from xbrain.common.geo.roles import fence_role_for_name  # 99 U176 type from name
 from xbrain.p3_task.fence.reach import fence_reports, object_reports  # 99 U184 unreachable
+from xbrain.p3_task.fence.settings import effective_speed_default  # 99 U185 speed default
 from xbrain.p3_task.teach.validate import (
     check_fence_layout,  # 99 U184 overlap refused, outside the activity area told
     merge_degenerate,
@@ -112,13 +113,14 @@ class TeachRuntime:
                  route_membership_m: Optional[float] = None,
                  record_duration_s: Optional[float] = None,
                  record_warn_before_s: Optional[Sequence[float]] = None,
-                 fence_speed_limit_mps: Optional[float] = None) -> None:
+                 fence_speed_limit: Optional[Dict[str, float]] = None) -> None:
         self._task_conn = task_conn
-        # 99 U176: the speed ceiling given to a recorded 限速区域 fence
-        # (p3_task.yaml teach.fence_speed_limit_mps). A real zone's limit, so no
-        # default (CLAUDE.md 3.1): None refuses to START such a recording, by
-        # key name, rather than saving a fence FV-13 would reject.
-        self._fence_speed_limit_mps = fence_speed_limit_mps
+        # 99 U185: p3_task.yaml fence.speed_limit_{default,min,max}_mps. A
+        # recorded 限速区域 fence follows the default (the cloud value, else
+        # the configured 0.6). None (tests) refuses to START such a recording,
+        # by key name, rather than saving a fence FV-13 would reject.
+        # ~~99 U176 fence_speed_limit_mps (null refused the recording)~~.
+        self._fence_speed_limit = fence_speed_limit
         # 99 U146: a 充电桩 / 充电站 point must lie within this of a route
         # (common.geo.route_membership_m); None = tests of the teach path alone.
         self._route_membership_m = route_membership_m
@@ -629,9 +631,9 @@ class TeachRuntime:
         if role == "allow" and allow is not None:  # FS-5A: one activity area
             return E_GEO_INVALID, {"reason": "activity_area_exists", "name": name,
                                    "existing": allow[0]}
-        if role == "speed_limit" and self._fence_speed_limit_mps is None:
+        if role == "speed_limit" and self._fence_speed_limit is None:
             return E_TEACH_STATE, {"reason": "recording_config_missing",
-                                   "missing": ["teach.fence_speed_limit_mps"]}
+                                   "missing": ["fence.speed_limit_default_mps"]}
         return None
 
     async def _fence_layout(self):
@@ -733,7 +735,10 @@ class TeachRuntime:
             if role is None:
                 raise TeachStateError(E_GEO_INVALID, "fence name declares no type",
                                       {"reason": "fence_type_missing", "name": name})
-            speed = self._fence_speed_limit_mps if role == "speed_limit" else None
+            # 99 U185: a recorded speed zone follows the default (own = 0)
+            speed = (await effective_speed_default(
+                self._fence_conn, self._fence_speed_limit["default"])
+                if role == "speed_limit" else None)
             await commit_fence(self._fence_conn, fence_id=geo_id, role=role,
                                points=points, now_ms=now_ms, name=name,
                                state="draft", created_by="teach",

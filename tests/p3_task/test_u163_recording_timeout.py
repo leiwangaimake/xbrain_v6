@@ -240,6 +240,7 @@ def test_main_refuses_a_bad_warning_list(monkeypatch, warn, rc):
            "teach": {"snap_max_age_ms": 8000, "min_dist_m": 0.5, "sample_hz": 1.0,
                      "record_duration_s": 10800, "record_warn_before_s": warn},
            "route": {"recorded_arrive_radius_m": 1.0, "membership_m": 5.0},
+           "fence": {"speed_limit_default_mps": 0.6, "speed_limit_min_mps": 0.1, "speed_limit_max_mps": 2.0},  # 99 U185
            "rtk_loss": {"lost_sustain_s": 1.0, "recover_sustain_s": 2.0},
            "low_battery": dict(_FULL_LB)}
     monkeypatch.setattr(resolved, "load_resolved", lambda *_a, **_k: cfg)  # no file

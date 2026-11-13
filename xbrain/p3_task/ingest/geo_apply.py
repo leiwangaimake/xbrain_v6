@@ -81,13 +81,17 @@ class GeoContext:
     """
 
     def __init__(self, geo_conn, fence_conn, task_conn=None,
-                 route_membership_m=None) -> None:
+                 route_membership_m=None, speed_limit=None) -> None:
         self.geo_conn = geo_conn
         self.fence_conn = fence_conn
         self.task_conn = task_conn
         # 99 U146: a 充电桩 / 充电站 waypoint must lie within this of a route
         # (common.geo.route_membership_m); None = tests of the geo path alone.
         self.route_membership_m = route_membership_m
+        # 99 U185: p3_task.yaml fence.speed_limit_{default,min,max}_mps as a
+        # dict {default, min, max}; None = tests of the geo path alone, where a
+        # speed zone without its own limit and set_fence_defaults are refused.
+        self.speed_limit = speed_limit
 
 
 # action -> applier. Populated by the per-action batches; an absent action is a

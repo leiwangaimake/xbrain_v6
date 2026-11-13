@@ -144,7 +144,7 @@ def run_voice_loop_wiring(stop_flag: dict,
                           teach_min_dist_m: Optional[float] = None,
                           teach_record_duration_s: Optional[float] = None,
                           teach_record_warn_before_s: Optional[list] = None,
-                          teach_fence_speed_limit_mps: Optional[float] = None,
+                          fence_speed_limit: Optional[Dict[str, float]] = None,
                           rtk_lost_sustain_s: Optional[float] = None,
                           rtk_recover_sustain_s: Optional[float] = None,
                           low_battery: Optional[Dict[str, float]] = None) -> int:
@@ -176,9 +176,11 @@ def run_voice_loop_wiring(stop_flag: dict,
     the recording's only limit, handled the same way. teach_record_warn_before_s
     is teach.record_warn_before_s (99 U163): the time-left warnings, None in
     tests (no warnings).
-    teach_fence_speed_limit_mps is teach.fence_speed_limit_mps (99 U176): the
-    ceiling of a recorded 限速区域 fence; None refuses that one kind of
-    recording by key name.
+    fence_speed_limit is p3_task.yaml fence.speed_limit_{default,min,max}_mps
+    as {default, min, max} (99 U185): the default limit of a 限速区域 fence
+    with no limit of its own, and the bounds a cloud value must fall in. None
+    (tests) refuses speed zones without a limit and set_fence_defaults.
+    ~~teach_fence_speed_limit_mps (99 U176)~~.
 
     rtk_lost_sustain_s / rtk_recover_sustain_s are p3_task.yaml rtk_loss.*
     (11 S3.3.3, 99 U142): how long single / no_fix must last before the task
@@ -199,7 +201,7 @@ def run_voice_loop_wiring(stop_flag: dict,
                teach_min_dist_m=teach_min_dist_m,
                teach_record_duration_s=teach_record_duration_s,
                teach_record_warn_before_s=teach_record_warn_before_s,
-               teach_fence_speed_limit_mps=teach_fence_speed_limit_mps,
+               fence_speed_limit=fence_speed_limit,
                rtk_lost_sustain_s=rtk_lost_sustain_s,
                rtk_recover_sustain_s=rtk_recover_sustain_s,
                low_battery=low_battery))
@@ -216,7 +218,7 @@ async def _amain(stop_flag: dict, heartbeat_period_s: float,
                  teach_min_dist_m: Optional[float] = None,
                  teach_record_duration_s: Optional[float] = None,
                  teach_record_warn_before_s: Optional[list] = None,
-                 teach_fence_speed_limit_mps: Optional[float] = None,
+                 fence_speed_limit: Optional[Dict[str, float]] = None,
                  rtk_lost_sustain_s: Optional[float] = None,
                  rtk_recover_sustain_s: Optional[float] = None,
                  low_battery: Optional[Dict[str, float]] = None) -> int:
@@ -282,6 +284,15 @@ async def _amain(stop_flag: dict, heartbeat_period_s: float,
     # stage/ack/commit handshake is deferred until P1 clipping lands (see fence_set).
     _logger.info("p3 wiring: opening fence.db at %s", fence_db_path)
     fence_conn = await open_configured(fence_db_path, FENCE_DB_STATEMENTS)
+    if fence_speed_limit is not None:
+        # 99 U185: speed zones that follow the default carry the default in
+        # force now (the configured value may have changed since the last run)
+        from xbrain.p3_task.fence.settings import reconcile_speed_default  # noqa: PLC0415
+        _moved = await reconcile_speed_default(
+            fence_conn, fence_speed_limit["default"], _now_wall_ms())
+        if _moved:
+            _logger.warning("p3 wiring: %d speed-limit fence(s) moved to the current "
+                            "default", _moved)
     try:
         dao = TasksDAO(conn)
         fences_dao = FencesDAO(fence_conn)
@@ -771,7 +782,7 @@ async def _amain(stop_flag: dict, heartbeat_period_s: float,
                                  min_dist_m=teach_min_dist_m,
                                  record_duration_s=teach_record_duration_s,
                                  record_warn_before_s=teach_record_warn_before_s,  # 99 U163
-                                 fence_speed_limit_mps=teach_fence_speed_limit_mps,  # 99 U176
+                                 fence_speed_limit=fence_speed_limit,  # 99 U185
                                  snap_max_age_ms=teach_snap_max_age_ms,
                                  route_membership_m=route_membership_m)  # 99 U146
             if teach_snap_max_age_ms is None:
@@ -791,7 +802,8 @@ async def _amain(stop_flag: dict, heartbeat_period_s: float,
             # with the scheduler instead of racing it.
             geo_ctx = GeoContext(geo_conn=geo_conn, fence_conn=fence_conn,
                                  task_conn=conn,
-                                 route_membership_m=route_membership_m)  # 99 U146
+                                 route_membership_m=route_membership_m,  # 99 U146
+                                 speed_limit=fence_speed_limit)  # 99 U185
             # 11 S7.2: the contract-shaped cmd/task path. Same connection and
             # same DAO the scheduler uses -- P3 has one db thread (15 S2.1), so
             # an HMI cancel serialises with the tick rather than racing it.

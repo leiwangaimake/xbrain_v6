@@ -93,7 +93,7 @@ async def rt():
            await _open(FENCE_DB_STATEMENTS))  # and fence
     runtime = TeachRuntime(*dbs, boot_id="b0", sample_hz=1.0, min_dist_m=0.5,  # U132 pair
                            snap_max_age_ms=8000, record_duration_s=10800,  # configured values
-                           fence_speed_limit_mps=0.6)  # speed zones may record
+                           fence_speed_limit={"default": 0.6, "min": 0.1, "max": 2.0})  # U185
     _pose(runtime, _LAT, _LON, 100.0)  # a fresh fix
     runtime.update_health({"allow_motion": True})  # arming check 4
     runtime.update_robot({"hes": False, "estop_path": "up"})  # checks 4 / 7

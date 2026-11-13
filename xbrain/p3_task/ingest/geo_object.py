@@ -294,15 +294,19 @@ def _fence(obj: Dict[str, Any]) -> ParsedObject:
     if isinstance(priority, bool) or not isinstance(priority, int):
         raise _bad("priority must be an int32 (11 S9A.2), got "
                    f"{priority!r}")
-    # S9A.2 / FV-13 speed_limit_mps. NO default: it is the speed ceiling of a
-    # real zone, so a fallback would be a safety parameter with a default (3.1)
-    # -- and whichever number were chosen would silently become the limit of
-    # every slow zone an operator forgot to fill in.
+    # S9A.2 / FV-13 speed_limit_mps. 99 U185 (user 2026-11-13): a speed zone
+    # sent WITHOUT a limit follows the default (fence/settings: the cloud
+    # default, else the configured 0.6) -- it is parsed with None and
+    # speed_limit_own 0, and apply_upsert fills the current default in before
+    # the row is written, so the stored row still satisfies FV-13. A limit
+    # that IS sent must be a positive number (own = 1); the range against the
+    # configured bounds is apply_upsert's, it holds the configuration.
+    # ~~NO default: refused when absent~~ superseded 2026-11-13.
     limit = geom.get("speed_limit_mps", obj.get("speed_limit_mps"))
     if carries_speed_limit(role):
-        if isinstance(limit, bool) or not isinstance(limit, (int, float)) \
-                or not (limit > 0.0):
-            raise _bad("role=speed_limit requires speed_limit_mps > 0 "
+        if limit is not None and (isinstance(limit, bool) or not isinstance(limit, (int, float))
+                                  or not (limit > 0.0)):
+            raise _bad("role=speed_limit speed_limit_mps must be > 0 "
                        f"(11 FV-13), got {limit!r}")
     elif limit is not None:
         # The reverse half of FV-13 is E_SCHEMA, not something to drop. A limit
@@ -334,6 +338,11 @@ def _fence(obj: Dict[str, Any]) -> ParsedObject:
         # the fences CHECK: the column is NULL rather than 0.0 (3.1 -- a 0.0
         # here would read as "this zone caps you at a standstill").
         "speed_limit_mps": limit if carries_speed_limit(role) else None,
+        # 99 U185: 1 = this zone keeps the limit it was sent with. Note for the
+        # mutation runs: forcing this to 1 is an EQUIVALENT mutant -- apply_upsert
+        # (_settle_speed_limit) sets 0 whenever no limit was sent, and no reader
+        # looks at the flag on a role other than speed_limit (CLAUDE.md 7.2.1).
+        "speed_limit_own": 1 if carries_speed_limit(role) and limit is not None else 0,
         "num": _num(obj), "alias_json": _alias_json(obj),
     }
     # Both new fields enter the content hash for the same reason S9A.2 put them

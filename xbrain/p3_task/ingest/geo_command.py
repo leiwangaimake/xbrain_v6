@@ -159,6 +159,10 @@ def allowed_origins(action: str, gtype: Optional[str],
         return frozenset(GEO_ORIGIN), "read"
     if action == "resync":
         return _CLOUD_ONLY, "resync"
+    if action == "set_fence_defaults":
+        # 99 U185: the speed-limit default of every speed zone that has none of
+        # its own -- a fence-wide setting the user put on the cloud alone
+        return _CLOUD_ONLY, "set_fence_defaults"
     if action == "delete" and gtype == "fence":
         # The one cell where hmi and voice are BOTH denied while they may delete
         # every other type: an operator cannot talk or click the camp's keep-in
@@ -200,6 +204,15 @@ def check_channel(cmd: GeoCommand) -> None:
     cloud to get past this function.
     """
     origins, cell = allowed_origins(cmd.action, cmd.type, cmd.force)
+    target = (cmd.obj or {}).get("state")
+    if (cmd.action == "set_state" and cmd.type == "fence"
+            and target is not None and target != "active"):
+        # 99 U185 (user 2026-11-13: "关闭围栏只能云端"): switching a fence OFF
+        # is cloud-only; switching it on stays open to voice (F15) as before.
+        # Narrowed here rather than in allowed_origins because the target
+        # state lives in obj, which that function does not see. A command with
+        # no target is refused by the applier (E_SCHEMA) whoever sends it.
+        origins, cell = _CLOUD_ONLY, "disable_fence"
     if cmd.origin not in origins:
         raise GeoCommandError(
             E_CHANNEL_DENIED,

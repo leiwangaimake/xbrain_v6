@@ -106,6 +106,8 @@ async def apply_delete(cmd: GeoCommand, ctx: GeoContext,
             f"updated_by=?, updated_ms=? WHERE {pk_col}=?",
             (rev, provenance_for(cmd, cmd.obj), now_ms, cmd.geo_id))
         detail_stub = {"geo_id": cmd.geo_id, "rev": rev, "deleted": True}
+        if cmd.type == "fence":  # 99 U185: deleting a fence in force changes it
+            detail_stub["in_force"] = row[2] == "active"
         await write_cmd_log(conn, cmd, "accepted", "OK", detail_stub, now_ms)
         await conn.commit()
     except Exception:

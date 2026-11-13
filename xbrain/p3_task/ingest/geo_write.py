@@ -65,6 +65,10 @@ from xbrain.p3_task.state.geo_events import (  # noqa: F401  (re-export)
 from xbrain.p3_task.state.geo_rev import content_hash
 from xbrain.p3_task.teach.validate import ring_overlap, ring_within  # 99 U184 layout checks
 from xbrain.p3_task.fence.reach import fence_reports  # 99 U184 unreachable objects
+from xbrain.p3_task.fence.settings import (  # 99 U185 speed-limit default
+    effective_speed_default,
+    write_speed_default,
+)
 
 #: 11 S6.2 event/{sev}/geo detail.type closed set, info half + warn half. These
 #: are the audit trail of who changed the map; S7.10 is explicit that the event
@@ -222,6 +226,71 @@ async def forbid_overlap_refusal(conn, fence_id: str, role: str,
     return {"reason": "forbid_overlap", "fences": clash}
 
 
+async def _settle_speed_limit(ctx: GeoContext, conn, columns: Dict[str, Any]) -> None:
+    """99 U185: a speed zone's limit before the row is written. Sent with one
+    (own = 1): within the configured bounds, else E_GEO_INVALID. Sent without:
+    the current default (cloud value, else the configured 0.6), own = 0. With
+    no configuration (a geo-only test context) a zone without a limit is
+    refused rather than given an invented one."""
+    bounds = ctx.speed_limit or {}
+    limit = columns.get("speed_limit_mps")
+    if limit is None:
+        limit = await effective_speed_default(conn, bounds.get("default"))
+        if limit is None:
+            raise GeoCommandError(E_GEO_INVALID, "no speed limit and no default",
+                                  {"reason": "speed_limit_missing"})
+        columns["speed_limit_mps"] = float(limit)
+        columns["speed_limit_own"] = 0
+        return
+    if bounds and not (bounds["min"] <= float(limit) <= bounds["max"]):
+        raise GeoCommandError(
+            E_GEO_INVALID, "speed_limit_mps %r outside [%s, %s]" % (limit, bounds["min"], bounds["max"]),
+            {"reason": "speed_limit_out_of_range", "min": bounds["min"], "max": bounds["max"]})
+
+
+async def apply_set_fence_defaults(cmd: GeoCommand, ctx: GeoContext,
+                                   now_ms: int) -> ApplyResult:
+    """99 U185: cmd/geo action set_fence_defaults (cloud only, 11 S7.9.5) --
+    obj {"speed_limit_default_mps": number | null}. A number sets the default
+    of every speed zone without its own limit (within the configured bounds);
+    null deletes it, back to the configured 0.6. Persisted in fence.db
+    fence_settings, so it holds after a restart; the zones that follow it are
+    rewritten in the same transaction (fence/settings.py)."""
+    bounds = ctx.speed_limit
+    if not bounds:
+        raise GeoCommandError(E_SCHEMA, "set_fence_defaults needs the fence speed configuration")
+    obj = cmd.obj or {}
+    if "speed_limit_default_mps" not in obj:
+        raise GeoCommandError(E_SCHEMA, "set_fence_defaults needs obj.speed_limit_default_mps")
+    value = obj["speed_limit_default_mps"]
+    if value is not None:
+        if isinstance(value, bool) or not isinstance(value, (int, float)) \
+                or not (bounds["min"] <= float(value) <= bounds["max"]):
+            raise GeoCommandError(
+                E_GEO_INVALID, "speed_limit_default_mps %r outside [%s, %s]"
+                % (value, bounds["min"], bounds["max"]),
+                {"reason": "speed_limit_out_of_range", "min": bounds["min"], "max": bounds["max"]})
+        value = float(value)
+    conn = ctx.fence_conn
+    await conn.execute("BEGIN IMMEDIATE")
+    try:
+        logged = await lookup_cmd_log(conn, cmd.cmd_id)
+        if logged is not None:
+            await conn.rollback()
+            return replay_duplicate(logged)
+        effective, changed, active = await write_speed_default(
+            conn, value, bounds["default"], now_ms)
+        detail = {"speed_limit_default_mps": effective,
+                  "source": "cloud" if value is not None else "config",
+                  "zones_updated": changed, "in_force": bool(active)}
+        await write_cmd_log(conn, cmd, "accepted", "OK", detail, now_ms)
+        await conn.commit()
+    except Exception:
+        await conn.rollback()
+        raise
+    return ApplyResult("accepted", "OK", detail)
+
+
 def conflict_error(cmd: GeoCommand, row) -> GeoCommandError:
     """S7.9.2 step 3: the refusal carries the LOCAL version so the sender can
     re-read and retry, or escalate to force (cloud only)."""
@@ -332,6 +401,8 @@ async def apply_upsert(cmd: GeoCommand, ctx: GeoContext,
                 _ring(parsed.columns.get("geom_json") or ""))
             if refusal is not None:
                 raise GeoCommandError(E_GEO_INVALID, "forbid_overlap", refusal)
+            if parsed.columns.get("role") == "speed_limit":  # 99 U185
+                await _settle_speed_limit(ctx, conn, parsed.columns)
         if parsed.table == "waypoints" and parsed.columns.get("type") == "dock":
             await _refuse_dock_off_route(ctx, conn, parsed.columns["rtk_lat"],
                                          parsed.columns["rtk_lon"])  # 99 U146
@@ -388,6 +459,12 @@ async def apply_upsert(cmd: GeoCommand, ctx: GeoContext,
                                 "base_rev": cmd.base_rev,
                                 "origin": cmd.origin}))
         detail = {"geo_id": cmd.geo_id, "rev": rev, "state": state}
+        if cmd.type == "fence":
+            # 99 U185: does this write change what P1 enforces? Only an edit of
+            # a fence already in force does (a new fence is a draft). P5 waits
+            # for state/fence to move only when it does, instead of timing out
+            # a configuration that changed nothing in force.
+            detail["in_force"] = state == "active"
         if parsed.columns.get("total_len_m") is not None:
             # S12A.9's spoken confirmation quotes these two back to the operator
             # ("64 points, 320 metres"), so they ride in the ack.
@@ -545,6 +622,8 @@ async def apply_set_state(cmd: GeoCommand, ctx: GeoContext,
         detail = {"geo_id": cmd.geo_id, "rev": rev, "state": target,
                   "previous_state": row[2]}
         detail.update(notes)
+        if cmd.type == "fence":  # 99 U185: switched on or off = changes what is in force
+            detail["in_force"] = (target == "active") != (row[2] == "active")
         await write_cmd_log(conn, cmd, "accepted", "OK", detail, now_ms)
         await conn.commit()
         return ApplyResult("accepted", "OK", detail,
@@ -576,3 +655,4 @@ def _as_nameconflict_error(exc: Exception, cmd: GeoCommand) -> Exception:
 register_applier("upsert", apply_upsert)
 register_applier("rename", apply_rename)
 register_applier("set_state", apply_set_state)
+register_applier("set_fence_defaults", apply_set_fence_defaults)  # 99 U185

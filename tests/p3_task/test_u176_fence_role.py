@@ -14,7 +14,8 @@ names the mutant it kills:
     could create the activity area FS-5A needs, so none ever took effect);
   * a recording start is refused before anything is recorded: no type
     (fence_type_missing), a second activity area (activity_area_exists), a
-    限速区域 while teach.fence_speed_limit_mps is unset (by key name);
+    限速区域 while the speed default is unconfigured (by key name; 99 U185
+    moved it to fence.speed_limit_default_mps, configured 0.6 in production);
   * 99 U184 (user 2026-11-13) turned the rest into hints: fences are recorded
     in any order (~~activity_area_missing refused~~); a fence outside the
     activity area, and an activity area leaving fences out, are SAVED with an
@@ -75,7 +76,8 @@ async def _make(speed=None):  # a runtime with healthy caches
            await _open(FENCE_DB_STATEMENTS))  # task, geo, fence
     rt = TeachRuntime(*dbs, boot_id="b0", sample_hz=1.0, min_dist_m=0.5,
                       snap_max_age_ms=8000, record_duration_s=10800,
-                      fence_speed_limit_mps=speed)  # U176 key under test
+                      fence_speed_limit=None if speed is None else {  # U185 config
+                          "default": speed, "min": 0.1, "max": 2.0})
     _pose(rt, _LAT, _LON, 100.0)  # a fresh fix
     rt.update_health({"allow_motion": True})  # arming check 4
     rt.update_robot({"hes": False, "estop_path": "up"})  # check 4 / 7
@@ -189,7 +191,7 @@ async def test_a_speed_limit_fence_needs_the_configured_limit(rt):  # CLAUDE.md 
     await _seed(rt._fence_conn, "f-a", "营区活动区域围栏", "allow", _AREA)  # area there
     ack = await _start(rt, "路口限速区域围栏")  # key unset
     assert (ack["result"], ack["code"], ack["detail"]) == ("rejected", E_TEACH_STATE, {
-        "reason": "recording_config_missing", "missing": ["teach.fence_speed_limit_mps"]})
+        "reason": "recording_config_missing", "missing": ["fence.speed_limit_default_mps"]})
 
 
 # -- save ---------------------------------------------------------------------

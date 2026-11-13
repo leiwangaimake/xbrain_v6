@@ -226,7 +226,8 @@ async def commit_fence(conn, *, fence_id: str, role: str, points: Sequence,
                        soft_margin_m: Optional[float] = None,
                        priority: int = 0,
                        speed_limit_mps: Optional[float] = None,
-                       created_by: str = "teach") -> str:
+                       created_by: str = "teach",
+                       speed_limit_own: bool = False) -> str:
     """Write a polygon fence to fence.db with its 11 S9A.2 role (allow | forbid |
     speed_limit | warning) and display name. `points` is the WGS84 vertex ring
     (lat, lon) WITHOUT a duplicated closing vertex (closes implicitly), validated
@@ -239,7 +240,11 @@ async def commit_fence(conn, *, fence_id: str, role: str, points: Sequence,
     priority / speed_limit_mps are the 11 S9A.2 v0.3 fields. speed_limit_mps has
     NO default on purpose: it is the speed ceiling of a real zone, so a fallback
     here would be a safety parameter with a default (3.1), and FV-13 makes its
-    absence on a speed_limit fence an error rather than something to fill in."""
+    absence on a speed_limit fence an error rather than something to fill in.
+    speed_limit_own (99 U185): False = the zone follows the default (the
+    caller passes the current default as speed_limit_mps, fence/settings
+    rewrites it when the default moves); True = the zone keeps this value.
+    False is the teach path's value (a recorded zone follows the default)."""
     if role not in FENCE_ROLE:                  # 11 S9A.2 closed set, not a literal
         raise GeoCommitError(f"bad fence role {role!r}")
     # 11 FV-13 both directions, before the row exists. Mirrors the DAO guard;
@@ -266,11 +271,11 @@ async def commit_fence(conn, *, fence_id: str, role: str, points: Sequence,
     try:
         await conn.execute(
             "INSERT INTO fences (fence_id, name, role, kind, geom_json, "
-            " hard_enforce, soft_margin_m, priority, speed_limit_mps, "
+            " hard_enforce, soft_margin_m, priority, speed_limit_mps, speed_limit_own, "
             " state, created_by, updated_by, content_hash, updated_ms) "
-            "VALUES (?, ?, ?, 'polygon', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            "VALUES (?, ?, ?, 'polygon', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             (fence_id, name, role, geom_json, hard_enforce, soft_margin_m,
-             int(priority), speed_limit_mps,
+             int(priority), speed_limit_mps, 1 if speed_limit_own else 0,
              state, created_by, created_by, ch, now_ms))
         await conn.commit()
     except Exception:

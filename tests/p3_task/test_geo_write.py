@@ -431,10 +431,12 @@ async def test_cmd_geo_enforces_fv13_both_ways(ctx):
     两个方向的失效不同, 所以两条都要: 限速区缺值是"区存在但无从施加",
     非限速区带值是"操作员以为设了限速而没人会读".
     MUTATION: 删掉 _fence 里任一方向的检查 -> 对应那条由 rejected 变 accepted.
+    99 U185: 限速区不带值时改为随统一限速值 (test_u185_fence_speed_and_cloud);
+    本 ctx 没有限速配置, 所以仍拒 (reason speed_limit_missing), 不编造一个值.
     """
     missing = _fence_cmd("c-m", "f-nolimit", role="speed_limit")
     ack = await handle_geo_payload(missing, ctx, now_ms=1)
-    assert ack["result"] == "rejected" and "speed_limit_mps" in str(ack)
+    assert ack["result"] == "rejected" and "speed_limit_missing" in str(ack)
     stray = _fence_cmd("c-s", "f-stray", role="forbid")
     stray["obj"]["geom"]["speed_limit_mps"] = 1.0
     ack = await handle_geo_payload(stray, ctx, now_ms=2)
