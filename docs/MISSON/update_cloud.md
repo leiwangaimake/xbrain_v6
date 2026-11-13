@@ -518,12 +518,65 @@ v2.0 §9.5 要求可靠事件断线后在原 key 上补发、复用 `eid`。**�
 - 终态 result：
   - 机器人生效围栏版本前进即回 `done`，`detail` 为空（没有 `active_rev`、`played_times`、`stop_reason`）。
   - 6 s 内未前进回 `failed`、2002。
-  - 推断（未实测）：所有区域都 `enabled=false` 时版本不会前进，结果会是 `failed`。
+  - ~~推断（未实测）：所有区域都 `enabled=false` 时版本不会前进，结果会是 `failed`。~~ ★ U185（2026-11-13）已修：若这条配置**没有改变机器人正在执行的围栏**（例如区域都存为未启用、或重发相同内容），受理后**立即**回 `done`，不再等 6 s 后回 `failed`；改变了才等生效版本前进。
 - 版本冲突回 **2004**、`E_GEO_CONFLICT`，与原文示例的 1003 不同。
   - `detail` 为 `{geo_id, rev, content_hash, updated_by, updated_ts}`，没有原文的 `region_id / base_rev / current_rev`。
 - `keep_in` 区域回 3001、`E_CONFIG_INVALID`。
 - ~~★ U176（2026-11-12）：`enabled=true` 的报警区域，只有机器人的活动区域围栏**已启用**且该区域整圈在活动区域内时才会启用；否则该区域启用被拒……~~ —— 被替代（2026-11-12 ~ 2026-11-13）。★ U183 / U184 现行：报警区域启用**不因位置被拒**；没有活动区域时照常生效。
 - ★ U184：新建 / 修改的报警区域若与机器人上的**禁止区**有共同面积，该区域被拒（2006，`E_GEO_INVALID`，`detail = {reason: "forbid_overlap", fences: [...]}`），整条按配置事务回失败。
+
+### 6.4A `SET_FENCE_CONFIG` 安全围栏配置【新增 · `99` U185，2026-11-13】
+
+v2.0 §3.4 写明「营区 keep-in 必须走独立安全围栏接口」，本任务就是这个接口。报警区仍用 `SET_ALARM_CONFIG`（§6.4）。
+
+**用途**：
+- 下发、修改、删除、启用、关闭**禁止区域**与**限速区域**（含机器人现场录制的）；
+- **活动区域**（`keep_in`）只能**启用 / 关闭**，不能下发、修改、删除（它只能在现场录制）；
+- 设置 / 删除限速区域的**统一限速值**。
+
+**payload**（与 `SET_ALARM_CONFIG` 的 `regions[]` 同一套增量操作）：
+
+```json
+{
+  "regions": [
+    {"op": "upsert", "type": "forbid_region", "id": "f-north_pit", "base_rev": 0,
+     "name": "北门禁止区域", "enabled": true,
+     "vertices": [{"latitude": 31.2301, "longitude": 121.4732},
+                  {"latitude": 31.2305, "longitude": 121.4732},
+                  {"latitude": 31.2305, "longitude": 121.4738}]},
+    {"op": "upsert", "type": "speed_limit_region", "id": "f-yard", "base_rev": 0,
+     "name": "车场限速区域", "enabled": true, "vertices": [ ... ],
+     "speed_limit_mps": 0.5},
+    {"op": "set_state", "type": "keep_in", "id": "f-camp", "enabled": true},
+    {"op": "delete", "type": "forbid_region", "id": "f-old", "base_rev": 3}
+  ],
+  "speed_limit_default_mps": 0.8
+}
+```
+
+| 字段 | 说明 |
+|---|---|
+| `regions[].type` | `forbid_region`（禁止区域）· `speed_limit_region`（限速区域）· `keep_in`（活动区域，只允许 `op=set_state`）。`alarm_region` 不在这里（走 `SET_ALARM_CONFIG`） |
+| `regions[].op` | `upsert` 新建或整体替换（`enabled=true` 时同时启用）· `delete` 删除 · `set_state` 启用（`enabled=true`）/ 关闭（`enabled=false`）。★ **关闭只有云端能做**（语音只能启用） |
+| `regions[].id` | `f-[a-z0-9_]{1,40}`；现场录制的围栏 id 从 `state/geo/manifest` 取 |
+| `regions[].base_rev` | `upsert` / `delete` 必填，与 manifest 里的 `rev` 一致，否则 2004 `E_GEO_CONFLICT` |
+| `regions[].vertices` | `upsert` 必填，至少 3 个顶点 |
+| `regions[].speed_limit_mps` | 可选，只能出现在 `speed_limit_region` 上：**这个区自己的限速**（米/秒）。不带 ⇒ 这个区随统一限速值 |
+| `speed_limit_default_mps` | 可选。**统一限速值**：带数值 ⇒ 设置（所有没有自带限速的限速区随之改变，含现场录制的）；带 `null` ⇒ 删除，回到机器人缺省 **0.6 m/s**；不带 ⇒ 不变。机器人持久化，重启后仍有效 |
+
+**限速值取值顺序**（高者优先）：区自带的 `speed_limit_mps` → 云端统一值 `speed_limit_default_mps` → 机器人缺省 0.6 m/s。上报的 manifest（§5.4）里，限速区的 `speed_limit_mps` 是**当前生效的值**。
+
+**拒绝**：
+- 结构错误（缺字段、类型不对、`regions` 和 `speed_limit_default_mps` 都没带）：1002 / 1003，`E_SCHEMA`。
+- 对 `keep_in` 做 `upsert` / `delete`：3001，`E_CONFIG_INVALID`。
+- 限速值超出机器人允许范围（当前 0.1 ~ 2.0 m/s）：2006，`E_GEO_INVALID`，`detail.reason = "speed_limit_out_of_range"`，带 `min` / `max`。
+- 禁止区与报警区 / 限速区 / 另一禁止区重叠（U184）：2006，`E_GEO_INVALID`，`detail = {reason: "forbid_overlap", fences: [...]}`。
+- 几何不合格（自相交、面积过小等）：2006。
+- 一条命令里任何一项被拒，整条回失败（配置事务，全成才成）；各项幂等，整条重发是安全的。
+
+**终态 result**：受理后，若这条命令改变了机器人正在执行的围栏，等机器人生效版本（`state/fence.active.rev`）前进再回 `done`，6 s 内未前进回 `failed`；没有改变（例如新建一个未启用的区域、或只改了没有被启用的限速区的统一值）则立即回 `done`。
+
+**机器人的提示**：启用活动区域 / 禁止区时，若有航点或路径因此到不了，机器人另发 §4.3.x 的 `objects_unreachable` 事件。
 
 ### 6.5 `AUDIO_CONTROL`【澄清】
 
@@ -677,7 +730,7 @@ v2.0 §9.5 要求可靠事件断线后在原 key 上补发、复用 `eid`。**�
 | D-5 | `state/robot.robot_state` 不出现 `charging`；`alarm_window_active` 恒为 `false` | 中 | §5.1 |
 | D-6 | `state/geo/manifest` 的 `manifest_rev` 恒为 0；~~所有启用的围栏都标成 `alarm_region`~~（U183 已修：按实际类型上报，未启用的也报） | 中 | §5.4 |
 | D-7 | `state/task` 的进度字段恒为 0 / null；终态 `failed` 一律 2001，距离为 null | 中 | §5.2 |
-| D-8 | `SET_ALARM_CONFIG` 只有区域生效，规则、声光、时间窗未接；result 的 `detail` 为空 | 中 | §6.4 |
+| D-8 | `SET_ALARM_CONFIG` 只有区域生效，规则、声光、时间窗未接；result 的 `detail` 为空（~~全部 `enabled=false` 时终态回 failed~~ U185 已修） | 中 | §6.4 |
 | D-9 | `msg_id` 在执行前登记去重，被拒后同一 `msg_id` 重发得到 `duplicate`；超时后命令可能已生效 | 中 | §6.7 |
 | D-10 | `exit_broadcast` 的 `duplicate` ack 不回显 `stream_id`；`stream_id` 在音频进程重启后会重号 | 低 | §6.5 |
 | D-11 | `STOP_TASK` 对已暂停的任务再 `pause`、对运行中的任务 `resume`，回 2003 而不是 `duplicate` | 低 | §6.2 |
