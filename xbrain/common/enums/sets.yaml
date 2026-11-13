@@ -121,6 +121,8 @@ sets:
       - list
       - refs
       - resync
+      # 99 U185: the fence-wide speed-limit default (cloud only, 11 S7.9.5)
+      - set_fence_defaults
   geo_origin:
     source: "11 S7.9.5"
     anchor: "云端 `cloud`"        # the S7.9.5 permission-matrix header columns

@@ -221,6 +221,7 @@ inline constexpr std::string_view kGeoAction[] = {
     "list",
     "refs",
     "resync",
+    "set_fence_defaults",
 };
 
 // geo_created_by -- 11 S7.8.2   anchor: | `created_by` / `updated_by` | string |
