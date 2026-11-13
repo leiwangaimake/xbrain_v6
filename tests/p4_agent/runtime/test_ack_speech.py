@@ -173,20 +173,50 @@ def test_a_refused_geo_command_says_why():  # geo
     assert _said(out)[1] == "这个对象刚被别处修改过, 请再说一遍"  # the reason
 
 
-@pytest.mark.parametrize("detail,text", [  # 99 U176 enabling refused
-    ({"reason": "activity_area_inactive", "name": "东门报警区域围栏"},
-     "东门报警区域围栏没有启用: 活动区域围栏还没有启用, 其它围栏要先启用活动区域才能生效"),
-    ({"reason": "outside_activity_area", "name": "北门禁止区域围栏",
-      "activity_area": "营区活动区域围栏"},
-     "北门禁止区域围栏没有启用: 不在活动区域营区活动区域围栏内"),
+@pytest.mark.parametrize("detail,text", [  # 99 U184 enabling is told, never refused
+    ({"state": "active", "warnings": [{"code": "outside_activity_area",  # outside the area
+                                       "activity_area": "营区活动区域围栏"}]},  # named
+     "注意: 它不在活动区域营区活动区域围栏内, 机器人到不了, 不会生效"),  # said
+    ({"state": "active", "unreachable": [{"fence": "营区活动区域围栏", "role": "allow",  # left out
+                                          "reason": "outside_activity_area",  # by the area
+                                          "objects": ["1号路径", "返航终点站"]}],  # two names
+      "robot": {"note": "outside_activity_area", "fence": "营区活动区域围栏"}},  # robot outside too
+     "注意: 1号路径和返航终点站在活动区域外面, 机器人到不了. 机器人现在在活动区域外, 只能往区域里面开"),
+    ({"state": "active", "unreachable": [{"fence": "北门禁止区域围栏", "role": "forbid",  # covered
+                                          "reason": "inside_forbid",  # by a forbid zone
+                                          "objects": ["a", "b", "c", "d", "e", "f"]}],  # six names
+      "robot": {"note": "inside_forbid", "fence": "北门禁止区域围栏"}},  # robot inside it
+     "注意: a, b, c, d, e等6个在禁止区域北门禁止区域围栏里面, 机器人到不了. "  # capped at five
+     "机器人现在在禁止区域北门禁止区域围栏里面, 只能往外开"),  # where it may drive
 ])
-def test_a_refused_fence_activation_says_why(detail, text):  # F15
-    """MUTATION: by code only -> "这个对象没有改成功" -> red."""
+def test_switching_a_fence_on_says_what_it_leaves_out_of_reach(detail, text):  # F15
+    """The turn said "好的,启用X"; the notes follow it.
+    MUTATION: accepted geo acks say nothing again -> red; the list not
+    capped -> the six-name case reads all six -> red."""
     sp = AckSpeaker()  # fresh
-    sp.note_turn(_sent("cmd/geo", {"cmd_id": "g-2", "action": "set_state"}))
-    out = sp.on_ack(_b({"cmd_id": "g-2", "result": "rejected", "code": "E_GEO_INVALID",
-                        "detail": detail}))
-    assert _said(out)[1] == text  # the reason
+    sp.note_turn(_sent("cmd/geo", {"cmd_id": "g-2", "action": "set_state"}))  # F15 turn
+    out = sp.on_ack(_b({"cmd_id": "g-2", "result": "accepted", "code": "OK", "detail": detail}))  # P3 ack
+    assert _said(out)[1] == text  # the notes
+
+
+def test_a_fence_switched_on_with_nothing_to_tell_adds_nothing():  # F15, quiet
+    """MUTATION: always speak on an accepted geo ack -> red."""
+    sp = AckSpeaker()  # fresh
+    sp.note_turn(_sent("cmd/geo", {"cmd_id": "g-3", "action": "set_state"}))  # F15 turn
+    assert sp.on_ack(_b({"cmd_id": "g-3", "result": "accepted", "code": "OK",  # nothing out of reach
+                         "detail": {"state": "active"}})) is None  # nothing more said
+
+
+def test_a_waypoint_saved_out_of_reach_is_told():  # F06 + 99 U184
+    """MUTATION: drop the notes from the stored sentence -> red."""
+    sp = AckSpeaker()  # fresh
+    sp.note_turn(_sent("cmd/teach", {"cmd_id": "t-9", "action": "mark_once",  # F06 turn
+                                     "mark_once": {"name": "3号测试点"}}))  # the name said
+    out = sp.on_ack(_b({"cmd_id": "t-9", "result": "accepted", "code": "OK", "detail": {  # stored
+        "applied": {"name": "3号测试点"}, "warn": [],  # heading kept
+        "unreachable": [{"fence": "北门禁止区域围栏", "role": "forbid",  # but in a forbid zone
+                         "reason": "inside_forbid", "objects": ["3号测试点"]}]}}))  # in force
+    assert _said(out)[1] == "已记录3号测试点. 注意: 3号测试点在禁止区域北门禁止区域围栏里面, 机器人到不了"  # both
 
 
 @pytest.mark.parametrize("code,detail,text", [  # 99 U133 start refusals
@@ -194,9 +224,7 @@ def test_a_refused_fence_activation_says_why(detail, text):  # F15
     ("E_TEACH_QUALITY", {"reason": "fix_quality"}, "现在不能开始录制: 定位不是RTK固定解"),  # check 3
     ("E_UNHEALTHY", {"reason": "no_nonvoice_estop"}, "现在不能开始录制: 没有可用的非语音急停通道"),
     ("E_BUSY", {"reason": "task_running"}, "有任务正在执行, 现在不能开始录制"),  # check 2
-    # 99 U176: the fence's type and the activity area
-    ("E_GEO_INVALID", {"reason": "activity_area_missing"},
-     "还没有活动区域围栏, 请先录制活动区域围栏, 其它围栏都必须在活动区域里面"),
+    # 99 U176: one activity area (~~activity_area_missing~~ gone with U184)
     ("E_GEO_INVALID", {"reason": "activity_area_exists", "existing": "营区活动区域围栏"},
      "已经有活动区域围栏营区活动区域围栏了, 只能有一个活动区域, 没有开始录制"),
     ("E_TEACH_STATE", {"reason": "recording_config_missing",
@@ -233,10 +261,29 @@ def test_an_accepted_recording_start_adds_nothing():  # start accepted
       "saved": False, "close_reason": "invalid_geometry", "name": "2号路径",
       "issues": [{"code": "too_few_points"}]}},
      "录制已退出, 2号路径没有保存: 录到的点不足两个"),
-    ({"result": "rejected", "code": "E_TEACH_GEOMETRY", "detail": {  # 99 U176
+    ({"result": "rejected", "code": "E_TEACH_GEOMETRY", "detail": {  # 99 U184 overlap
       "saved": False, "close_reason": "invalid_geometry", "name": "北门禁止区域围栏",
-      "issues": [{"code": "outside_activity_area", "activity_area": "营区活动区域围栏"}]}},
-     "录制已退出, 北门禁止区域围栏没有保存: 围栏不在活动区域内"),
+      "issues": [{"code": "close_gap_large"},
+                 {"code": "forbid_overlap", "fences": ["东门报警区域围栏"]}]}},
+     "录制已退出, 北门禁止区域围栏没有保存: 和东门报警区域围栏重叠了, "
+     "禁止区域不能和报警区域, 限速区域或其它禁止区域重叠"),
+    ({"result": "accepted", "code": "OK", "detail": {  # 99 U184: saved, and told
+      "saved": True, "kind": "fence",
+      "applied": {"name": "北门禁止区域围栏", "point_count": 4, "total_len_m": 80.0},
+      "validation": {"ok": True, "issues": [
+          {"code": "outside_activity_area", "activity_area": "营区活动区域围栏"}]},
+      "unreachable": [{"fence": "北门禁止区域围栏", "role": "forbid",
+                       "reason": "inside_forbid", "objects": ["1号测试点"]}]}},
+     "已保存北门禁止区域围栏, 共4个顶点. 围栏已保存但未启用, 需要时请说启用北门禁止区域围栏. "
+     "注意: 它不在活动区域营区活动区域围栏内, 机器人到不了, 不会生效. "
+     "注意: 1号测试点在禁止区域北门禁止区域围栏里面, 机器人到不了"),
+    ({"result": "accepted", "code": "OK", "detail": {  # an area leaving older fences out
+      "saved": True, "kind": "fence",
+      "applied": {"name": "营区活动区域围栏", "point_count": 4, "total_len_m": 400.0},
+      "validation": {"ok": True, "issues": [
+          {"code": "activity_area_excludes", "fences": ["东门报警区域围栏"]}]}}},
+     "已保存营区活动区域围栏, 共4个顶点. 围栏已保存但未启用, 需要时请说启用营区活动区域围栏. "
+     "注意: 东门报警区域围栏不在这个活动区域里, 机器人到不了"),
 ])
 def test_a_recording_exit_says_what_was_saved(ack, text):  # finish
     """MUTATION: say nothing for finish -> the operator never hears the result -> red."""

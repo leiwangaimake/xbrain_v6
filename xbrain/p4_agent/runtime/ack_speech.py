@@ -194,11 +194,10 @@ _REC_START_BY_REASON = {
     "state_unavailable": "现在不能开始录制: 拿不到健康, 电量或遥控状态",  # caches missing
     "no_nonvoice_estop": "现在不能开始录制: 没有可用的非语音急停通道",  # check 7
     "recording_config_missing": "现在不能开始录制: 录制参数没有配置",  # U132 keys
-    # 99 U176: a fence's type comes from its name, and every fence but the
-    # activity area must sit inside the one activity area
+    # 99 U176: a fence's type comes from its name, one activity area only.
+    # ~~activity_area_missing~~ (U184: fences are recorded in any order)
     "fence_type_missing": "围栏名字里要说明类型: 活动区域, 报警区域, 限速区域或禁止区域",  # no keyword
     "activity_area_exists": "已经有活动区域围栏{existing}了, 只能有一个活动区域, 没有开始录制",  # FS-5A
-    "activity_area_missing": "还没有活动区域围栏, 请先录制活动区域围栏, 其它围栏都必须在活动区域里面",  # order
 }
 #: 99 U176: teach.fence_speed_limit_mps unset -- only 限速区域 is refused.
 _REC_START_NO_SPEED_LIMIT = "现在不能录制限速区域围栏: 限速值没有配置"  # the other kinds still record
@@ -216,11 +215,25 @@ _REC_ISSUE = {  # S12A.7 blocking issue codes, in words
     "area_too_small": "围栏面积太小",
     # 99 U176
     "fence_type_missing": "围栏名字里没有说明类型",  # the save name has no keyword
-    "activity_area_missing": "还没有活动区域围栏, 请先录制活动区域围栏",  # nothing to sit in
-    "outside_activity_area": "围栏不在活动区域内",  # vertex outside or an edge crossing
-    "activity_area_excludes": "已有的围栏没有全部在这个活动区域里面",  # a new area too small
-    "activity_area_inactive": "活动区域围栏还没有启用",  # save-and-enable before the area
+    # ~~activity_area_missing / outside_activity_area / activity_area_excludes /
+    # activity_area_inactive~~ -- 99 U184: saved and told, see _LAYOUT_NOTE
+    # 99 U184: {fences} filled by _issue_text
+    "forbid_overlap": "和{fences}重叠了, 禁止区域不能和报警区域, 限速区域或其它禁止区域重叠",
 }
+#: 99 U184 (user 2026-11-13): what a fence's place leaves out of reach, said
+#: after the result (never a refusal). {area} / {fences} / {objs} / {fence}.
+_LAYOUT_NOTE = {
+    "outside_activity_area": "注意: 它不在活动区域{area}内, 机器人到不了, 不会生效",  # this fence
+    "activity_area_excludes": "注意: {fences}不在这个活动区域里, 机器人到不了",  # older fences
+    "inside_forbid": "注意: {objs}在禁止区域{fence}里面, 机器人到不了",  # covered points / routes
+    "objects_outside": "注意: {objs}在活动区域外面, 机器人到不了",  # points / routes left out
+}
+#: 99 U184: where the robot stands when a fence is switched on
+_ROBOT_NOTE = {
+    "outside_activity_area": "机器人现在在活动区域外, 只能往区域里面开",
+    "inside_forbid": "机器人现在在禁止区域{fence}里面, 只能往外开",
+}
+_NAMES_SAID = 5  # 99 U184: at most this many names are read out, then "等N个"
 _REC_FINISH_OTHER = "录制没有正确结束"  # any other refusal
 #: 99 U165: a finish whose write failed with the data kept (U163 retained):
 #: the session waits in finalizing, so "录制已退出" would be false.
@@ -264,11 +277,8 @@ _GEO_REFUSED = {
     E_NOT_FOUND: "没找到这个对象",  # deleted meanwhile
 }
 _GEO_OTHER = "这个对象没有改成功"  # any other code
-#: 99 U176: enabling a fence outside an enabled activity area, by detail.reason.
-_GEO_BY_REASON = {
-    "activity_area_inactive": "{name}没有启用: 活动区域围栏还没有启用, 其它围栏要先启用活动区域才能生效",  # order
-    "outside_activity_area": "{name}没有启用: 不在活动区域{activity_area}内",  # names the area
-}
+# ~~99 U176 _GEO_BY_REASON: enabling outside / without the activity area
+# refused~~ -- 99 U184: enabling is never refused for that; _layout_notes says it
 
 #: cmd/motion/intent/ack: E_BUSY is told apart by detail.reason.
 _MOTION_BUSY = {
@@ -693,6 +703,53 @@ def _fail_why(kind: Any, error: Any) -> str:
     return ""  # said without a reason, never guessed
 
 
+def _names(names: Any) -> str:
+    """99 U184: a list of names read out: "A和B", "A, B, C", or the first
+    _NAMES_SAID then "等N个"."""
+    names = [str(n) for n in (names or ()) if n]  # empty names dropped
+    if len(names) <= 2:  # one or two
+        return "和".join(names)  # "A和B"
+    if len(names) <= _NAMES_SAID:  # a short list
+        return ", ".join(names)  # read out whole
+    return ", ".join(names[:_NAMES_SAID]) + "等%d个" % len(names)  # capped, with the count
+
+
+def _layout_notes(detail: Dict[str, Any]) -> str:
+    """99 U184: the "out of reach" sentences an accepted fence / waypoint /
+    route / enable ack carries, joined, or "" -- from the save's advisory
+    issues, the enable's warnings, the unreachable report and the robot note
+    (P3 fills them; see p3_task/fence/reach.py)."""
+    out = []  # sentences, in this order
+    issues = ((detail.get("validation") or {}).get("issues") or []) + (detail.get("warnings") or [])  # save / enable
+    for i in issues:  # advisory issues of a save, warnings of an enable
+        if not isinstance(i, dict):  # malformed entry
+            continue  # skipped
+        if i.get("code") == "outside_activity_area":  # this fence, outside the area
+            out.append(_LAYOUT_NOTE["outside_activity_area"].format(area=i.get("activity_area") or ""))
+        elif i.get("code") == "activity_area_excludes":  # a new area leaving fences out
+            out.append(_LAYOUT_NOTE["activity_area_excludes"].format(fences=_names(i.get("fences"))))
+    for u in detail.get("unreachable") or ():
+        if isinstance(u, dict) and u.get("objects"):  # one entry per blocking fence
+            which = "inside_forbid" if u.get("reason") == "inside_forbid" else "objects_outside"
+            out.append(_LAYOUT_NOTE[which].format(objs=_names(u["objects"]),
+                                                  fence=u.get("fence") or ""))
+    robot = detail.get("robot") if isinstance(detail.get("robot"), dict) else {}  # enable only
+    if robot.get("note") in _ROBOT_NOTE:  # the robot itself outside / inside
+        out.append(_ROBOT_NOTE[robot["note"]].format(fence=robot.get("fence") or ""))
+    return ". ".join(out)  # one string, "" when nothing to say
+
+
+def _with_notes(text: str, detail: Dict[str, Any]) -> str:
+    """text, then the layout notes if there are any (99 U184)."""
+    notes = _layout_notes(detail)  # what is out of reach
+    return text + ". " + notes if notes else text  # appended after the result
+
+
+def _issue_text(issue: Dict[str, Any]) -> str:
+    """One blocking issue in words; forbid_overlap names the fences (99 U184)."""
+    return _REC_ISSUE[issue["code"]].format(fences=_names(issue.get("fences")))
+
+
 def _sentence(key: str, cmd: Dict[str, Any], ack: Dict[str, Any]) -> Optional[str]:
     """What to say for one answer; None when nothing more needs saying."""
     detail = ack.get("detail") if isinstance(ack.get("detail"), dict) else {}
@@ -713,7 +770,8 @@ def _sentence(key: str, cmd: Dict[str, Any], ack: Dict[str, Any]) -> Optional[st
             applied = detail.get("applied") or {}  # AP-1: the applied values
             said = applied.get("name") if isinstance(applied.get("name"), str) else name
             warn = detail.get("warn") or []  # e.g. no_heading
-            return (_STORED_NO_HEADING if "no_heading" in warn else _STORED).format(name=said)
+            return _with_notes((_STORED_NO_HEADING if "no_heading" in warn  # 99 U184 notes
+                                else _STORED).format(name=said), detail)
         if detail.get("item") == "snap_age":
             return _SNAP_AGE.format(name=name)  # the snapshot, not the fix
         if code == E_GEO_INVALID and detail.get("reason") == "dock_off_route":
@@ -727,6 +785,10 @@ def _sentence(key: str, cmd: Dict[str, Any], ack: Dict[str, Any]) -> Optional[st
             and not cmd.get("filter")):  # 99 U174: the whole queue
         n = len(detail.get("cleared_ids") or [])
         return _QUEUE_CLEARED.format(n=n) if n else _QUEUE_NONE_LEFT
+    if key == CMD_GEO and accepted:
+        # 99 U184: the turn said "好的,启用X"; what it leaves out of reach,
+        # and where the robot stands, is said after it
+        return _layout_notes(detail) or None
     if accepted:
         return None  # the turn already said what it does
     if key == CMD_TASK:
@@ -735,10 +797,6 @@ def _sentence(key: str, cmd: Dict[str, Any], ack: Dict[str, Any]) -> Optional[st
         verb = _TASK_VERB.get(cmd.get("action"), "执行")  # the refused action
         return _TASK_REFUSED.get(code, _TASK_OTHER).format(verb=verb)  # by code
     if key == CMD_GEO:
-        if detail.get("reason") in _GEO_BY_REASON:  # 99 U176 activation refusal
-            return _GEO_BY_REASON[detail["reason"]].format(  # P3 puts both names in detail
-                name=detail.get("name") or "这个围栏",  # the fence asked for
-                activity_area=detail.get("activity_area") or "")  # the area it is outside of
         return _GEO_REFUSED.get(code, _GEO_OTHER)  # by code
     if code == E_BUSY:
         return _MOTION_BUSY.get(detail.get("reason"), _MOTION_OTHER)  # by reason
@@ -772,9 +830,10 @@ def _finish_sentence(detail: Dict[str, Any], accepted: bool, code: Any) -> Optio
     if accepted and detail.get("saved") is True:  # saved under the start name
         applied = detail.get("applied") or {}  # AP-1 values
         tpl = _REC_SAVED_FENCE if detail.get("kind") == "fence" else _REC_SAVED_ROUTE  # by kind
-        return tpl.format(name=applied.get("name") or "",
-                          count=int(applied.get("point_count") or 0),
-                          length=int(round(float(applied.get("total_len_m") or 0.0))))
+        return _with_notes(tpl.format(name=applied.get("name") or "",  # 99 U184 notes
+                                      count=int(applied.get("point_count") or 0),
+                                      length=int(round(float(applied.get("total_len_m") or 0.0)))),
+                           detail)
     if accepted:  # an unnamed session waiting for save (HMI path)
         return None  # nothing to say here
     if detail.get("retained"):  # 99 U165: write failed, data kept in finalizing
@@ -782,7 +841,7 @@ def _finish_sentence(detail: Dict[str, Any], accepted: bool, code: Any) -> Optio
         return _REC_RETAINED.format(name=detail.get("name") or "", why=why)  # data kept: save under a new name or discard
     if code == E_TEACH_GEOMETRY and detail.get("close_reason") == "invalid_geometry":
         issues = detail.get("issues") or []  # blocking issues
-        why = next((_REC_ISSUE[i.get("code")] for i in issues
+        why = next((_issue_text(i) for i in issues
                     if isinstance(i, dict) and i.get("code") in _REC_ISSUE),
                    "几何检查没有通过")  # first known issue
         return _REC_NOT_SAVED.format(name=detail.get("name") or "", why=why)
