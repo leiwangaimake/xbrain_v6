@@ -613,23 +613,10 @@ class CloudProjector:
         objects = []
         if cache is not None and hasattr(cache, "snapshot"):
             snap = cache.snapshot(int(self._now() * 1000.0))
-            # *** 围栏不在 GeoCache 里, 要从 fence_cache 并进来.
-            # state/geo/objects(11 S7.10A)只装 routes/waypoints/docks; 围栏走
-            # cmd/fence(11 S9A.2)由 fence_cache 持有. 两个来源分开是机内的
-            # 事实, 而 v2.0 S2 的 objects[] 要三类一起 -- 合并点在这里.
-            # 不合并的话 Qt 的 manifest 里永远没有 alarm_region, 而 v2.0 S2.4
-            # 的报警规则要用 region_ids 引用它们.
-            if isinstance(snap, dict) and not snap.get("fences"):
-                fcache = state.get("fence_cache")
-                if fcache is not None and hasattr(fcache, "snapshot"):
-                    rows, _stale = fcache.snapshot(
-                        int(self._now() * 1000.0), 10_000)
-                    snap = dict(snap)
-                    snap["fences"] = [
-                        {"geo_id": f.get("geo_id") or f.get("poly_id") or "",
-                         "name": f.get("name", ""), "rev": f.get("rev", 0),
-                         "enabled": True}
-                        for f in (rows or ()) if isinstance(f, dict)]
+            # 99 U183: 围栏随 state/geo/objects 一起来了(P3 objects.py, 全部
+            # 未删除的围栏 + state + role), 直接用. ~~从 fence_cache(cmd/fence,
+            # 只有已启用的)并进来, enabled 恒 true~~ -- 那样录好未启用的活动
+            # 区域云端根本看不见, 也就没法去启用它.
             objects = _manifest_objects(snap)
         if not objects and not self._manifest_sent:
             if self._now() - self._start < MANIFEST_FIRST_S:
@@ -816,7 +803,17 @@ _GEO_ID_OK = {
     "waypoint": _re.compile(r"^w-[a-z0-9_]{1,40}$"),
     "recorded_path": _re.compile(r"^r-[a-z0-9_]{1,40}$"),
     "alarm_region": _re.compile(r"^f-[a-z0-9_]{1,40}$"),
+    # 99 U183: 其余三种围栏, 与报警区同一个 f- 前缀
+    "keep_in": _re.compile(r"^f-[a-z0-9_]{1,40}$"),
+    "forbid_region": _re.compile(r"^f-[a-z0-9_]{1,40}$"),
+    "speed_limit_region": _re.compile(r"^f-[a-z0-9_]{1,40}$"),
 }
+
+#: 99 U183: 机内围栏 role (11 S9A.2) -> 上报云端的 type. 活动区域沿用 v2.0 已有
+#: 的 keep_in 名字. 表外 role 不上报(见 _manifest_objects).
+_FENCE_ROLE_TO_TYPE = {"allow": "keep_in", "forbid": "forbid_region",
+                       "speed_limit": "speed_limit_region",
+                       "warning": "alarm_region"}
 
 
 def _manifest_objects(snap: Any) -> List[Dict[str, Any]]:
@@ -869,12 +866,20 @@ def _manifest_objects(snap: Any) -> List[Dict[str, Any]]:
     for rt in snap.get("routes") or ():
         if isinstance(rt, dict):
             _emit(rt, "recorded_path", {})
-    # 围栏不在 state/geo/objects 里(GeoCache 只装 routes/waypoints/docks) --
-    # 它们走 cmd/fence, 由 fence_cache 持有. 从那份取.
+    # 99 U183: 围栏按实际类型上报, enabled = 是否已启用(未启用的也报, 云端要
+    # 看得到才能去启用). ~~一律 alarm_region, enabled 恒 true~~ -- 活动区域 /
+    # 禁止区 / 限速区都被说成了报警区.
     for fc in snap.get("fences") or ():
         if isinstance(fc, dict):
-            _emit(fc, "alarm_region",
-                  {"enabled": bool(fc.get("enabled", True))})
+            gtype = _FENCE_ROLE_TO_TYPE.get(fc.get("role"))
+            if gtype is None:
+                _logger.warning("p5 manifest: skipped fence %r with role %r",
+                                fc.get("geo_id"), fc.get("role"))
+                continue
+            extra: Dict[str, Any] = {"enabled": fc.get("state") == "active"}
+            if gtype == "speed_limit_region" and fc.get("speed_limit_mps") is not None:
+                extra["speed_limit_mps"] = fc["speed_limit_mps"]
+            _emit(fc, gtype, extra)
     return out
 
 

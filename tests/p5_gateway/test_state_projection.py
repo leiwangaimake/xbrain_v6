@@ -1130,3 +1130,26 @@ def test_hes_must_be_a_real_true_not_a_truthy_value():
     # 是 True -> 整机被一条字符串打成急停态. 反方向也一样要守.
     assert _rs({"hes": "false"}) == "idle"
     assert _rs({"hes": 1}) == "idle"
+
+
+def test_the_three_new_fence_types_project_and_need_enabled():
+    """99 U183: keep_in / forbid_region / speed_limit_region project like
+    alarm_region (f- prefix, enabled required); a speed zone carries its limit.
+    MUTATION: new types missing from GEO_TYPES -> ProjectionError -> red;
+    enabled not required for them -> the second call passes -> red."""
+    from xbrain.p5_gateway.outbound.state_projection import (
+        ProjectionError,
+        geo_manifest_payload,
+    )
+
+    d = geo_manifest_payload(manifest_rev=1, objects=[
+        {"geo_id": "f-camp", "type": "keep_in", "name": "营区", "rev": 1, "enabled": False},
+        {"geo_id": "f-pit", "type": "forbid_region", "name": "坑", "rev": 1, "enabled": True},
+        {"geo_id": "f-yard", "type": "speed_limit_region", "name": "车场", "rev": 1,
+         "enabled": True, "speed_limit_mps": 0.6}])
+    assert [o["type"] for o in d["objects"]] == ["keep_in", "forbid_region",
+                                                 "speed_limit_region"]
+    assert d["objects"][0]["enabled"] is False and d["objects"][2]["speed_limit_mps"] == 0.6
+    with pytest.raises(ProjectionError):
+        geo_manifest_payload(manifest_rev=1, objects=[
+            {"geo_id": "f-pit", "type": "forbid_region", "name": "坑", "rev": 1}])

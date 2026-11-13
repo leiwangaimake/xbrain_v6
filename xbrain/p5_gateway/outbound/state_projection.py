@@ -212,7 +212,11 @@ VOICE_MODES = ("normal", "broadcast", "alarm")
 MODE_SOURCES = ("cloud", "local", "autonomy", "system")
 SPEAKER_STATES = ("idle", "buffering", "playing", "fault")
 MIC_STATES = ("disabled", "idle", "recording", "fault")
-GEO_TYPES = ("waypoint", "recorded_path", "alarm_region")
+GEO_TYPES = ("waypoint", "recorded_path", "alarm_region",
+             # 99 U183: fences reported by their real type (update_cloud.md S5.4)
+             "keep_in", "forbid_region", "speed_limit_region")
+#: the fence types, all of which carry enabled (99 U183)
+_FENCE_GEO_TYPES = ("alarm_region", "keep_in", "forbid_region", "speed_limit_region")
 
 #: v2.0 S4.3 exit_reason 闭集(8 值). null 另外允许(表示"没有退出").
 EXIT_REASONS = ("requested", "timeout", "preempted", "fault", "target_lost",
@@ -887,7 +891,8 @@ def audio_payload(*, speaker_state: str, microphone_state: str,
 
 # --- state/geo/manifest -----------------------------------------------
 
-_GEO_PREFIX = {"waypoint": "w-", "recorded_path": "r-", "alarm_region": "f-"}
+_GEO_PREFIX = {"waypoint": "w-", "recorded_path": "r-", "alarm_region": "f-",
+               "keep_in": "f-", "forbid_region": "f-", "speed_limit_region": "f-"}
 
 
 def geo_manifest_payload(*, manifest_rev: int,
@@ -921,11 +926,13 @@ def geo_manifest_payload(*, manifest_rev: int,
             item["latitude"] = obj["latitude"]
             item["longitude"] = obj["longitude"]
             item["altitude"] = obj.get("altitude")
-        elif typ == "alarm_region":
+        elif typ in _FENCE_GEO_TYPES:
             if obj.get("enabled") is None:
                 raise ProjectionError(
-                    "alarm_region %s is missing enabled (v2.0 S4.5)" % geo_id)
+                    "%s %s is missing enabled (v2.0 S4.5)" % (typ, geo_id))
             item["enabled"] = bool(obj["enabled"])
+            if typ == "speed_limit_region" and obj.get("speed_limit_mps") is not None:
+                item["speed_limit_mps"] = float(obj["speed_limit_mps"])
         out.append(item)
     return {"manifest_rev": int(manifest_rev), "full": True, "objects": out}
 

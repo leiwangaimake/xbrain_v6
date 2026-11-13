@@ -19,6 +19,7 @@ from __future__ import annotations
 from xbrain.p5_gateway.geo.cache import (
     GEO_STALE_AFTER_MS,
     GeoCache,
+    geo_fences,
     geo_layers,
 )
 
@@ -79,3 +80,36 @@ def test_waypoint_without_coords_skipped():
     payload = {"waypoints": [{"geo_id": "w-x", "name": "坏点"}], "routes": []}
     _routes, wps = geo_layers(payload)
     assert wps == []
+
+
+def test_geo_fences_keeps_every_fence_and_its_state():
+    """99 U183: the map draws the catalogue -- drafts included, state kept --
+    and a payload without fences (older producer) is None, not "no fences".
+    MUTATION: drop state -> the HMI cannot grey a fence not switched on -> red;
+    [] for a missing key -> red."""
+    payload = dict(_PAYLOAD, fences=[
+        {"geo_id": "f-a", "name": "营区活动区域围栏", "role": "allow", "state": "draft",
+         "rev": 1, "vertices": [{"lat": 31.2, "lon": 121.5}] * 3},
+        {"geo_id": "f-s", "name": "路口限速区域围栏", "role": "speed_limit",
+         "state": "active", "rev": 2, "vertices": [], "speed_limit_mps": 0.6}])
+    got = geo_fences(payload)
+    assert [(f["geo_id"], f["state"], f["role"]) for f in got] == [
+        ("f-a", "draft", "allow"), ("f-s", "active", "speed_limit")]
+    assert got[1]["speed_limit_mps"] == 0.6 and "speed_limit_mps" not in got[0]
+    assert geo_fences(_PAYLOAD) is None and geo_fences(None) is None
+    assert geo_fences(dict(_PAYLOAD, fences=[])) == []  # a real empty catalogue
+
+
+def test_a_fresh_empty_cmd_fence_set_is_an_answer_not_degraded():
+    """99 U183: P3 broadcasts an EMPTY set when nothing is in force, so a fresh
+    empty cache is a real "no fence in force"; only silence is degraded.
+    MUTATION: back to "is_stale or not fences" -> the fresh [] reads degraded
+    -> red; never-received not degraded -> red."""
+    from xbrain.p5_gateway.fence.cache import FenceCache
+    from xbrain.p5_gateway.runtime.main_wiring import _fence_snapshot, _now_mono_ms
+
+    cache = FenceCache()
+    state = {"fence_cache": cache}
+    assert _fence_snapshot(state) == (None, True)  # never received
+    cache.on_update([], _now_mono_ms())
+    assert _fence_snapshot(state) == ([], False)  # fresh empty set

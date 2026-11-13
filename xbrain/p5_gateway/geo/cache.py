@@ -20,6 +20,11 @@ and routes' points (already {lat,lon} objects from P3) pass through. A wrong sha
 here renders nothing (toXY returns null) -- exactly the bug that looks like "no
 geo". Route points must stay {lat,lon} OBJECTS: a bare [a,b] array would be read as
 ENU metres and land the route in the wrong frame.
+
+99 U183 (2026-11-13): the payload also carries every live fence with its state
+(P3 objects.py). geo_fences reshapes them for the map, so a fence just recorded
+or switched off is drawn too -- the cmd/fence cache only ever held the active
+ones, and the operator could not see a recording's result.
 """
 
 from __future__ import annotations
@@ -92,3 +97,23 @@ def geo_layers(payload: Optional[Dict[str, Any]]
         for r in payload.get("routes", [])
     ]
     return routes, waypoints
+
+
+def geo_fences(payload: Optional[Dict[str, Any]]) -> Optional[List[Dict[str, Any]]]:
+    """The fences of a GeoObjects payload for the HMI map and the cloud
+    manifest (99 U183): geo_id / name / role / state / rev / vertices, plus
+    speed_limit_mps on a speed_limit fence. None when there is no payload, or
+    when it predates fences (no "fences" key) -- the map greys the layer then,
+    never an empty set presented as "no fences"."""
+    if not payload or not isinstance(payload.get("fences"), list):
+        return None
+    out: List[Dict[str, Any]] = []
+    for f in payload["fences"]:
+        if not isinstance(f, dict):
+            continue
+        item = {k: f.get(k) for k in ("geo_id", "name", "role", "state", "rev",
+                                      "vertices")}
+        if f.get("speed_limit_mps") is not None:
+            item["speed_limit_mps"] = f["speed_limit_mps"]
+        out.append(item)
+    return out

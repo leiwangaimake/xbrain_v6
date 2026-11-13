@@ -20,6 +20,7 @@
   /* U5 line colours (user 2026-08-13 correction, 17 S6.10.2A) -- set by hmi.js */
   --fence-active-color: #2f88ff;  --fence-alarm-color: #ff2020;
   --fence-forbid-color: #8b0000;  --fence-speed-color: #22c5ff;
+  --fence-disabled-color: #9a9a9a;
   --route-recorded-color: #2ecc40;  --route-realtime-color: #ffd400;
   /* palette -- customer navy/cyan scheme (docs/HMI sample), NOT config-driven */
   --bg: #1B263B;  --panel: #3A506B;  --blue: #326491;  --cyan: #5BC0EB;
@@ -184,6 +185,10 @@ body { margin: 0; overflow: hidden; background: var(--bg); color: var(--ink);
 .forbid-region { fill: rgba(139,0,0,.12); stroke: var(--fence-forbid-color);
   vector-effect: non-scaling-stroke; }
 .speed-region { fill: rgba(34,197,255,.07); stroke: var(--fence-speed-color);
+  vector-effect: non-scaling-stroke; }
+/* 99 U183 (user 2026-11-13): a fence not switched on, any type -- grey dashed,
+   no fill (the dash comes from hmi.web.fence.disabled.line.style). */
+.fence-disabled { fill: none; stroke: var(--fence-disabled-color);
   vector-effect: non-scaling-stroke; }
 .keep-in-label, .alarm-label, .route-label, .keypoint-label, .alarm-event-label {
   font-family: var(--font-map-family); font-size: var(--map-label-fs, 14px);

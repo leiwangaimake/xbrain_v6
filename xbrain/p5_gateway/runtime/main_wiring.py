@@ -204,15 +204,18 @@ def _fence_snapshot(hmi_state: dict):
     """(fences_list_or_None, is_degraded) from the P5F-2 FenceCache.
 
     is_degraded is True when the cmd/fence stream has been silent past
-    FENCE_STALE_AFTER_MS OR nothing has ever been staged -- in both cases the
-    HMI must not present the (possibly empty) cache as authoritative: the map
-    greys the layer and /api/fences returns 503 E_DEGRADED, never 200 [] (17
-    S6.9 P5F-2). A fresh non-empty cache returns the fence list."""
+    FENCE_STALE_AFTER_MS, which includes "nothing ever received" (updated_ms
+    0) -- the HMI must not present that cache as authoritative: /api/fences
+    returns 503 E_DEGRADED, never 200 [] (17 S6.9 P5F-2). A fresh cache returns
+    the fence list, EMPTY included: 99 U183 makes P3 broadcast an empty set
+    when nothing is in force, so a fresh [] is a real answer now.
+    ~~"is_stale or not fences" -> degraded~~ (an empty set could not be told
+    from silence while P3 never sent one)."""
     cache = hmi_state.get("fence_cache")
     if cache is None:
         return None, True
     fences, is_stale = cache.snapshot(_now_mono_ms(), FENCE_STALE_AFTER_MS)
-    if is_stale or not fences:
+    if is_stale:
         return None, True
     return list(fences), False
 
@@ -505,17 +508,22 @@ def _start_hmi(gen, hmi_cfg: dict, hmi_state: dict,
         def snapshot_inputs(self):
             # Copy references under the GIL; the callbacks REPLACE whole values,
             # never mutate in place, so a torn read is not possible here.
-            fences, _degraded = _fence_snapshot(hmi_state)
             # routes/keypoints from the state/geo/objects cache (11 S7.10A) -- P5
             # never reads geo.db (S7843). None (never received / stale) -> the map
             # greys those layers, never a fabricated set.
-            from xbrain.p5_gateway.geo.cache import geo_layers  # noqa: PLC0415
+            from xbrain.p5_gateway.geo.cache import geo_fences, geo_layers  # noqa: PLC0415
             _geo = hmi_state["geo_cache"].snapshot(_now_mono_ms())
             routes, waypoints = geo_layers(_geo)
+            # 99 U183: the map's fences are the CATALOGUE (every live fence and
+            # its state, from state/geo/objects), so a fence not yet switched
+            # on is drawn grey-dashed. ~~the cmd/fence cache (active only)~~:
+            # a just-recorded fence never appeared. /api/fences still answers
+            # from the cmd/fence cache -- that one is "what P1 enforces".
+            fences = geo_fences(_geo)
             return {
                 "tasks": hmi_state.get("tasks"),   # state/task (W-wired)
                 "link": hmi_state.get("link"),     # state/link (W-wired)
-                "fences": fences,                  # cmd/fence cache (W1)
+                "fences": fences,                  # state/geo/objects (99 U183)
                 "mode": hmi_state.get("mode"),     # state/mode (W3)
                 "events": hmi_state.get("events"),  # event/** ring (W2)
                 # WALL-CLOCK-OK(align): the event drawer compares event ts (robot
@@ -1146,7 +1154,10 @@ def run_voice_loop_wiring(stop_flag: dict,
             except Exception:      # noqa: BLE001
                 d = {}
             polys = d.get("polygons")
-            if polys:
+            # 99 U183: an EMPTY polygons list is a real set now (P3 sends it
+            # when nothing is in force) and must replace the cache.
+            # ~~if polys:~~ kept the last non-empty set for ever.
+            if isinstance(polys, list):
                 # poly_id 也留下: v2.0 S2 的 manifest objects[] 要 geo_id,
                 # 而围栏只在这条 key 上出现(state/geo/objects 不含 fences).
                 # 不留的话 manifest 里永远没有 alarm_region, 而 v2.0 S2.4 的

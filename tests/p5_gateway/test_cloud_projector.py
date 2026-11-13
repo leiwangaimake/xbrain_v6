@@ -444,7 +444,8 @@ def test_manifest_reads_the_real_geocache_field_names():
         "waypoints": [{"geo_id": "w-east_gate", "name": "东门岗", "rev": 1,
                        "geom": {"lat": 31.2, "lon": 121.4}}],
         "routes": [{"geo_id": "r-oil_area", "name": "油库线", "rev": 2}],
-        "fences": [{"geo_id": "f-alarm", "name": "报警区", "rev": 1}],
+        "fences": [{"geo_id": "f-alarm", "name": "报警区", "rev": 1,
+                    "role": "warning", "state": "active"}],  # 99 U183 shape
     }
     out = {o["geo_id"]: o for o in _manifest_objects(snap)}
     assert set(out) == {"w-east_gate", "r-oil_area", "f-alarm"}, (
@@ -734,3 +735,31 @@ def test_no_outbound_key_is_change_only_without_a_change_signal():
     change_only = [k for k, v in OUTBOUND_PERIODS.items() if v is None]
     assert not change_only, (
         "这些上行 key 只在变化时发, 但没有变化信号可依: %r" % change_only)
+
+
+def test_fences_go_to_the_cloud_by_their_real_type_disabled_ones_too():
+    """99 U183 (user 2026-11-13): every fence is reported by its recorded type,
+    with enabled = switched on; a fence not switched on is reported too (the
+    cloud has to SEE the activity area to switch it on). ~~every fence an
+    alarm_region with enabled true~~.
+    MUTATION: one type for all -> red; enabled always true -> red; skip the
+    drafts -> red; speed limit not carried -> red."""
+    from xbrain.p5_gateway.runtime.cloud_state import _manifest_objects
+
+    snap = {"fences": [
+        {"geo_id": "f-camp", "name": "营区活动区域围栏", "rev": 1, "role": "allow",
+         "state": "draft"},
+        {"geo_id": "f-pit", "name": "北门禁止区域围栏", "rev": 2, "role": "forbid",
+         "state": "active"},
+        {"geo_id": "f-yard", "name": "路口限速区域围栏", "rev": 3,
+         "role": "speed_limit", "state": "active", "speed_limit_mps": 0.6},
+        {"geo_id": "f-gate", "name": "东门报警区域围栏", "rev": 4, "role": "warning",
+         "state": "disabled"},
+        {"geo_id": "f-odd", "name": "x", "rev": 1, "role": "zone", "state": "active"},
+    ]}
+    out = {o["geo_id"]: o for o in _manifest_objects(snap)}
+    assert {k: (v["type"], v["enabled"]) for k, v in out.items()} == {
+        "f-camp": ("keep_in", False), "f-pit": ("forbid_region", True),
+        "f-yard": ("speed_limit_region", True), "f-gate": ("alarm_region", False)}
+    assert out["f-yard"]["speed_limit_mps"] == 0.6
+    assert "speed_limit_mps" not in out["f-pit"]  # only the speed zone carries it

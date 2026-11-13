@@ -199,3 +199,34 @@ def test_a_waypoint_name_starts_just_right_of_its_disc_at_any_zoom():
     assert got[0] == pytest.approx([11.4, 20])  # 28 px x 0.05 m/px right, same height
     assert got[1] == pytest.approx([15.6, 20])  # 28 px x 0.2 m/px right
     assert got[2] == 9  # the configured gap wins
+
+
+# -- 99 U183 (user 2026-11-13): fences not switched on, line width ------------
+def test_a_fence_not_switched_on_is_grey_dashed_with_a_suffix():
+    """Any type, state other than active -> class fence-disabled, the
+    configured grey dashed line, "(未启用)" after the name; an active fence
+    keeps its type's class and line; no state (an old producer) = active.
+    MUTATION: ignore state -> the draft is drawn in its type colour -> red;
+    suffix missing -> red; a missing state read as disabled -> red."""
+    cfg = json.dumps(_web()["fence"])
+    got = _node('[fenceLook("active", "draft", ' + cfg + '), fenceLook("forbid", "active", '
+                + cfg + '), fenceLook("speed", null, ' + cfg + '), fenceLook("alarm", "disabled", {})]')
+    assert (got[0]["cls"], got[0]["suffix"], got[0]["layer"]) == ("fence-disabled", "(未启用)", "keepInLayer")
+    assert got[0]["line"] == {"style": "dashed", "color": "#9a9a9a", "width_px": 5.25}
+    assert (got[1]["cls"], got[1]["suffix"], got[1]["layer"]) == ("forbid-region", "", "alarmLayer")
+    assert got[1]["line"]["style"] == "solid"
+    assert (got[2]["cls"], got[2]["suffix"]) == ("speed-region", "")  # no state = on
+    assert got[3]["cls"] == "fence-disabled" and got[3]["line"]["style"] == "dashed"  # fallback
+
+
+def test_every_fence_line_is_one_and_a_half_route_widths():
+    """User 2026-11-13: fence lines 1.5x the recorded route (7 px -> 10.5 px;
+    lineStroke doubles the configured width, so 5.25). MUTATION: any fence
+    width left at 2.4 -> red; the disabled entry missing -> red."""
+    fence = _web()["fence"]
+    route_w = _web()["route"]["recorded"]["line"]["width_px"]
+    assert set(fence) == {"active", "forbid", "alarm", "speed", "disabled"}
+    assert {k: v["line"]["width_px"] for k, v in fence.items()} == {
+        k: route_w * 1.5 for k in fence}
+    with open(_HMI_JS, encoding="utf-8") as f:  # the dash grows with a thick line
+        assert "Math.max(4, w * 1.5)" in f.read()

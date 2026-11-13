@@ -87,8 +87,12 @@
     // overridden by the per-role CSS class (.keep-in/.alarm-region/.forbid-region/
     // .speed-region) so forbid renders dark red and speed bright blue, not the
     // config colour.
-    el.setAttribute("stroke-width", (line.width_px || 1.4) * 2);
-    if (line.style === "dashed") el.setAttribute("stroke-dasharray", "4 3");
+    const w = (line.width_px || 1.4) * 2;
+    el.setAttribute("stroke-width", w);
+    // 99 U183: a dash scales with a thick line (a 10.5 px fence drawn "4 3"
+    // reads as dots); lines up to ~2.7 px keep the old 4 / 3 pattern
+    if (line.style === "dashed")
+      el.setAttribute("stroke-dasharray", Math.max(4, w * 1.5) + " " + Math.max(3, w));
     else if (line.style === "dotted") el.setAttribute("stroke-dasharray", "1 2");
     else el.removeAttribute("stroke-dasharray");     // solid
   }
@@ -138,6 +142,7 @@
     const fc = c.fence || {};
     if (fc.active) root.setProperty("--fence-active-color", fc.active.line.color);
     if (fc.alarm) root.setProperty("--fence-alarm-color", fc.alarm.line.color);
+    if (fc.disabled) root.setProperty("--fence-disabled-color", fc.disabled.line.color);
     if (c.route && c.route.recorded) root.setProperty("--route-recorded-color", c.route.recorded.line.color);
     if (c.route && c.route.realtime) root.setProperty("--route-realtime-color", c.route.realtime.line.color);
 
@@ -296,6 +301,26 @@
   // the current mpp, so the name stays tight to the disc at every zoom.
   function keypointLabelAnchor(cx, cy, outerPx, gapPx, mpp) {
     return [cx + (outerPx + gapPx) * mpp, cy];
+  }
+  // A fence's look (99 U183, user 2026-11-13). type is fenceType's answer
+  // (active | forbid | alarm | speed), state the catalogue state (11 S7.8.2).
+  // A fence that is not switched on is a grey dashed outline with
+  // "(未启用)" after its name, whatever its type; a switched-on one keeps its
+  // type's colour, solid. Every fence line is 1.5x the recorded route's width
+  // (configs/p5_gateway.yaml hmi.web.fence.*.line.width_px 5.25 -> 10.5 px).
+  // A fence with no state (an old producer) is drawn as switched on.
+  const FENCE_DISABLED_FALLBACK = { style: "dashed", color: "#9a9a9a", width_px: 5.25 };
+  const FENCE_LINE_FALLBACK = { style: "solid", color: "#e0b000", width_px: 5.25 };
+  function fenceLook(type, state, fenceCfg) {
+    const fc = fenceCfg || {};
+    const layer = type === "active" ? "keepInLayer" : "alarmLayer";
+    if (state != null && state !== "active")
+      return { cls: "fence-disabled", layer, suffix: "(未启用)",
+               line: (fc.disabled && fc.disabled.line) || FENCE_DISABLED_FALLBACK };
+    const cls = { active: "keep-in", alarm: "alarm-region",
+                  forbid: "forbid-region", speed: "speed-region" }[type] || "keep-in";
+    const line = ((fc[type] || fc.active || {}).line) || FENCE_LINE_FALLBACK;
+    return { cls, layer, suffix: "", line };
   }
   // </map-marks>
 
@@ -875,15 +900,13 @@
     if (fences.available) for (const fen of fences.items) {
       const pts = ptsAttr(fen.vertices || [], origin); if (!pts) continue;
       const type = fenceType(fen);            // active | forbid | alarm | speed
-      const line = ((cfg.fence || {})[type] || (cfg.fence || {}).active || {}).line
-                   || { style: "solid", color: "#e0b000", width_px: 1.6 };
       // Per-role polygon class carries the stroke colour (CSS var) + faint fill
       // tint: active blue / warning(alarm) bright red / forbid dark red /
       // speed_limit bright blue. Fill comes from the class, not an inline attr.
-      const cls = { active: "keep-in", alarm: "alarm-region",
-                    forbid: "forbid-region", speed: "speed-region" }[type] || "keep-in";
-      const layer = type === "active" ? "keepInLayer" : "alarmLayer";
-      $(layer).appendChild(poly(cls, pts, line));
+      // 99 U183: a fence not switched on is grey dashed (fenceLook).
+      const look = fenceLook(type, fen.state, cfg.fence);
+      const layer = look.layer;
+      $(layer).appendChild(poly(look.cls, pts, look.line));
       // Fence name label -- unified bright white (CSS .keep-in-label), NOT the
       // line colour (user 2026-08-18). No per-layer inline fill.
       if (fen.name && fen.vertices && fen.vertices[0]) {
@@ -893,7 +916,7 @@
         // so the perimeter is metres, not degrees.
         const fproj = (fen.vertices || []).map((p) => toXY(p, origin)).filter(Boolean);
         if (xy) $(layer).appendChild(label(xy[0], xy[1] - 2, "keep-in-label",
-          fen.name + lenTag(perimM(fproj))));
+          fen.name + look.suffix + lenTag(perimM(fproj))));
       }
     }
     const routes = geo.routes || {};
