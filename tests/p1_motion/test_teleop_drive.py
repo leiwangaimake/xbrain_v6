@@ -243,8 +243,9 @@ def _rec_me(teach):  # a minimal NavRuntime self for _teleop_drive / _on_teach
                          _cfg=SimpleNamespace(holonomic=True, recording_teleop_fixed_mps=2.0,
                                               recording_teleop_degraded_mps=1.0,
                                               recording_state_stale_ms=3000),
-                         _teleop_unconditional=False, _teach=teach)
+                         _teleop_unconditional=False, _teach=teach, _rec_tier=None)
     me._teleop.observe("keyboard_cloud", now_mono_ms=1000, deadman=True, axes={"vx": 1.0})
+    me._log_rec_tier = lambda tier, mps, pose: NavRuntime._log_rec_tier(me, tier, mps, pose)
     return me
 
 
@@ -274,8 +275,48 @@ def test_no_recording_or_a_stale_one_keeps_the_voice_speed():
 
 def test_state_teach_sets_the_recording_flag():
     """MUTATION: count 'idle' / 'finalizing' as recording -> red."""
-    me = SimpleNamespace(_teach=(False, -1e9))
+    me = SimpleNamespace(_teach=(False, -1e9), _teach_seen=(None, None))
     for state, want in (("recording", True), ("paused", True), ("idle", False), ("finalizing", False)):
         frame = json.dumps({"schema": "teach_state_v1", "session": {"state": state}})
         NavRuntime._on_teach(me, SimpleNamespace(payload=frame.encode("utf-8")))
         assert me._teach[0] is want, state
+
+
+# -- recording logs (user request 2026-11-13) --------------------------------------
+def test_teach_session_transitions_are_logged_once_with_stats(caplog):
+    """A 1 Hz state/teach stream logs each transition once. MUTATION: log every
+    frame -> 3 lines for 2 transitions + a repeat -> red; drop the stats -> red."""
+    me = SimpleNamespace(_teach=(False, -1e9), _teach_seen=(None, None))
+    def feed(state, pts):
+        frame = {"session": {"session_id": "ts-1", "state": state, "kind": "route",
+                             "name_hint": "4号路径", "elapsed_s": 12.5},
+                 "stats": {"point_count": pts, "length_m": 18.2}}
+        NavRuntime._on_teach(me, SimpleNamespace(payload=json.dumps(frame).encode("utf-8")))
+    with caplog.at_level("INFO", logger="xbrain.p1.nav"):
+        feed("recording", 3); feed("recording", 4); feed("finalizing", 41)
+    lines = [r.getMessage() for r in caplog.records if "teach session" in r.getMessage()]
+    assert len(lines) == 2  # start and finalizing, not the repeat
+    assert "None -> recording" in lines[0] and "name=4号路径" in lines[0]
+    assert "recording -> finalizing" in lines[1] and "points=41" in lines[1] and "length_m=18.2" in lines[1]
+
+
+def test_the_recording_speed_tier_is_logged_on_change_only(caplog):
+    """MUTATION: log every tick -> 4 lines -> red; never log -> red; log the
+    first plain 'voice' -> an extra line -> red."""
+    me = _rec_me((True, 1.0))
+    with caplog.at_level("INFO", logger="xbrain.p1.nav"):
+        NavRuntime._teleop_drive(me, 1100, _L1)   # -> fixed
+        NavRuntime._teleop_drive(me, 1150, _L1)   # same: silent
+        NavRuntime._teleop_drive(me, 1200, _COG)  # -> degraded
+        NavRuntime._teleop_drive(me, 1250, _LOST)  # -> stop
+    lines = [r.getMessage() for r in caplog.records if "speed tier" in r.getMessage()]
+    assert len(lines) == 3
+    assert "None -> fixed (move 2.0" in lines[0]
+    assert "fixed -> degraded (move 1.0" in lines[1] and "heading=cog" in lines[1]
+    assert "degraded -> stop (move None" in lines[2] and "fix=single" in lines[2]
+    quiet = _rec_me((False, 1.0))  # no recording: the first voice tier is not logged
+    caplog.clear()
+    with caplog.at_level("INFO", logger="xbrain.p1.nav"):
+        NavRuntime._teleop_drive(quiet, 1100, _L1)
+    assert not [r for r in caplog.records if "speed tier" in r.getMessage()]
+

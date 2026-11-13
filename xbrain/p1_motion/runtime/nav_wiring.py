@@ -315,6 +315,12 @@ class NavRuntime:
         # 99 U179: (recording active, monotonic s of the state/teach frame);
         # one tuple store by the Rust callback, read once per tick.
         self._teach: Tuple[bool, float] = (False, -1e9)
+        # Change-only log state (user request 2026-11-13: a cloud recording left
+        # no trace of its session or of the keyboard speed used): the (session
+        # id, state) _on_teach last logged, and the recording speed tier
+        # _teleop_drive last logged (fixed | degraded | stop | voice).
+        self._teach_seen: Tuple[Optional[str], Optional[str]] = (None, None)
+        self._rec_tier: Optional[str] = None
         self._subs: List[Any] = []                 # strong refs (CLAUDE.md 4.3)
         # The generation quadruped currently holds, learned from
         # rt/chassis/state and echoed back on every cmd_vel (11:1722 makes the
@@ -684,6 +690,21 @@ class NavRuntime:
         sess = body.get("session") if isinstance(body, dict) else None
         state = sess.get("state") if isinstance(sess, dict) else None
         self._teach = (state in _RECORDING_STATES, time.monotonic())
+        # Log each session transition once (1 Hz frames repeat the same state):
+        # start, pause, finalizing, naming, end -- with P3's own stats, so a
+        # recording can be reconstructed from the P1 log alone.
+        sid = sess.get("session_id") if isinstance(sess, dict) else None
+        if (sid, state) != self._teach_seen:
+            prev = self._teach_seen
+            self._teach_seen = (sid, state)
+            stats = body.get("stats") if isinstance(body, dict) else None
+            st = stats if isinstance(stats, dict) else {}
+            _logger.info("p1 teach session %s: %s -> %s (kind=%s name=%s points=%s "
+                         "length_m=%s elapsed_s=%s)", sid or prev[0], prev[1], state,
+                         sess.get("kind") if isinstance(sess, dict) else None,
+                         sess.get("name_hint") if isinstance(sess, dict) else None,
+                         st.get("point_count"), st.get("length_m"),
+                         sess.get("elapsed_s") if isinstance(sess, dict) else None)
 
     def _teleop_drive(self, now_ms: int, pose: Any = None):
         """(teleop_cmd, teleop_source) for this tick (99 U134), or (None, None).
@@ -703,13 +724,18 @@ class NavRuntime:
             # recording_state_stale_ms) the move speed comes from the fix /
             # heading, not from the voice setting; a stale frame falls back to
             # the voice speed (at most 1.0), the slower side.
+            tier, mps = "voice", speeds.move_mps  # outside a recording: the voice speed
             if active and now_ms / 1000.0 - rx <= self._cfg.recording_state_stale_ms / 1000.0:
                 mps = recording_move_mps(pose.fix_type, pose.heading_source,
                                          bool(pose.heading_valid),
                                          self._cfg.recording_teleop_fixed_mps,
                                          self._cfg.recording_teleop_degraded_mps)
-                if mps is None:
-                    return None, None  # lost position during a recording: do not move
+                tier = ("stop" if mps is None else
+                        "fixed" if mps == self._cfg.recording_teleop_fixed_mps else "degraded")
+            self._log_rec_tier(tier, mps, pose)
+            if tier == "stop":
+                return None, None  # lost position during a recording: do not move
+            if tier != "voice":
                 speeds = TeleopSpeeds(move_mps=mps, turn_radps=speeds.turn_radps)
         cmd = teleop_velocity(axes, speeds, holonomic=self._cfg.holonomic)
         if cmd is None:
@@ -718,6 +744,20 @@ class NavRuntime:
         # limits only); the other teleop devices keep the shared gate.
         self._teleop_unconditional = device == "keyboard_cloud"
         return cmd, source_for(device)
+
+    def _log_rec_tier(self, tier: str, mps: Optional[float], pose: Any) -> None:
+        """Log the keyboard speed tier when it changes while keys are held
+        (99 U179; user request 2026-11-13). Change-only, so the 20 Hz loop
+        writes one line per switch; the very first 'voice' outside any
+        recording is not news and stays silent."""
+        prev = self._rec_tier
+        if tier == prev:
+            return
+        self._rec_tier = tier
+        if prev is None and tier == "voice":
+            return
+        _logger.info("p1 teleop speed tier %s -> %s (move %s m/s; fix=%s heading=%s valid=%s)",
+                     prev, tier, mps, pose.fix_type, pose.heading_source, pose.heading_valid)
 
     def _on_factor(self, sample: Any) -> None:
         doc = _load_json(sample)
