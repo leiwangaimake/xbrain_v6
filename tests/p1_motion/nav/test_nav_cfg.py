@@ -48,7 +48,8 @@ P1 = {
     "fence": {"brake_k": 1.5, "brake_a_mps2": 2.5, "t_lat_s": 0.4, "soft_margin_min_m": 2.0,
               "predict_dt_s": 0.45, "margin_by_fix": {"rtk_fixed": 0.3, "rtk_float": 1.0, "dgps": 1.5},
               "projection_iters": 3,
-              "contact_repeat_s": 3.0, "contact_release_m": 0.5, "contact_release_s": 2.0},  # 99 U186
+              "contact_repeat_s": 3.0, "contact_release_m": 0.5, "contact_release_s": 2.0,  # 99 U186
+              "source_stale_s": 15.0},  # 99 U191
     "speed_gate": {"hysteresis": {"speed_up_hold_s": 3.0, "d_up_margin_m": 0.5}},
     # 12 S12 rotation_clearance (step 6b). The three zeros are the STRICTEST
     # settings the section gives, not uncalibrated placeholders: any occupied
@@ -147,6 +148,7 @@ def test_missing_rotation_key_names_itself(key):
     "nav.recording_teleop_fixed_mps", "nav.recording_teleop_degraded_mps",  # 99 U179
     "nav.recording_state_stale_ms",
     "fence.contact_repeat_s", "fence.contact_release_m", "fence.contact_release_s",  # 99 U186
+    "fence.source_stale_s",  # 99 U191
     "nav.climb_track_seg_m", "nav.climb_max_s",  # 99 U151
     "nav.heading_bridge_max_s", "nav.heading_consistency_deg", "nav.cog_blend_tau_s",  # 99 U152
     "speed_gate.hysteresis.speed_up_hold_s", "speed_gate.hysteresis.d_up_margin_m",

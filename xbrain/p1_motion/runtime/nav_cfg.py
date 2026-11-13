@@ -81,6 +81,9 @@ class NavConfig:
     fence_contact_repeat_s: float
     fence_contact_release_m: float
     fence_contact_release_s: float
+    # 99 U191: cmd/fence silent this long -> src_state stale, reported once
+    # (11 S9A.4; user 2026-11-13: 15 s, three missed 5 s keepalives)
+    fence_source_stale_s: float
     # 99 U151 heading-deadlock climb (path/climb.py): the track segment that
     # gives the climb heading, and the longest climb on it.
     climb_track_seg_m: float
@@ -369,6 +372,7 @@ def build_nav_config(p1_tree: Mapping[str, Any], rns_tree: Mapping[str, Any]) ->
         fence_contact_repeat_s=_pos(p1_tree, "fence.contact_repeat_s"),  # 99 U186
         fence_contact_release_m=_pos(p1_tree, "fence.contact_release_m"),
         fence_contact_release_s=_pos(p1_tree, "fence.contact_release_s"),
+        fence_source_stale_s=_pos(p1_tree, "fence.source_stale_s"),  # 99 U191
         climb_track_seg_m=_pos(p1_tree, "nav.climb_track_seg_m"),  # 99 U151
         climb_max_s=_pos(p1_tree, "nav.climb_max_s"),  # 99 U151
         heading_bridge_max_s=_pos(p1_tree, "nav.heading_bridge_max_s"),  # 99 U152

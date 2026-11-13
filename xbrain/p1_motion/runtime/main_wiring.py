@@ -208,7 +208,9 @@ def run_voice_loop_wiring(chassis_cfg: ChassisClientConfig,
                 _logger.warning("p1 malformed cmd/fence frame")
                 return
             try:
-                held = fence_holder.accept(d)
+                # 99 U191: the receive instant feeds the source-stale judgment
+                # (11 S9A.4 src_age_s, CLOCK_MONOTONIC at receipt)
+                held = fence_holder.accept(d, rx_mono_s=time.monotonic())
             except FenceSetError as exc:
                 # 坏帧不清空 active -- 报一次 warn, 保留旧几何(绝不进无围栏态).
                 _logger.warning("p1 cmd/fence rejected, keeping old active: %s",
@@ -231,6 +233,30 @@ def run_voice_loop_wiring(chassis_cfg: ChassisClientConfig,
         # UNIQUE(eid), 重启后 seq 归 0 但 boot 变, 不撞历史(同 p2 device 事件范式).
         _zone_eid_boot = os.urandom(3).hex()
         _zone_eid_seq = [0]
+
+        def _publish_source_event(kind: str, held, age_s: float) -> None:
+            # 99 U191 / 11 S9A.9: fence_source_stale (warn) when P3 has been
+            # silent for fence.source_stale_s, fence_source_restored (info) on
+            # the next frame. Both ride the fence category's alarm channel, so
+            # the pair stays on one backfill cursor (E-1). Loop thread, not a
+            # Rust callback. dedup window 0: each transition is its own row.
+            _zone_eid_seq[0] += 1
+            sev = "warn" if kind == "fence_source_stale" else "info"
+            try:
+                gen.put("event/%s/fence" % sev, json.dumps({
+                    "eid": "fsrc-%s-%d" % (_zone_eid_boot, _zone_eid_seq[0]),
+                    "title": kind,
+                    # one key for the pair, window 0: every transition its own row
+                    "dedup_key": "fence:source:%s" % kind, "dedup_window_s": 0,
+                    "detail": {"kind": kind, "src_age_s": round(age_s, 1),
+                               "rev": None if held is None else held.rev,
+                               "fence_set_id": None if held is None else held.fence_set_id},
+                    # WALL-CLOCK-OK(record): 11 S6.1 Event.ts, the moment of the transition
+                    "src": "p1_motion", "ts": time.time(),
+                }, ensure_ascii=False).encode("utf-8"))
+            except Exception as exc:      # noqa: BLE001 -- a report, never the drive path
+                _logger.error("p1 fence source event failed: %s", exc)
+            _logger.warning("p1 fence source %s (last cmd/fence %.1f s ago)", kind, age_s)
 
         def _publish_zone_events(evs) -> None:
             # 循环线程调用(非 Rust 回调): 组装 S9A.9 event/{sev}/fence 并发布.
@@ -361,6 +387,13 @@ def run_voice_loop_wiring(chassis_cfg: ChassisClientConfig,
         # state/fence 广播状态(F3): 1 Hz + rev 变更即发. applied_mono 在 rev 变的
         # 那一拍戳(FS-4/S-6 生效唯一事实是 active.rev 换的那刻).
         fence_state = {"seq": 0, "rev": None, "pub_mono": 0.0, "applied": None}
+        # 99 U191 / 11 S9A.4: P3 silent for fence.source_stale_s -> state/fence
+        # src_state stale + one fence_source_stale event; geometry and
+        # enforcement unchanged (keep enforcing the last set). No nav config =
+        # no autonomous motion at all, so nothing to judge then.
+        from xbrain.p1_motion.fence.fence_set import SourceStaleTracker
+        fence_stale = (None if nav_cfg is None
+                       else SourceStaleTracker(nav_cfg.fence_source_stale_s))
         state_fence_pub = None
         nav_rt = None          # set below when rid + NavConfig exist (the clip lives there)
         perception_in = None
@@ -518,13 +551,20 @@ def run_voice_loop_wiring(chassis_cfg: ChassisClientConfig,
                     if _changed:
                         # rev 换的这一拍即"生效"(S-6): 戳 applied_mono, 立即发.
                         fence_state["applied"] = now if _held is not None else None
-                    if _changed or now - fence_state["pub_mono"] >= 1.0:
+                    _rx = fence_holder.last_rx_mono  # 99 U191: source liveness
+                    _stale_ev = (None if fence_stale is None
+                                 else fence_stale.observe(_rx, now))
+                    if _stale_ev is not None:  # once per transition (11 S9A.4)
+                        _publish_source_event(_stale_ev, _held, now - _rx)
+                    if _changed or _stale_ev is not None or now - fence_state["pub_mono"] >= 1.0:
                         # 12 S7 clip: enforcement / geo / allow from the nav
                         # loop's latest evaluation (None before its first tick).
                         _fev = None if nav_rt is None else nav_rt.latest_fence()
                         _fst = build_fence_runtime_state(
                             _held, now_mono_s=now,
                             applied_mono_s=fence_state["applied"],
+                            last_rx_mono_s=_rx,  # 99 U191: age since receipt
+                            stale=fence_stale is not None and fence_stale.is_stale(_rx, now),
                             clip=runtime_state_fields(
                                 _fev, episode_id=0 if nav_rt is None or _fev is None
                                 else nav_rt.fence_episode(_fev.poly_id)))

@@ -311,23 +311,64 @@ class FenceSetHolder:
 
     def __init__(self) -> None:
         self._active: Optional[HeldFenceSet] = None
+        # 99 U191: 最近一次[收到合法帧]的单调时刻(秒), 含 P3 的 5 s 保活重发.
+        # 11 S9A.4 逐字: src_age_s 用"收到消息时记录的 CLOCK_MONOTONIC".
+        self._last_rx_mono: Optional[float] = None
 
     @property
     def active(self) -> Optional[HeldFenceSet]:
         return self._active
 
-    def accept(self, wire: Dict[str, Any]) -> HeldFenceSet:
+    @property
+    def last_rx_mono(self) -> Optional[float]:
+        """最近一次收到合法 FenceSet 的单调秒; None = 还没收到过."""
+        return self._last_rx_mono
+
+    def accept(self, wire: Dict[str, Any], rx_mono_s: Optional[float] = None) -> HeldFenceSet:
         """校验并换入 active. 成功返回新 active; 失败抛 FenceSetError 且 active
-        不变(FS-7). 幂等: 同 rev+crc32 再来一次是无害的重复换入(值相同)."""
+        不变(FS-7). 幂等: 同 rev+crc32 再来一次是无害的重复换入(值相同).
+        rx_mono_s: 收到这帧的单调时刻(调用方读钟, 本类不读钟); 坏帧不刷新它 --
+        一个只发坏帧的源与失联同样不可信."""
         compiled = compile_fence_set(wire)          # 抛则 active 不动
         self._active = compiled                     # 原子换指针
+        if rx_mono_s is not None:                   # 99 U191: 源还活着
+            self._last_rx_mono = float(rx_mono_s)
         return compiled
+
+
+class SourceStaleTracker:
+    """99 U191 / 11 S9A.4 "P3 挂掉 / 通用面断链" 行: P1 保持当前 active 不变,
+    最近一次收到 cmd/fence 已超过 stale_s 即 src_state = "stale", 只报一次;
+    再收到即恢复, 也报一次. 用户 2026-11-13 定 stale_s = 15 s (P3 每 5 s
+    保活重发, 连丢三次才算). ~~11 S9A.4 原写 30 s~~ 由该裁决取代.
+
+    *** 不降级 enforcement, 不清空几何(往安全方向失效: 继续执行最后一份).
+    纯逻辑, 不读钟: observe() 收调用方的单调秒. 还没收到过任何帧时不判
+    stale -- 那是 src_state = none (fence_lost 的事), 不是失联."""
+
+    def __init__(self, stale_s: float) -> None:
+        self._stale_s = float(stale_s)  # p1_motion.yaml fence.source_stale_s
+        self._stale = False  # 当前是否处于失联
+
+    def is_stale(self, last_rx_mono: Optional[float], now_mono_s: float) -> bool:
+        """此刻是否失联(不改状态, 给 state/fence 用)."""
+        return last_rx_mono is not None and now_mono_s - last_rx_mono > self._stale_s
+
+    def observe(self, last_rx_mono: Optional[float], now_mono_s: float) -> Optional[str]:
+        """跃迁那一拍返回 "fence_source_stale" / "fence_source_restored", 其余 None."""
+        stale = self.is_stale(last_rx_mono, now_mono_s)  # 本拍判定
+        if stale == self._stale:  # 没变: 不重复报(11 S9A.4 "仅产生一次")
+            return None
+        self._stale = stale  # 记住
+        return "fence_source_stale" if stale else "fence_source_restored"
 
 
 def build_fence_runtime_state(held: Optional[HeldFenceSet], *,
                               now_mono_s: float,
                               applied_mono_s: Optional[float],
-                              clip: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+                              clip: Optional[Dict[str, Any]] = None,
+                              last_rx_mono_s: Optional[float] = None,
+                              stale: bool = False) -> Dict[str, Any]:
     """HeldFenceSet -> 11 S9A.5 FenceRuntimeState(state/fence 的 data), 报警 F3.
 
     *** 本子集[诚实]的 enforcement/degrade_reason.
@@ -362,6 +403,9 @@ def build_fence_runtime_state(held: Optional[HeldFenceSet], *,
         }
     # applied_mono_s 缺省(理论上有 held 就有 applied)时退化为 now, src_age 记 0.
     applied = applied_mono_s if applied_mono_s is not None else now_mono_s
+    # 99 U191: src_age_s 是"最近一次收到"的龄(11 S9A.4), 不是换版的龄 --
+    # P3 每 5 s 重发同一份, 原来按换版算会让一个半天没变的围栏看起来"很旧".
+    rx = last_rx_mono_s if last_rx_mono_s is not None else applied
     body: Dict[str, Any] = {
         "active": {
             "fence_set_id": held.fence_set_id,
@@ -370,10 +414,11 @@ def build_fence_runtime_state(held: Optional[HeldFenceSet], *,
             "name": _active_name(held),
             "applied_mono_s": applied,
         },
-        # 有 held 即视源为 active. src_age_s 用单调钟(S9A.5 逐字非墙钟). 本子集
-        # 暂不做 stale 跃迁(需门限参数), 老实只报 active/none 两态.
-        "src_state": "active",
-        "src_age_s": max(0.0, now_mono_s - applied),
+        # src_age_s 用单调钟(S9A.5 逐字非墙钟). 99 U191: 超过 source_stale_s
+        # 没收到即 stale(SourceStaleTracker 判), 几何与 enforcement 不变.
+        # ~~本子集暂不做 stale 跃迁(需门限参数), 老实只报 active/none 两态~~.
+        "src_state": "stale" if stale else "active",
+        "src_age_s": max(0.0, now_mono_s - rx),
         "enforcement": "warn_only",             # 只报事件不裁剪(S9A.5)
         "degrade_reason": "clip_deferred",      # 裁剪执行器本期未建(S9A.5 新值)
         "geo": {"state": "unknown"},            # 无裁剪 -> 不算 d_eff/v_fence
