@@ -465,6 +465,8 @@ async def apply_upsert(cmd: GeoCommand, ctx: GeoContext,
             return replay_duplicate(logged)
         row = await _current_row(conn, parsed.table, parsed.pk_col, cmd.geo_id)
         await _fill_anchor_length(conn, parsed)
+        if parsed.table == "fences":  # 99 U194: the activity area is recorded only
+            await _refuse_activity_area_write(conn, cmd.geo_id, parsed.columns.get("role"))
         if parsed.table == "fences":  # 99 U191: the ring itself first (FV-1/2/5)
             geo_bad = ring_geometry_refusal(
                 _ring(parsed.columns.get("geom_json") or "") or [], ctx.min_area_m2)
@@ -686,6 +688,9 @@ async def apply_set_state(cmd: GeoCommand, ctx: GeoContext,
         # wiring, as an event). ~~U176: refused outside the activity area~~.
         notes: Dict[str, Any] = {}
         if cmd.type == "fence" and target == "active" and row[2] != "active":
+            # 99 U194: a second activity area is refused by name, before the
+            # FS-5A trigger would abort the UPDATE as an anonymous E_INTERNAL
+            await _refuse_second_activity_area(conn, cmd.geo_id)
             notes = await fence_activation_notes(ctx, cmd.geo_id)
         rev = row[0] + 1
         # The fence quota triggers fire on THIS update (S9A.1A: <= 5 active, at
@@ -709,6 +714,44 @@ async def apply_set_state(cmd: GeoCommand, ctx: GeoContext,
     except Exception as exc:
         await conn.rollback()
         raise _as_nameconflict_error(exc, cmd) from exc
+
+
+async def _refuse_activity_area_write(conn, geo_id: str, role: Optional[str]) -> None:
+    """99 U194: the activity area (role allow) comes from a site recording
+    only (fence plan section 1, user 2026-11-13: "只能现场录制"; the cloud may
+    only switch it on / off). cmd/geo therefore never creates one, never
+    rewrites one, and never turns another fence into one -- whatever the
+    origin. The gateway already refused cloud keep_in upserts and HMI fence
+    writes, and P4 sends none; this is the writer's own line (before it, three
+    activity-area drafts could be made over cmd/geo, measured 2026-11-13).
+    Recording saves through geo_commit.commit_fence, not through here."""
+    cur = await conn.execute("SELECT role FROM fences WHERE fence_id=? AND tombstone=0",
+                             (geo_id,))  # the row being replaced, if any
+    old = await cur.fetchone()  # None = a new fence
+    if role == "allow" or (old is not None and old[0] == "allow"):
+        raise GeoCommandError(
+            E_GEO_INVALID, "the activity area is created by a site recording only",
+            {"reason": "activity_area_recording_only", "geo_id": geo_id})
+
+
+async def _refuse_second_activity_area(conn, geo_id: str) -> None:
+    """99 U194 / 11 S9A.1A FS-5A: at most one activity area in force. Switching
+    on an allow fence while another is active is refused with the existing
+    one's name (E_GEO_INVALID, reason activity_area_exists). The DB trigger
+    trg_fence_single_allow_upd stays as the backstop; it used to be the only
+    line, and its abort reached the sender as E_INTERNAL."""
+    cur = await conn.execute("SELECT role FROM fences WHERE fence_id=?", (geo_id,))  # this one
+    me = await cur.fetchone()  # exists: checked by the caller
+    if me is None or me[0] != "allow":  # only an activity area can clash
+        return
+    cur = await conn.execute(
+        "SELECT name FROM fences WHERE tombstone=0 AND state='active' AND role='allow' "
+        "AND fence_id<>?", (geo_id,))  # another one in force
+    other = await cur.fetchone()  # its name, or None
+    if other is not None:
+        raise GeoCommandError(
+            E_GEO_INVALID, "an activity area is already in force",
+            {"reason": "activity_area_exists", "existing": other[0]})
 
 
 def _as_nameconflict_error(exc: Exception, cmd: GeoCommand) -> Exception:

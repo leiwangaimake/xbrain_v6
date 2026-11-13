@@ -255,10 +255,13 @@ async def test_set_state_activates_and_quota_holds_on_activation(ctx):
     one that matters. MUTATION: drop trg_fence_single_allow_upd and a second
     keep-in fence activates, widening the permitted area to the union of two
     polygons without a word anywhere."""
-    await handle_geo_payload(_fence_cmd("c-1", "f-a", role="allow"), ctx,
-                             now_ms=1)
-    await handle_geo_payload(_fence_cmd("c-2", "f-b", role="allow"), ctx,
-                             now_ms=2)
+    # 99 U194: activity areas come from a recording only -- seeded through the
+    # recording's writer (commit_fence), not cmd/geo upsert (refused now)
+    from xbrain.p3_task.ingest.geo_commit import commit_fence
+    ring = [(p["lat"], p["lon"]) for p in _RING]
+    for gid, name in (("f-a", "甲活动区域"), ("f-b", "乙活动区域")):
+        await commit_fence(ctx.fence_conn, fence_id=gid, role="allow", points=ring,
+                           now_ms=1, state="draft", name=name)
     on = await handle_geo_payload(
         {"cmd_id": "c-3", "action": "set_state", "type": "fence",
          "geo_id": "f-a", "origin": "cloud", "base_rev": 1,
@@ -269,6 +272,9 @@ async def test_set_state_activates_and_quota_holds_on_activation(ctx):
          "geo_id": "f-b", "origin": "cloud", "base_rev": 1,
          "obj": {"state": "active"}}, ctx, now_ms=4)
     assert second["result"] == "rejected"
+    # 99 U194: named, not the trigger's anonymous E_INTERNAL
+    assert second["code"] == E_GEO_INVALID
+    assert second["detail"] == {"reason": "activity_area_exists", "existing": "甲活动区域"}
     row = await _row(ctx.fence_conn, "fences", "fence_id", "f-b", "state")
     assert row[0] == "draft"
 

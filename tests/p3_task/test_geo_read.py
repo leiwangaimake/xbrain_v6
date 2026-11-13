@@ -203,10 +203,12 @@ async def test_active_fence_lists_only_active_ones(ctx):
     # so the camp's allow fence (around _RING) is created and enabled first
     big = [{"lat": _LAT - 0.001, "lon": _LON - 0.001}, {"lat": _LAT + 0.0015, "lon": _LON - 0.001},
            {"lat": _LAT + 0.0015, "lon": _LON + 0.0015}, {"lat": _LAT - 0.001, "lon": _LON + 0.0015}]
-    await handle_geo_payload(
-        {"cmd_id": "s-a", "action": "upsert", "type": "fence", "geo_id": "f-camp",
-         "origin": "cloud", "base_rev": 0,
-         "obj": {"name": "camp", "geom": {"role": "allow", "outer": big}}}, ctx, now_ms=2)
+    # 99 U194: an activity area comes from a recording only, so it is seeded
+    # through the recording's writer, not cmd/geo upsert (refused now)
+    from xbrain.p3_task.ingest.geo_commit import commit_fence
+    await commit_fence(ctx.fence_conn, fence_id="f-camp", role="allow",
+                       points=[(p["lat"], p["lon"]) for p in big], now_ms=2,
+                       state="draft", name="camp")
     for gid in ("f-camp", "f-north"):
         on = await handle_geo_payload(
             {"cmd_id": "ss-" + gid, "action": "set_state", "type": "fence",
