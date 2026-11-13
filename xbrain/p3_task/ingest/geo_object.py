@@ -40,7 +40,7 @@ from dataclasses import dataclass
 from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 from xbrain.common.enums import FENCE_ROLE
-from xbrain.common.errors import E_GEO_INVALID
+from xbrain.common.errors import E_FENCE_INVALID, E_GEO_INVALID
 from xbrain.common.fence.roles import carries_speed_limit, hard_enforce_for_role
 from xbrain.p3_task.geo.waypoint_kind import waypoint_type_for_name  # 99 U119
 from xbrain.p3_task.ingest.geo_command import GeoCommandError
@@ -277,8 +277,9 @@ def _fence(obj: Dict[str, Any]) -> ParsedObject:
         ring = geom.get("points")
     if not isinstance(ring, list):
         raise _bad("fence needs geom.outer (or geom.points), a vertex list")
-    if len(ring) < _MIN_RING_POINTS:
-        raise _bad(f"fence ring needs >= {_MIN_RING_POINTS} vertices (CMD-18)")
+    if len(ring) < _MIN_RING_POINTS:  # FV-1; same reason code as geo_write's FV-2/5 (99 U191)
+        raise GeoCommandError(E_FENCE_INVALID, "too_few_vertices",
+                              {"reason": "too_few_vertices", "vertex_count": len(ring)})
     verts = [_latlon(p, f"geom.outer[{i}]") for i, p in enumerate(ring)]
     margin = geom.get("soft_margin_m")
     if margin is not None and (not isinstance(margin, (int, float))

@@ -113,8 +113,12 @@ class TeachRuntime:
                  route_membership_m: Optional[float] = None,
                  record_duration_s: Optional[float] = None,
                  record_warn_before_s: Optional[Sequence[float]] = None,
-                 fence_speed_limit: Optional[Dict[str, float]] = None) -> None:
+                 fence_speed_limit: Optional[Dict[str, float]] = None,
+                 fence_min_area_m2: Optional[float] = None) -> None:
         self._task_conn = task_conn
+        # 99 U191: p3_task.yaml fence.min_area_m2 (user ruling 1 m^2), the
+        # area_too_small floor of a recorded fence; None = tests only.
+        self._fence_min_area_m2 = fence_min_area_m2
         # 99 U185: p3_task.yaml fence.speed_limit_{default,min,max}_mps. A
         # recorded 限速区域 fence follows the default (the cloud value, else
         # the configured 0.6). None (tests) refuses to START such a recording,
@@ -692,7 +696,8 @@ class TeachRuntime:
                 robot_at = (float(pose["lat"]), float(pose["lon"]))
             v = validate_fence(
                 points, dropped_by_quality=self._recorder.dropped_by_quality,
-                robot_at=robot_at, activate=activate)
+                robot_at=robot_at, activate=activate,
+                min_area_m2=self._fence_min_area_m2)  # 99 U191: configured
             if layout is not None:  # at save time (99 U176 / U184)
                 check_fence_layout(v, merge_degenerate(points), role=role,
                                    activity_area=layout[0], others=layout[1])

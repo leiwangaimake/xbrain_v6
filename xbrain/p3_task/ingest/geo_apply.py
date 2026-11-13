@@ -81,7 +81,7 @@ class GeoContext:
     """
 
     def __init__(self, geo_conn, fence_conn, task_conn=None,
-                 route_membership_m=None, speed_limit=None) -> None:
+                 route_membership_m=None, speed_limit=None, min_area_m2=None) -> None:
         self.geo_conn = geo_conn
         self.fence_conn = fence_conn
         self.task_conn = task_conn
@@ -92,6 +92,10 @@ class GeoContext:
         # dict {default, min, max}; None = tests of the geo path alone, where a
         # speed zone without its own limit and set_fence_defaults are refused.
         self.speed_limit = speed_limit
+        # 99 U191: p3_task.yaml fence.min_area_m2 (user ruling 1 m^2), the
+        # FV-5 floor for every fence ring written through cmd/geo; None =
+        # tests of the geo path alone, where only the area rule is skipped.
+        self.min_area_m2 = min_area_m2
 
 
 # action -> applier. Populated by the per-action batches; an absent action is a

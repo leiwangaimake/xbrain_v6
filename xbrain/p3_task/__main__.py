@@ -196,6 +196,14 @@ def main(argv: Optional[list] = None) -> int:
                               "positive speed in m/s (99 U185)", _fk, _fv)
                 return 78
             _fsp[_fk] = float(_fv)
+        # 99 U191: the minimum fence area (user ruling 1 m^2), for recorded
+        # fences and cmd/geo rings alike. Required: no figure in the code.
+        _fma = _fence.get("min_area_m2")
+        if (isinstance(_fma, bool) or not isinstance(_fma, (int, float))
+                or not math.isfinite(_fma) or _fma <= 0.0):
+            _logger.error("p3_task config: fence.min_area_m2=%r must be a positive "
+                          "area in square metres (99 U191)", _fma)
+            return 78
         if not _fsp["min"] <= _fsp["default"] <= _fsp["max"]:
             _logger.error("p3_task config: fence.speed_limit_default_mps=%r must lie in "
                           "[speed_limit_min_mps, speed_limit_max_mps] = [%r, %r] (99 U185)",
@@ -255,6 +263,7 @@ def main(argv: Optional[list] = None) -> int:
             teach_record_duration_s=float(_teach["record_duration_s"]),
             teach_record_warn_before_s=[float(w) for w in _teach["record_warn_before_s"]],
             fence_speed_limit=_fsp,
+            fence_min_area_m2=float(_fma),
             rtk_lost_sustain_s=float(_rtk["lost_sustain_s"]),
             rtk_recover_sustain_s=float(_rtk["recover_sustain_s"]),
             low_battery={k: float(_lb[k]) for k in _lb_keys})

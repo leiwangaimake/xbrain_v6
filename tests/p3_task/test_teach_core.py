@@ -325,10 +325,12 @@ def test_route_needs_two_points():
 
 
 def test_fence_needs_three_vertices_and_area():
-    v = validate_fence(_square()[:2])
+    v = validate_fence(_square()[:2], min_area_m2=1.0)
     assert not v.ok and "too_few_vertices" in v.codes()
-    tiny = validate_fence(_square(side_m=3.0))
+    # 99 U191: the floor is the configured fence.min_area_m2 (user 1 m^2)
+    tiny = validate_fence(_square(side_m=0.5), min_area_m2=1.0)
     assert not tiny.ok and "area_too_small" in tiny.codes()
+    assert validate_fence(_square(side_m=3.0), min_area_m2=1.0).ok  # 9 m^2 is fine now
 
 
 def test_self_intersecting_ring_is_blocked_with_the_edge_pair():
@@ -338,7 +340,7 @@ def test_self_intersecting_ring_is_blocked_with_the_edge_pair():
     bowtie = [(_LAT, _LON), (_LAT + d, _LON + d), (_LAT + d, _LON),
               (_LAT, _LON + d)]
     assert ring_self_intersects(bowtie) is not None
-    v = validate_fence(bowtie)
+    v = validate_fence(bowtie, min_area_m2=1.0)
     assert not v.ok and "self_intersect" in v.codes()
     issue = [i for i in v.issues if i["code"] == "self_intersect"][0]
     assert len(issue["edges"]) == 2
@@ -349,7 +351,7 @@ def test_a_plain_square_does_not_self_intersect():
     EVERY polygon becomes self-intersecting -- an always-red check, which
     CLAUDE.md 3.2 form 2 says gets loosened until it catches nothing."""
     assert ring_self_intersects(_square()) is None
-    assert validate_fence(_square()).ok
+    assert validate_fence(_square(), min_area_m2=1.0).ok
 
 
 def test_area_is_in_square_metres():
@@ -360,8 +362,8 @@ def test_auto_closed_versus_gap_too_large():
     """A recording rarely ends where it began. Within tolerance that is info;
     beyond it the operator must be TOLD the gap was forced closed."""
     square = _square()
-    assert "auto_closed" in validate_fence(square, close_tol_m=50.0).codes()
-    v = validate_fence(square, close_tol_m=1.0)
+    assert "auto_closed" in validate_fence(square, close_tol_m=50.0, min_area_m2=1.0).codes()
+    v = validate_fence(square, close_tol_m=1.0, min_area_m2=1.0)
     assert "close_gap_large" in v.codes()
     assert v.ok, "a large gap warns, it does not block"
 
@@ -377,15 +379,15 @@ def test_robot_outside_blocks_only_when_activating():
     already outside it.
     """
     outside = (_LAT - 0.01, _LON - 0.01)
-    warn_only = validate_fence(_square(), robot_at=outside, activate=False)
+    warn_only = validate_fence(_square(), robot_at=outside, activate=False, min_area_m2=1.0)
     assert warn_only.ok and "robot_outside" in warn_only.codes()
-    blocked = validate_fence(_square(), robot_at=outside, activate=True)
+    blocked = validate_fence(_square(), robot_at=outside, activate=True, min_area_m2=1.0)
     assert not blocked.ok
 
 
 def test_robot_inside_is_not_flagged():
     inside = (_LAT + 10.0 * _DEG_PER_M_LAT, _LON + 10.0 * _DEG_PER_M_LAT)
-    assert "robot_outside" not in validate_fence(_square(),
+    assert "robot_outside" not in validate_fence(_square(), min_area_m2=1.0,
                                                  robot_at=inside).codes()
 
 

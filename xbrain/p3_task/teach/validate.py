@@ -56,12 +56,18 @@ ADVISORY_ISSUES = frozenset({"degenerate_edge", "auto_closed",
                              "outside_activity_area", "activity_area_excludes",
                              "activity_area_inactive"})
 
-#: S12A.7 defaults, both marked as awaiting field calibration in the contract.
-#: They are recording-quality thresholds, not common.safety.* parameters: the
-#: failure direction of a wrong value is "the operator is asked to re-record",
-#: never motion, so a default here is not the CLAUDE.md 3.1 case.
-DEFAULT_MIN_AREA_M2 = 100.0
+#: S12A.7 default, marked as awaiting field calibration in the contract. A
+#: recording-quality threshold, not a common.safety.* parameter: the failure
+#: direction of a wrong value is "the operator is asked to re-record", never
+#: motion, so a default here is not the CLAUDE.md 3.1 case.
+#: ~~DEFAULT_MIN_AREA_M2 = 100.0~~ removed 2026-11-13 (99 U191, user ruling
+#: "1 平方米"): the minimum fence area is p3_task.yaml fence.min_area_m2, read
+#: by the recording AND the cmd/geo path, injected, never written here.
 DEFAULT_CLOSE_TOL_M = 5.0
+#: 11 S9A.2 FV-2 "无零长边 (< 0.05 m)": two vertices this close (neighbours, or
+#: the closing pair) are one vertex written twice. A contract figure, not a
+#: tunable -- it only has to be far below any real edge.
+DUPLICATE_VERTEX_M = 0.05
 #: S12A.7 degenerate_edge: neighbouring points closer than this are merged.
 #: Same figure as the sampling dedup, deliberately -- an edge shorter than the
 #: dedup threshold can only come from a mark point or an undo.
@@ -266,7 +272,7 @@ def validate_fence(points: Sequence[Tuple[float, float]], *,
                    dropped_by_quality: int = 0,
                    robot_at: Optional[Tuple[float, float]] = None,
                    activate: bool = False,
-                   min_area_m2: float = DEFAULT_MIN_AREA_M2,
+                   min_area_m2: Optional[float],
                    close_tol_m: float = DEFAULT_CLOSE_TOL_M) -> Validation:
     """S12A.7 for a recorded fence, including the auto-closure rules.
 
@@ -290,7 +296,9 @@ def validate_fence(points: Sequence[Tuple[float, float]], *,
     if crossing is not None:
         v.add("self_intersect", edges=list(crossing))
     area = ring_area_m2(points)
-    if area < min_area_m2:
+    # 99 U191: min_area_m2 is p3_task.yaml fence.min_area_m2 (required at P3
+    # start); None only in tests of the teach path alone -> no area rule
+    if min_area_m2 is not None and area < min_area_m2:
         v.add("area_too_small", area_m2=round(area, 1),
               min_area_m2=min_area_m2)
     _add_degenerate(v, points)
@@ -303,6 +311,44 @@ def validate_fence(points: Sequence[Tuple[float, float]], *,
         if activate:
             v.ok = False
     return v
+
+
+def ring_geometry_refusal(points: Sequence[Tuple[float, float]],
+                          min_area_m2: Optional[float]) -> Optional[Tuple[str, Dict[str, object]]]:
+    """11 S9A.2 FV-1 / FV-2 / FV-5 for a fence ring WRITTEN through cmd/geo
+    (cloud SET_FENCE_CONFIG / SET_ALARM_CONFIG regions, voice / HMI edits):
+    (reason, detail) of the first rule broken, or None.
+
+    99 U191 (2026-11-13): until now cmd/geo checked only the vertex count --
+    a figure-of-eight, a zero-area or a 1 cm ring, and duplicated vertices were
+    stored, could be switched on and reached P1, which does not re-check them
+    (its ray cast then decides "inside" for a shape that has none), while the
+    cloud contract said such a fence is refused. The recording path has always
+    run these rules (validate_fence); this is the same rules for a ring that
+    arrives finished, so no closure gap and no auto-merge here: a vertex sent
+    twice is the sender's mistake and is refused, not silently repaired.
+      too_few_vertices   fewer than 3 (FV-1)
+      duplicate_vertex   two vertices < DUPLICATE_VERTEX_M apart, neighbours
+                         or not (FV-2 "无重复顶点, 无零长边")
+      self_intersect     two non-adjacent edges cross (FV-2), with the pair
+      area_too_small     area < min_area_m2 (FV-5, user ruling 1 m^2, every
+                         role); min_area_m2 None = not configured (tests of the
+                         geo path alone), the area rule is then skipped
+    Order: the cheapest and most basic first, so the reason names the root."""
+    n = len(points)  # vertex count
+    if n < _MIN_RING_VERTICES:  # FV-1
+        return "too_few_vertices", {"vertex_count": n}
+    for i in range(n):  # FV-2: every pair, the ring is small (P5 caps 512)
+        for j in range(i + 1, n):
+            if haversine_m(points[i], points[j]) < DUPLICATE_VERTEX_M:
+                return "duplicate_vertex", {"index": j, "same_as": i}
+    crossing = ring_self_intersects(points)  # FV-2: the first crossing pair
+    if crossing is not None:
+        return "self_intersect", {"edges": list(crossing)}
+    area = ring_area_m2(points)  # square metres
+    if min_area_m2 is not None and area < min_area_m2:  # FV-5
+        return "area_too_small", {"area_m2": round(area, 2), "min_area_m2": float(min_area_m2)}
+    return None
 
 
 def _add_degenerate(v: Validation,

@@ -43,14 +43,23 @@ from typing import Any, Dict, List, Optional, Tuple
 
 from xbrain.common.enums import GEO_CREATED_BY, GEO_STATE
 from xbrain.common.errors import (
+    E_FENCE_INVALID,
     E_GEO_CONFLICT,
     E_GEO_INVALID,
     E_NAME_CONFLICT,
     E_NOT_FOUND,
     E_SCHEMA,
 )
-from xbrain.p3_task.ingest.geo_apply import ApplyResult, GeoContext, register_applier
+from xbrain.p3_task.fence.reach import fence_reports  # 99 U184 unreachable objects
+from xbrain.p3_task.fence.settings import (  # 99 U185 speed default / U187 alarm settings
+    ALARM_KEYS,
+    RULE_TARGET,
+    effective_speed_default,
+    write_setting,
+    write_speed_default,
+)
 from xbrain.p3_task.geo.waypoint_kind import renamed_waypoint_type  # 99 U119
+from xbrain.p3_task.ingest.geo_apply import ApplyResult, GeoContext, register_applier
 from xbrain.p3_task.ingest.geo_command import GeoCommand, GeoCommandError
 from xbrain.p3_task.ingest.geo_object import (
     TABLE_FOR_TYPE,
@@ -64,14 +73,10 @@ from xbrain.p3_task.state.geo_events import (  # noqa: F401  (re-export)
     GEO_EVENT_WARN,
 )
 from xbrain.p3_task.state.geo_rev import content_hash
-from xbrain.p3_task.teach.validate import ring_overlap, ring_within  # 99 U184 layout checks
-from xbrain.p3_task.fence.reach import fence_reports  # 99 U184 unreachable objects
-from xbrain.p3_task.fence.settings import (  # 99 U185 speed default / U187 alarm settings
-    ALARM_KEYS,
-    RULE_TARGET,
-    effective_speed_default,
-    write_setting,
-    write_speed_default,
+from xbrain.p3_task.teach.validate import (  # 99 U184 layout / U191 geometry checks
+    ring_geometry_refusal,
+    ring_overlap,
+    ring_within,
 )
 
 #: 11 S6.2 event/{sev}/geo detail.type closed set, info half + warn half. These
@@ -460,6 +465,12 @@ async def apply_upsert(cmd: GeoCommand, ctx: GeoContext,
             return replay_duplicate(logged)
         row = await _current_row(conn, parsed.table, parsed.pk_col, cmd.geo_id)
         await _fill_anchor_length(conn, parsed)
+        if parsed.table == "fences":  # 99 U191: the ring itself first (FV-1/2/5)
+            geo_bad = ring_geometry_refusal(
+                _ring(parsed.columns.get("geom_json") or "") or [], ctx.min_area_m2)
+            if geo_bad is not None:  # refused before anything is compared or written
+                reason, extra = geo_bad
+                raise GeoCommandError(E_FENCE_INVALID, reason, dict(extra, reason=reason))
         if parsed.table == "fences":  # 99 U184: a forbid zone overlapping
             refusal = await forbid_overlap_refusal(
                 conn, cmd.geo_id, parsed.columns.get("role"),

@@ -145,6 +145,7 @@ def run_voice_loop_wiring(stop_flag: dict,
                           teach_record_duration_s: Optional[float] = None,
                           teach_record_warn_before_s: Optional[list] = None,
                           fence_speed_limit: Optional[Dict[str, float]] = None,
+                          fence_min_area_m2: Optional[float] = None,
                           rtk_lost_sustain_s: Optional[float] = None,
                           rtk_recover_sustain_s: Optional[float] = None,
                           low_battery: Optional[Dict[str, float]] = None) -> int:
@@ -181,6 +182,9 @@ def run_voice_loop_wiring(stop_flag: dict,
     with no limit of its own, and the bounds a cloud value must fall in. None
     (tests) refuses speed zones without a limit and set_fence_defaults.
     ~~teach_fence_speed_limit_mps (99 U176)~~.
+    fence_min_area_m2 is p3_task.yaml fence.min_area_m2 (99 U191, user ruling
+    1 m^2): the FV-5 floor for a recorded fence and a cmd/geo fence ring.
+    None (tests) skips only the area rule.
 
     rtk_lost_sustain_s / rtk_recover_sustain_s are p3_task.yaml rtk_loss.*
     (11 S3.3.3, 99 U142): how long single / no_fix must last before the task
@@ -202,6 +206,7 @@ def run_voice_loop_wiring(stop_flag: dict,
                teach_record_duration_s=teach_record_duration_s,
                teach_record_warn_before_s=teach_record_warn_before_s,
                fence_speed_limit=fence_speed_limit,
+               fence_min_area_m2=fence_min_area_m2,
                rtk_lost_sustain_s=rtk_lost_sustain_s,
                rtk_recover_sustain_s=rtk_recover_sustain_s,
                low_battery=low_battery))
@@ -219,6 +224,7 @@ async def _amain(stop_flag: dict, heartbeat_period_s: float,
                  teach_record_duration_s: Optional[float] = None,
                  teach_record_warn_before_s: Optional[list] = None,
                  fence_speed_limit: Optional[Dict[str, float]] = None,
+                 fence_min_area_m2: Optional[float] = None,
                  rtk_lost_sustain_s: Optional[float] = None,
                  rtk_recover_sustain_s: Optional[float] = None,
                  low_battery: Optional[Dict[str, float]] = None) -> int:
@@ -784,6 +790,7 @@ async def _amain(stop_flag: dict, heartbeat_period_s: float,
                                  record_duration_s=teach_record_duration_s,
                                  record_warn_before_s=teach_record_warn_before_s,  # 99 U163
                                  fence_speed_limit=fence_speed_limit,  # 99 U185
+                                 fence_min_area_m2=fence_min_area_m2,  # 99 U191
                                  snap_max_age_ms=teach_snap_max_age_ms,
                                  route_membership_m=route_membership_m)  # 99 U146
             if teach_snap_max_age_ms is None:
@@ -804,7 +811,8 @@ async def _amain(stop_flag: dict, heartbeat_period_s: float,
             geo_ctx = GeoContext(geo_conn=geo_conn, fence_conn=fence_conn,
                                  task_conn=conn,
                                  route_membership_m=route_membership_m,  # 99 U146
-                                 speed_limit=fence_speed_limit)  # 99 U185
+                                 speed_limit=fence_speed_limit,  # 99 U185
+                                 min_area_m2=fence_min_area_m2)  # 99 U191
             # 11 S7.2: the contract-shaped cmd/task path. Same connection and
             # same DAO the scheduler uses -- P3 has one db thread (15 S2.1), so
             # an HMI cancel serialises with the tick rather than racing it.
