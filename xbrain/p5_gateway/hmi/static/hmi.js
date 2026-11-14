@@ -672,8 +672,9 @@
     // once no plan runs (patrol complete) it hides unless show_after_complete.
     const plans = (snap.plan && snap.plan.plans) || [];
     const patrolling = plans.some((p) => p.state === "running");
-    renderGeo(snap.geo || {}, origin, patrolling);
+    renderGeo(snap.geo || {}, origin, patrolling, snap.pose);
     renderRobot(snap.pose || {}, origin);
+    centerOnRobotOnce(snap.pose, origin);   // 99 U200
     renderEvents(snap.events || {}, snap.server_ts);
     // The task panel is NOT rendered from the snapshot -- it pulls current +
     // history from GET /api/tasks (17 S6.8.4, refreshTasks below). snap.plan
@@ -873,40 +874,68 @@
   // so the 5m grid is legible when zoomed in. Fits ONCE; afterwards the operator
   // pans/zooms freely.
   let geoFitted = false;
-  function fitGeoToData(geo, origin) {
+  //: 99 U200 (2026-11-14): only objects within this many metres of the HMI
+  //: origin set the first view. geo.db holds every site the robot has worked
+  //: (the customer site is ~15 km from the office); fitting to all of it put
+  //: the view centre between the two sites and the window at ~14 km.
+  const FIT_RADIUS_M = 2000;
+  //: 99 U200: the window width at full zoom-in, small enough that the 1 m grid
+  //: cell is drawn (GRID_TARGET_PX on a normal screen).
+  const FIT_MIN_WINDOW_M = 40;
+  function fitGeoToData(geo, origin, pose) {
     if (geoFitted) return;
     const f = geo.fences || {};
     if (!(f.available && (f.items || []).length)) return;   // wait for fences
     const xs = [], ys = [];
+    // 99 U200: the view is centred on the robot's current GPS position (the
+    // HMI origin is the FIRST fix after P5 started, 99 U192, and the robot has
+    // usually moved since); the origin when no pose is known yet.
+    const c = toXY(pose || {}, origin) || [0, 0];
     // v1.5 PLAN A: routes/keypoints are WGS84 {lat,lon} and need the origin to
-    // project; ENU fence arrays ignore it. Passing origin lets all three define
-    // the fit extent (fences alone already bound it -- the active-area lake).
-    const add = (p) => { const xy = toXY(p, origin); if (xy) { xs.push(xy[0]); ys.push(xy[1]); } };
+    // project; ENU fence arrays ignore it. 99 U200: a point farther than
+    // FIT_RADIUS_M from the centre belongs to another site and is left out.
+    const add = (p) => {
+      const xy = toXY(p, origin);
+      if (xy && Math.hypot(xy[0] - c[0], xy[1] - c[1]) <= FIT_RADIUS_M) { xs.push(xy[0]); ys.push(xy[1]); }
+    };
     for (const it of f.items) (it.vertices || []).forEach(add);
     const r = geo.routes || {}; if (r.available) for (const it of r.items) (it.points || []).forEach(add);
     const w = geo.waypoints || {}; if (w.available) for (const it of w.items) add(it.geom || it);
     if (xs.length < 3) return;
-    const minX = Math.min(...xs), maxX = Math.max(...xs);
-    const minY = Math.min(...ys), maxY = Math.max(...ys);
-    const cx = (minX + maxX) / 2, cy = (minY + maxY) / 2;
-    let vbW = (maxX - minX) * 1.12 + 40, vbH = (maxY - minY) * 1.12 + 40;
+    // 99 U200: centred on c, so the robot is in the middle on load; the
+    // half-size reaches the farthest nearby object on either axis.
+    const half = Math.max(...xs.map((x) => Math.abs(x - c[0])), ...ys.map((y) => Math.abs(y - c[1])));
+    let vbW = half * 2 * 1.12 + 40, vbH = vbW;
     // Match the viewport aspect so preserveAspectRatio="none" does NOT distort
-    // the true shape: a 5km x 1km lake stays 5:1 and dots stay round (uniform
-    // scale). Otherwise the box would be stretched to fill the viewport.
+    // the true shape (uniform scale, dots stay round).
     const svg = $("mapSvg");
     const ar = (svg.clientWidth || 4) / (svg.clientHeight || 3);
     if (vbW / vbH > ar) vbH = vbW / ar; else vbW = vbH * ar;
-    baseVB = [cx - vbW / 2, cy - vbH / 2, vbW, vbH];
+    baseVB = [c[0] - vbW / 2, c[1] - vbH / 2, vbW, vbH];
     view.zoom = 1; view.pan = { x: 0, y: 0 };
-    // widen zoom-in so ~200m (5m grid legible) is reachable from the ~5km fit.
-    zoomBounds = { min: 0.5, max: Math.max(zoomBounds.max, Math.ceil((maxX - minX) / 200)),
+    // 99 U200: zoom-in reaches a FIT_MIN_WINDOW_M window (1 m grid) from this
+    // fit; the config max still applies when it is larger.
+    zoomBounds = { min: 0.5, max: Math.max(zoomBounds.max, Math.ceil(vbW / FIT_MIN_WINDOW_M)),
                    wheel: zoomBounds.wheel };
     geoFitted = true;
     applyView();
   }
 
-  function renderGeo(geo, origin, patrolling) {
-    fitGeoToData(geo, origin);
+  //: 99 U200: the default window (no fences, so no fit) is moved onto the
+  //: robot once, on the first snapshot that places it.
+  let robotCentered = false;
+  function centerOnRobotOnce(pose, origin) {
+    if (robotCentered) return;
+    if (geoFitted) { robotCentered = true; return; }   // the fit centred it already
+    const xy = toXY(pose || {}, origin);
+    if (!xy) return;                                    // no fix / no origin yet
+    view.pan = { x: xy[0] - (baseVB[0] + baseVB[2] / 2), y: xy[1] - (baseVB[1] + baseVB[3] / 2) };
+    robotCentered = true;
+    applyView();
+  }
+
+  function renderGeo(geo, origin, patrolling, pose) {
+    fitGeoToData(geo, origin, pose);
     clear("keepInLayer"); clear("alarmLayer");
     clear("recordedRouteLayer"); clear("realtimeTrajectoryLayer"); clear("keypointLayer");
     const fences = geo.fences || {};
