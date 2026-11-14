@@ -46,22 +46,33 @@ def _drive(tick, now, pose, cmd, recording="route"):  # one tick with a (vx, vy)
 def test_past_the_line_only_inward_motion():  # field: slid along the edge outside it
     """MUTATION: keep the sliding component past the line -> vy 1.0 -> red."""
     tick = _stack()  # real tick with fence constants
-    slide = _drive(tick, 5000, (7.9, 0.0), (0.0, 1.0))  # past 7.7, strafing along the edge
+    slide = _drive(tick, 5000, (8.1, 0.0), (0.0, 1.0))  # past the nominal x = 8, strafing along it
     assert slide.vy == pytest.approx(0.0) and slide.vx == pytest.approx(0.0)  # nothing along it
     assert slide.limiter == "fence"  # and said why
-    back = _drive(tick, 5050, (7.9, 0.0), (-1.0, 0.0))  # backing into the area
+    back = _drive(tick, 5050, (8.1, 0.0), (-1.0, 0.0))  # backing into the area
     assert back.vx == pytest.approx(-1.0)  # the way back stays open
-    out = _drive(tick, 5100, (7.9, 0.0), (1.0, 1.0))  # out and along
+    out = _drive(tick, 5100, (8.1, 0.0), (1.0, 1.0))  # out and along
     assert out.vx == pytest.approx(0.0) and out.vy == pytest.approx(0.0)  # neither part kept
 
 
 def test_a_corner_keeps_only_a_direction_into_both_edges():
     tick = _stack()  # real tick
-    out = _drive(tick, 5000, (7.9, 7.9), (1.0, -1.0))  # out of the east edge, into the north one
+    out = _drive(tick, 5000, (8.1, 8.1), (1.0, -1.0))  # out of the east edge, into the north one
     assert (out.vx, out.vy) == (pytest.approx(0.0), pytest.approx(0.0))  # not into both: stop
-    inn = _drive(tick, 5050, (7.9, 7.9), (-1.0, -1.0))  # into both
-    # one polygon: its nearest edge's inward part is kept -- back in, never along
-    assert inn.vx < -0.5 and inn.vy <= 0.0  # the way back stays open
+    inn = _drive(tick, 5050, (8.1, 8.1), (-1.0, -1.0))  # into both
+    assert inn.vx < -0.5 and inn.vy < -0.5  # the way back stays open
+
+
+def test_inside_the_nominal_line_the_keyboard_may_slide_along_it():  # 99 U202
+    """Field 2026-11-14: stopped 0.27 m inside the activity edge (in the
+    0.3 m inset), parallel to it, the robot could go neither forward nor
+    back for 3 min. MUTATION: inward-only in the band too -> vy 0 -> red."""
+    tick = _stack()  # real tick
+    along = _drive(tick, 5000, (7.9, 0.0), (0.0, 1.0))  # 0.1 m inside x = 8, strafing along
+    assert along.vy == pytest.approx(1.0) and along.vx == pytest.approx(0.0)  # slides
+    out = _drive(tick, 5050, (7.9, 0.0), (1.0, 1.0))  # out and along
+    assert out.vx == pytest.approx(0.0) and out.vy == pytest.approx(1.0)  # only the outward part goes
+    assert any(p.hard_now for p in out.fence.per_poly)  # still the contact
 
 
 def test_the_line_within_the_stopping_distance_stops_before_crossing():  # field: 0.8 m past
