@@ -69,6 +69,9 @@ help:
 # -- out_of_scope: directed but beyond capability; guide back to business --
 out_of_scope:
   reply: "抱歉,我只能处理巡逻相关的事情.您可以问我当前状态,下达巡逻任务,或者说\"你能做什么\"了解更多"
+  # 99 U199: typed text that matched nothing (a bare "云台" is a patrol word,
+  # so "我只能处理巡逻相关的事情" would be untrue for it)
+  text_reply: "这句话我没有理解,没有执行.可以问我当前状态,下达巡逻任务,或者说\"你能做什么\"了解可以用的说法"
   consecutive_threshold: 3    # N consecutive out_of_scope -> announce help.reply
 
 # -- I01-I04 session intents (2026-10-30, field test P101-P106) -------------
@@ -99,6 +102,9 @@ payload_limits:
   ptz_speed_percent:     "云台转速只有慢,正常,快三档,不能按百分比设置,没有执行.可以说:云台转速快一点"
   ptz_speed_no_level:    "没有说云台转速调快还是调慢,没有执行.可以说:云台转速快一点,或者:云台转速慢一点"
   ptz_move_no_direction: "没有说云台往哪边转,没有执行.可以说:云台向左,或者:云台向上"
+  # 99 U198
+  volume_no_level:       "没有说音量调到多少,没有执行.可以说:音量调到最大,或者:大声点"
+  brightness_no_level:   "没有说照明调到哪一档,没有执行.可以说:最亮,一半,最暗,亮一点或暗一点"
 
 # -- H-class system intents with no executor yet (2026-10-30, field test R007-R016) --
 # Nothing consumes cmd/system today; these used to answer "收到" (or confirm a
@@ -117,6 +123,15 @@ unwired_system:
     H08: "关机"
     # 2026-11-02 (99 U105): A13 is classified but P1 never receives the profile.
     A13: "速度档位调整"
+    # 99 U198: the executor drops these today (field run 2026-11-14)
+    A14: "步态切换"
+    C06: "待命模式切换"
+    D03: "灯光自动"
+    D04: "单独打开警笛(要响警笛请说报警模式)"
+    D05: "单独关闭警笛"
+    D11: "底盘灯控制"
+    D12: "停止喊话"
+    D13: "声光全部关闭(可以分别说关灯和关警灯)"
 
 # -- J04 thanks / J05 farewell (2026-10-30, 99 U101 user ruling; field test P231 / P232) --
 thanks:

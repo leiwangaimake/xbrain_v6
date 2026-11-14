@@ -71,6 +71,7 @@ query_ptz_zoom:
 query_ptz_owner:
   held:           "云台现在被{holder}占着({note})"
   stale:          "云台归谁控我暂时不知道,仲裁状态读不回来"
+  free:           "云台现在空闲,没有被占用"  # 99 U198
 
 # -- QT-8 (G39 query_active_fence) -- must compare intent vs effective --
 query_active_fence:
@@ -130,7 +131,7 @@ query_speed:
   ok:       "当前速度{v}米每秒"
 query_heading:
   invalid:  "现在航向无效,无法判断朝向"
-  ok:       "当前航向{deg}度"
+  ok:       "当前朝向{dir},罗盘方位{deg}度"  # 99 U198: compass, north 0 clockwise
 query_range:
   ok:       "预计还能行驶{km}公里"
 query_uptime:
@@ -147,7 +148,7 @@ time_sync:
   no_data:       "时钟同步状态暂时读不到,{daemon},当前时间{now}"
   daemon_on:     "系统由 chronyd 自动保持同步"
   daemon_off:    "自动对时服务 chronyd 没有在运行"
-  force_unwired: "强制校时还没有接通执行端,这次不会执行;当前时间{now}"
+  force_unwired: "强制校时还没有接通执行端,这次不会执行.{status}"  # 99 U199: + the real state
 query_geo:
   none:     "现在还没有设置{word}"
   some:     "共有{count}个{word}:{names}"

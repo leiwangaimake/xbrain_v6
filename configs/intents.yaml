@@ -87,8 +87,8 @@ intents:
   # parse_heading reads all of them. 面朝 / 朝向 / 转向 are keyed WITH a direction
   # character: a bare "转向" would also catch unrelated phrases.
   face_heading: { id: A12, keywords: ["朝北", "面向", "转向正", "朝东", "朝南", "朝西", "面朝东", "面朝南", "面朝西", "面朝北", "朝向东", "朝向南", "朝向西", "朝向北", "转向东", "转向南", "转向西", "转向北"], slots: [heading], route: fastpath_then_llm, auth: L1b }
-  set_speed_profile: { id: A13, keywords: ["慢一点", "快一点", "全速"], slots: [profile], route: fastpath, auth: L1b }
-  set_gait: { id: A14, keywords: ["步态", "楼梯", "敏捷"], slots: [gait], route: fastpath, auth: L1b }
+  set_speed_profile: { id: A13, keywords: ["慢一点", "快一点", "全速", "巡逻速度"], slots: [profile], route: fastpath, auth: L1b }
+  set_gait: { id: A14, keywords: ["步态", "楼梯", "敏捷", "走平地"], slots: [gait], route: fastpath, auth: L1b }
   # A15 (2026-10-30, 99 U104): the robot's in-place turn speed. Every keyword
   # names the BODY (机器人 / 机身 / 转向速度 / 转身速度): bare "转速快一点" stays
   # E09 PTZ speed (user ruling), and no keyword is "转身..." + level, which a
@@ -121,7 +121,7 @@ intents:
   stop_follow: { id: B12, keywords: ["别跟了"], slots: [], route: fastpath_then_llm, auth: L0 }
 
   # -- C 模式 --
-  enter_alarm: { id: C01, keywords: ["报警模式", "警戒"], slots: [], route: fastpath, auth: L1b }
+  enter_alarm: { id: C01, keywords: ["报警模式", "警戒", "开始报警"], slots: [], route: fastpath, auth: L1b }
   exit_alarm: { id: C02, keywords: ["退出报警", "别报警了", "解除警戒", "退出报警模式", "关闭报警模式", "解除报警模式", "取消报警模式", "结束报警模式", "退出警戒模式"], slots: [], route: fastpath, auth: L1a }
   enter_broadcast: { id: C03, keywords: ["开始喊话", "喊话模式"], slots: [], route: fastpath, auth: L1b }
   exit_broadcast: { id: C04, keywords: ["退出喊话", "退出喊话模式", "关闭喊话模式", "结束喊话模式", "取消喊话模式"], slots: [], route: fastpath, auth: L0 }
@@ -138,13 +138,13 @@ intents:
   siren_off: { id: D05, keywords: ["关警笛", "别响了"], slots: [], route: fastpath, auth: L0 }
   strobe_on: { id: D06, keywords: ["开启爆闪灯", "打开爆闪灯", "把爆闪打开", "开启双闪", "打开警灯", "打开警示灯", "开爆闪", "开警灯", "开红蓝", "开双闪", "开警示灯", "爆闪灯"], slots: [], route: fastpath, auth: L1b }
   strobe_off: { id: D07, keywords: ["关闭爆闪灯", "把爆闪关了", "关闭双闪", "关爆闪", "关警灯", "关红蓝", "关双闪", "关警示灯"], slots: [], route: fastpath, auth: L0 }
-  speak_preset: { id: D08, keywords: ["喊话", "警告他", "播放警告", "喊第二条"], slots: [preset_id], route: fastpath_then_llm, auth: L1b }
+  speak_preset: { id: D08, keywords: ["喊话", "警告他", "播放警告", "喊第二条", "喊第"], slots: [preset_id], route: fastpath_then_llm, auth: L1b }
   speak_custom: { id: D09, keywords: ["说请立即离开", "喊一句"], slots: [text], route: llm, auth: L3 }
   # D10 "...调到最大" forms (2026-10-29, 99 U100 continued): they contain B01's
   # one-char keyword "到", so without a LONGER D10 keyword layer 2 picked B01
   # goto, the tier-2 LLM declined and "声音调到最大" was refused. Bare "调到最大"
   # is NOT added: "灯调到最大" must stay a light command.
-  set_volume: { id: D10, keywords: ["音量调到最大", "音量调到最小", "音量最大", "音量最小", "大声点", "大点声", "音量大一点", "声音大一点", "小声点", "小点声", "音量小一点", "声音小一点", "调大音量", "调小音量", "静音", "声音调到最大", "声音调到最小", "声音调到最高", "声音调到最低", "声音开到最大", "音量开到最大", "音量调到最高", "音量调到最低", "音量调到", "声音调到", "音量设为", "音量设置为", "音量调成", "声音调成", "音量开到"], slots: [level], route: fastpath, auth: L0 }
+  set_volume: { id: D10, keywords: ["音量调到最大", "音量调到最小", "音量最大", "音量最小", "大声点", "大点声", "音量大一点", "声音大一点", "小声点", "小点声", "音量小一点", "声音小一点", "调大音量", "调小音量", "静音", "声音调到最大", "声音调到最小", "声音调到最高", "声音调到最低", "声音开到最大", "音量开到最大", "音量调到最高", "音量调到最低", "音量调到", "声音调到", "音量设为", "音量设置为", "音量调成", "声音调成", "音量开到", "别出声", "不要出声"], slots: [level], route: fastpath, auth: L0 }
   chassis_light: { id: D11, keywords: ["打开底盘灯", "尾灯呼吸"], slots: [pattern, color], route: fastpath, auth: L0 }
   speak_stop: { id: D12, keywords: ["别喊了", "别播了", "闭嘴"], slots: [], route: fastpath, auth: L0 }
   payload_all_off: { id: D13, keywords: ["全部关掉", "都关了", "声光全关", "关掉所有"], slots: [], route: fastpath, auth: L0 }
@@ -210,7 +210,7 @@ intents:
   query_events_period: { id: G11, keywords: ["今天有几次告警", "这一周的报警", "报警了几次", "报警几次", "有几次报警", "告警了几次", "报警多少次", "告警多少次"], slots: [date_range], route: llm, auth: L0 }
   query_events_by_type: { id: G12, keywords: ["有入侵报警吗", "有故障事件吗"], slots: [category], route: llm, auth: L0 }
   query_last_alarm: { id: G13, keywords: ["最近一次报警什么时候", "上次警报", "最近的报警是", "上一次报警", "上次报警的时间"], slots: [], route: fastpath, auth: L0 }
-  query_event_detail: { id: G14, keywords: ["刚才那个报警什么情况", "报警的具体情况", "具体情况"], slots: [event_ref], route: llm, auth: L0 }
+  query_event_detail: { id: G14, keywords: ["刚才那个报警什么情况", "报警的具体情况", "具体情况", "报警详情", "告警怎么回事", "报警怎么回事"], slots: [event_ref], route: llm, auth: L0 }
   query_faults: { id: G15, keywords: ["有故障吗", "哪里不正常", "有问题吗", "有没有故障", "出问题", "故障有哪些", "哪些故障"], slots: [], route: fastpath, auth: L0 }
   query_health: { id: G16, keywords: ["系统状态怎么样", "一切正常吗", "系统健康", "系统状态", "运行正常", "健康状态", "允许运动", "限速多少"], slots: [], route: fastpath, auth: L0 }
   query_sensor: { id: G17, keywords: ["雷达正常吗", "相机好使吗", "定位怎么样", "深度相机", "麦克风", "云台正常", "传感器", "相机正常"], slots: [sensor], route: fastpath, auth: L0 }
@@ -240,7 +240,7 @@ intents:
   query_fence_relation: { id: G41, keywords: ["我在围栏里吗", "离边界还有多远"], slots: [], route: fastpath, auth: L0 }
   query_fence_detail: { id: G42, keywords: ["围栏什么情况", "围栏多大"], slots: [fence], route: fastpath, auth: L0 }
   # -- 18-C 定位/RTK 状态查询 (G43-G47, 全 L0 fastpath) --
-  query_rtk_fix: { id: G43, keywords: ["定位状态", "RTK固定", "定位精度", "什么定位", "RTK状态"], slots: [], route: fastpath, auth: L0 }
+  query_rtk_fix: { id: G43, keywords: ["定位状态", "RTK固定", "定位精度", "什么定位", "RTK状态", "定位准不准", "定位准吗"], slots: [], route: fastpath, auth: L0 }
   query_satellites: { id: G44, keywords: ["几颗卫星", "几颗星", "卫星信号"], slots: [], route: fastpath, auth: L0 }
   query_heading_status: { id: G45, keywords: ["航向准", "航向有效", "航向状态", "航向能用", "航向什么状态"], slots: [], route: fastpath, auth: L0 }
   query_heading_source: { id: G46, keywords: ["航向来源", "航向哪来", "双天线还是航迹", "航向靠什么"], slots: [], route: fastpath, auth: L0 }
@@ -263,8 +263,8 @@ intents:
 
   # -- H 系统 (H01/H03 carry auth_by_slot; see header) --
   run_bit: { id: H01, keywords: ["做个自检", "自检一下", "检查系统", "做个深度自检", "全面检查一遍", "快速自检", "检查一下系统"], slots: [scope], route: fastpath, auth: L1a, auth_by_slot: { scope: { quick: L1a, deep: L2 } } }
-  generate_report: { id: H02, keywords: ["报告", "汇报", "说说情况"], slots: [scope, date_range], route: llm, auth: L1a }
-  set_time_sync: { id: H03, keywords: ["校时", "同步时间"], slots: [force_step], route: fastpath, auth: L1b, auth_by_slot: { force_step: { false: L1b, true: L2 } } }
+  generate_report: { id: H02, keywords: ["报告", "汇报", "说说情况", "生成巡逻报告", "巡逻报告", "说说今天情况", "今天情况"], slots: [scope, date_range], route: llm, auth: L1a }
+  set_time_sync: { id: H03, keywords: ["校时", "同步时间", "对时", "时间跳过来"], slots: [force_step], route: fastpath, auth: L1b, auth_by_slot: { force_step: { false: L1b, true: L2 } } }
   reload_config: { id: H04, keywords: ["重新加载配置", "刷新规则"], slots: [scope], route: fastpath, auth: L2 }
   sleep: { id: H05, keywords: ["休眠", "睡吧", "省电模式"], slots: [], route: fastpath, auth: L1b }
   wake: { id: H06, keywords: ["唤醒", "醒醒", "开始工作"], slots: [], route: fastpath, auth: L0 }
