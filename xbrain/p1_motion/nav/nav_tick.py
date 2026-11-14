@@ -65,7 +65,8 @@ does not withhold the snapshot.
 """
 from __future__ import annotations
 
-from dataclasses import dataclass
+from collections import deque  # 99 U201 speed window
+from dataclasses import dataclass, replace
 from typing import Any, Optional, Tuple
 
 from xbrain.p1_motion.ctrl_loop import CtrlState
@@ -75,6 +76,7 @@ from xbrain.p1_motion.fence.clip import (
     FenceEval,
     evaluate,
     inset_for_fix,
+    route_recording_velocity,
     speed_cap_mps,
 )
 from xbrain.p1_motion.freshness.degradation import CAM_THRESH, Freshness, classify
@@ -357,6 +359,7 @@ class NavTick:
         self._cog_float = _positive("nav.cog_drive_float_mps", cog_drive_float_mps)
         self._holo = bool(holonomic)
         self._suspended = False
+        self._rec_speed = _TrackSpeed()  # 99 U201: measured speed for the route stop
 
     @property
     def suspended(self) -> bool:
@@ -563,26 +566,68 @@ def _unconditional_teleop_impl(tick: "NavTick", inp: "NavInputs", raw: Tuple[flo
         wz = _clamp(raw[2], tick._wz_max)  # chassis turn limit
         limiter = "none"
     fev = None
+    v_meas = tick._rec_speed.update(inp.now_mono_ms, inp.pose_xy)  # 99 U201, every tick
     if tick._fence is not None:  # geometry for state/fence; the clip is NOT applied
         fev = evaluate(inp.fence, tick._fence, xy=inp.pose_xy, yaw_rad=inp.yaw_rad,
                        vx=vx, vy=vy, fix_type=inp.fix_type,
                        heading_valid=inp.heading_valid, hi_factor=1.0)
-        if (inp.recording_kind == "route" and not inp.estop and fev is not None
-                and any(p.hard_now for p in fev.per_poly)):  # the estop's label wins
-            # 99 U186: a route recording stops AT the boundary -- the clip's
-            # result is taken only once a boundary's zero cap is active (at
-            # or past the effective line, now or predicted), so there is no
+        if inp.recording_kind == "route" and not inp.estop and fev is not None:
+            # 99 U186: a route recording stops AT the boundary, with no
             # slow-down band before it; inside the area the keyboard stays
-            # unconditional (U150). The clip keeps the inward / sliding part,
-            # so the operator can drive back (12 S7.2).
-            vx, vy = fev.vx, fev.vy
-            limiter = "fence"
+            # unconditional (U150). ~~The autonomous clip's result was taken
+            # (inward AND sliding part kept)~~ 99 U201: sliding past the line
+            # took the robot 4.3 m out of the area (field 2026-11-14), and
+            # the 0.45 s prediction was shorter than the stop. See
+            # route_recording_velocity for the rules.
+            stop = route_recording_velocity(inp.fence, tick._fence, xy=inp.pose_xy,
+                                            yaw_rad=inp.yaw_rad, vx=vx, vy=vy,
+                                            fix_type=inp.fix_type,
+                                            heading_valid=inp.heading_valid,
+                                            v_meas_mps=v_meas)
+            stopped = stop[2] if stop is not None else ()
+            if stop is not None:
+                vx, vy = stop[0], (stop[1] if tick._holo else 0.0)
+                limiter = "fence"
+            # the contact (撞线) events say "已停止前进": they follow the
+            # polygons that really stop the keyboard, not evaluate()'s
+            # 0.45 s guess with the commanded speed
+            fev = replace(fev, per_poly=tuple(replace(p, hard_now=p.poly_id in stopped)
+                                              for p in fev.per_poly))
     return NavOutput(
         vx=vx, vy=vy, wz=wz, raw_vx=raw[0], raw_vy=raw[1], raw_wz=raw[2],
         v_max=tick._spec_vx, limiter=limiter, limiter_all=[limiter] if limiter != "none" else [],
         source=source, h_factor=1.0, i_factor=1.0, freshness=fresh.value,
         suspended=tick._suspended, nav_state=tick._src.nav_state().value,
         profile="patrol", fence=fev, rotation=None)
+
+
+class _TrackSpeed:
+    """99 U201: ground speed from the pose track over the last WINDOW_MS --
+    the measured speed the route-recording stop judges its stopping distance
+    with (NavInputs carries no velocity). No position clears the track (an
+    unknown speed is not carried across a gap); fewer than MIN_SPAN_MS of
+    track reads 0, which only means "no lookahead yet": the line itself
+    still stops the robot."""
+
+    WINDOW_MS = 250  # long enough to smooth 20 Hz fix noise, short enough to follow a stop
+    MIN_SPAN_MS = 50  # one tick: below it the difference is noise
+
+    def __init__(self) -> None:
+        self._track: deque = deque()  # (mono ms, (x, y)) newest last
+
+    def update(self, now_ms: int, xy: Optional[Tuple[float, float]]) -> float:
+        """Add this tick's position; return the speed over the window, m/s."""
+        if xy is None:
+            self._track.clear()
+            return 0.0
+        self._track.append((now_ms, xy))
+        while len(self._track) > 1 and now_ms - self._track[0][0] > self.WINDOW_MS:
+            self._track.popleft()
+        t0, (x0, y0) = self._track[0]
+        span = now_ms - t0
+        if span < self.MIN_SPAN_MS:
+            return 0.0
+        return ((xy[0] - x0) ** 2 + (xy[1] - y0) ** 2) ** 0.5 / (span / 1000.0)
 
 
 #: 99 U134: the teleop sources a NavTick can hand the slot to.

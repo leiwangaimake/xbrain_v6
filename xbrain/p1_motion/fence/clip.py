@@ -795,6 +795,82 @@ def speed_cap_mps(fence: Optional[CompiledFence],
     return cap
 
 
+def route_recording_velocity(fence: Optional[CompiledFence], c: FenceConstants, *,
+                             xy: Optional[Tuple[float, float]], yaw_rad: Optional[float],
+                             vx: float, vy: float, fix_type: Optional[str],
+                             heading_valid: bool, v_meas_mps: float,
+                             ) -> Optional[Tuple[float, float, Tuple[str, ...]]]:
+    """99 U201: the cloud keyboard's velocity while a ROUTE is recorded and a
+    hard boundary (activity area / forbid zone) stops it, as (vx, vy, ids of
+    the stopping polygons) in the body frame; None when nothing stops it (the
+    keyboard then drives unconditionally, U150), or when the fence cannot be
+    judged this tick (no position / inset / heading).
+
+    *** Why this is not the autonomous clip. evaluate() removes only the
+    outward component and keeps the sliding one -- right for RNS, which must
+    be able to follow a boundary. For the keyboard it let the robot leave the
+    activity area (field 2026-11-14, 7号路径): once past the line, "sliding"
+    happens OUTSIDE it; along a recorded, jagged activity edge each segment
+    points a different way, and the robot drifted 4.3 m out and the route
+    was saved there. And the 0.45 s prediction was shorter than the stop, so
+    at 1.6-2.1 m/s it ran 0.3-0.8 m past the line.
+
+    Rules (user 2026-11-13: "录路径拦停, 没有减速段" -- stopped AT the line, no
+    band before it):
+      * at or past a hard polygon's effective line (d_nom - inset <= 0): only
+        the component INTO the area is kept, nothing along or out of the
+        line; at a corner of two such polygons only a direction going into
+        both is kept, else zero;
+      * not yet at the line: if the line lies within the stopping distance of
+        the MEASURED speed (d_stop_m, the gate's brake constants) along the
+        commanded direction, the outward component is removed there -- full
+        speed until the robot has to brake, then a stop at the line. The
+        commanded speed is not used: a key always commands full speed, and
+        the robot could not approach a line closer than d_stop of it.
+    mutant: keep the sliding component past the line -> a robot outside the
+    area still moves along it -> test_past_the_line_only_inward_motion red."""
+    if fence is None or not fence.polygons or xy is None or yaw_rad is None or not heading_valid:
+        return None  # nothing to judge: the caller keeps U150
+    inset = inset_for_fix(fix_type, c)
+    if inset is None:  # fix not admitting a fence evaluation (B6)
+        return None
+    cy, sy = math.cos(yaw_rad), math.sin(yaw_rad)
+    vwx, vwy = vx * cy - vy * sy, vx * sy + vy * cy  # body -> ENU
+    px, py = xy
+    speed = math.hypot(vwx, vwy)
+    look = d_stop_m(max(0.0, float(v_meas_mps)), c) if speed > 0.0 else 0.0
+    past: List[Tuple[str, Tuple[float, float]]] = []  # (id, outward normal) at / past the line
+    ahead: List[Tuple[str, Tuple[float, float]]] = []  # line within the stopping distance
+    for poly in fence.polygons:
+        if not poly.hard_enforce:
+            continue  # 11 S9A.2: a soft-only polygon never stops anything
+        hit = boundary_hit(px, py, poly)
+        if hit.d_nom_m - inset <= 0.0:
+            past.append((poly.poly_id, hit.normal))
+        elif look > 0.0:
+            q = boundary_hit(px + vwx / speed * look, py + vwy / speed * look, poly)
+            if q.d_nom_m - inset <= 0.0:
+                ahead.append((poly.poly_id, q.normal))  # the normal where it would cross
+    if not past and not ahead:
+        return None
+    ox, oy = vwx, vwy
+    if past:
+        inward = [(-nx, -ny) for _pid, (nx, ny) in past]
+        dots = [ox * mx + oy * my for mx, my in inward]
+        if len(inward) == 1:
+            t = max(0.0, dots[0])  # the inward part only
+            ox, oy = t * inward[0][0], t * inward[0][1]
+        elif not all(d > 0.0 for d in dots):
+            ox, oy = 0.0, 0.0  # a corner: into both, or not at all
+    if ahead:
+        (ox, oy), degenerate = project_halfspaces((ox, oy), [(n, 0.0) for _pid, n in ahead],
+                                                  c.projection_iters)
+        if degenerate:
+            ox, oy = 0.0, 0.0
+    ids = tuple(pid for pid, _n in past) + tuple(pid for pid, _n in ahead)
+    return ox * cy + oy * sy, -ox * sy + oy * cy, ids  # ENU -> body
+
+
 def runtime_state_fields(ev: Optional[FenceEval], *, episode_id: int = 0) -> Optional[Dict[str, Any]]:
     """The 11 S9A.5 enforcement / degrade_reason / geo / allow blocks from the
     latest evaluation, for fence_set.build_fence_runtime_state. None when the
