@@ -77,7 +77,7 @@ def test_the_scan_surface_is_not_empty():  # guards the scan itself
     the wrong module -> no motion refusal in the surface -> red."""
     lines = [t for _w, t in _spoken_lines()]  # the surface
     assert any(t.startswith("没有说走多远") for t in lines)  # the motion refusal is in it
-    assert any(t.startswith("没有说调音量还是灯光") for t in lines)  # and chitchat.yaml
+    assert any(t.startswith("没有说调音量,灯光还是云台") for t in lines)  # and chitchat.yaml (99 U197 wording)
     assert len(lines) > 100  # the whole tables, not a sample
 
 

@@ -135,6 +135,16 @@ class ChitchatResponder:
             raise ChitchatPresetError("chitchat.yaml unwired_system missing %s" % intent_id)
         return str(block["template"]).replace("{what}", str(names[intent_id]))
 
+    def reply_containing(self, intent_name: str, word: str) -> Optional[str]:
+        """The first rotated reply of intent_name that contains word, or None
+        (J02 "什么型号" must name the model, field test 2026-11-14)."""
+        block = self._p.get(intent_name)
+        replies = block.get("replies") if isinstance(block, Mapping) else None
+        for r in replies or ():
+            if word in str(r):
+                return str(r)
+        return None
+
     def limit_reply(self, key: str) -> str:
         """Reason reply for a request the light hardware cannot do
         (chitchat.yaml `payload_limits`, classifier/payload_limits.py keys)."""

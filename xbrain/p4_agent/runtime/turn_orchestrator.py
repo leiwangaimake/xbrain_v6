@@ -146,6 +146,7 @@ from xbrain.p4_agent.runtime.teach_request import (
 from xbrain.p4_agent.safety_bypass import matcher as bypass_matcher
 from xbrain.p4_agent.safety_bypass import recording_gate
 from xbrain.p4_agent.session.chitchat import ChitchatResponder, ChitchatState
+from xbrain.p4_agent.state.mode_switch_answer import mode_switch_answer  # C08 (field test 2026-11-14)
 
 # Spoken wording for the F-class build failures. Hot-tunable phrasing, ASCII
 # punctuation per CLAUDE.md 2.2; the keys are the English reasons the builders
@@ -535,10 +536,18 @@ def refine_ptz_intent(intent_id: str, text: str) -> str:
     # Reclaim first: a non-PTZ classification with a PTZ subject present is the
     # prefix-rule violation; resolve_ptz gives the right E-intent (possibly
     # E01, which the degree/scan step below then refines further).
-    if intent_id[:1] != "E" and has_ptz_subject(text):
+    # A G query is never reclaimed (field test 2026-11-14 V0331-V0333: "现在镜头
+    # 放大多少倍" asked G33 and was turned into a zoom): asking about the head
+    # is not commanding it.
+    if intent_id[:1] not in ("E", "G") and has_ptz_subject(text):
         reclaimed = resolve_ptz(text)
         if reclaimed is not None:
             intent_id = reclaimed
+    if intent_id == "E07" and _has_ptz_degree(text):
+        # Field test 2026-11-14 V0236: "云台向左环视三十度" ran a whole orbit
+        # (> 180 deg). A degree'd scan is the same unsupported request as a
+        # degree'd move, so it gets the same E10 refusal, never a scan.
+        return "E10"
     if intent_id == "E01":
         # Degree move first: an angle makes it E10 (rejected), even if it also
         # said a scan word (a degree'd scan is not a thing we support).
@@ -689,7 +698,7 @@ _UNWIRED_ACTIONS = frozenset({"A13"})
 
 #: Level intents whose adjustment an elliptical phrase may continue (D10
 #: volume, D17 brightness), and the phrases that name no device. 2026-10-30.
-_LEVEL_INTENTS = frozenset({"D10", "D17"})
+_LEVEL_INTENTS = frozenset({"D10", "D17", "E06"})  # E06: "小一点" after a zoom (field test V0213)
 _ELLIPTICAL_LEVELS = frozenset({
     "中等", "一半", "开到最大", "调到最大", "调到最高", "调到最低", "调到最小",
     "最大", "最小", "最高", "最低", "开到最小", "大一点", "小一点"})
@@ -697,6 +706,63 @@ _ELLIPTICAL_LEVELS = frozenset({
 #: Reply for a G query in a build with no query_fn (smoke / tests). Production
 #: answers every G id from query_templates.yaml (state/status_answers.py).
 _G_NO_QUERY_FN = "这项查询还没有接通数据,暂时答不了"
+
+#: Field test 2026-11-14: "什么" was an I03 keyword, and as a substring it
+#: turned every question holding it ("现在是什么模式", "前方有什么目标",
+#: "你喜欢吃什么") into a replay of the last reply. Only these WHOLE
+#: sentences ask for the replay now; everything else is classified normally.
+_BARE_REPEAT = frozenset({"什么", "啥", "说什么", "你说什么", "你说啥"})
+#: Particles and stops trimmed before the bare-repeat comparison.
+_TAIL_PARTICLES = "?\uff1f\u3002.!\uff01吧啊呀呢"  # ASCII + full-width ? . ! and particles
+
+#: C01-C05 enter a mode; said as a question ("能 / 可以 / 能不能 / 能否 / 允许 ... 切")
+#: they are C08 instead -- see the reroute in _handle_turn.
+_MODE_ENTRY_IDS = frozenset({"C01", "C02", "C03", "C04", "C05"})
+_MODE_QUESTION_RE = re.compile(r"(能|可以|能不能|能否|允许)(切换|切)")
+
+#: G17 asks about ONE sensor ("麦克风正常吗") but the answer lists all of
+#: them (field test V0498-V0500). Spoken word -> the label the answer uses;
+#: when one is named, only that item of the answer is kept.
+_SENSOR_WORDS = (("深度相机", "深度相机"), ("相机", "深度相机"),
+                 ("激光雷达", "激光雷达"), ("雷达", "激光雷达"),
+                 ("RTK", "RTK 定位"), ("定位", "RTK 定位"), ("航向", "航向"),
+                 ("时钟", "时钟"), ("云台", "云台"), ("麦克风", "麦克风"))
+
+#: An absolute zoom ("放大到十倍") or a percentage PTZ speed ("百分之六十"):
+#: the zoom is uncalibrated and the speed has three steps, so both are
+#: refused instead of being run as a plain zoom / speed step (V0944-V0948).
+_ZOOM_TIMES_RE = re.compile(r"[0-9零〇一二两三四五六七八九十百]+\s*倍")
+_PERCENT_WORDS = ("%", "\uff05", "百分之")  # ASCII / full-width percent sign
+
+
+def _only_named_sensors(answer: str, text: str) -> str:
+    """G17: keep only the items of the answer the operator named, or the
+    whole answer when no sensor word was said ("传感器都正常吗")."""
+    wanted = {label for word, label in _SENSOR_WORDS if word in text}  # named sensors
+    if not wanted:  # a general question
+        return answer  # every sensor
+    items = [i for i in answer.split(",") if any(i.startswith(w) for w in wanted)]
+    return ",".join(items) if items else answer  # unreadable answers stay whole
+
+
+def _ptz_limit(intent_id: str, text: str, slots: Dict[str, Any]) -> Optional[str]:
+    """The chitchat payload_limits key a PTZ command runs into, or None.
+
+    Field test 2026-11-14: "变焦" / "云台转速" / "云台微调" said nothing
+    about the direction or the step, answered "好的" and P2 dropped them;
+    an absolute zoom or a percentage speed was run as a plain step. All
+    are now refused with the reason and an example (no follow-up question)."""
+    if intent_id == "E06":  # zoom
+        if _ZOOM_TIMES_RE.search(text):  # "放大到十倍"
+            return "zoom_absolute"
+        return None if slots.get("zoom_dir") else "zoom_no_direction"
+    if intent_id == "E09":  # PTZ speed
+        if any(w in text for w in _PERCENT_WORDS):  # "百分之六十"
+            return "ptz_speed_percent"
+        return None if slots.get("level") else "ptz_speed_no_level"
+    if intent_id == "E01" and not slots.get("direction"):  # "云台微调"
+        return "ptz_move_no_direction"
+    return None  # not a PTZ command, or complete
 
 
 class TurnOrchestrator:
@@ -955,6 +1021,9 @@ class TurnOrchestrator:
         # keyword MISSES for PTZ (E) and payload (D) so a slightly-reworded
         # command ("云台朝左", "把照明灯搞亮点") still resolves. It runs only
         # when layer 2 missed, so exact keywords are never overridden.
+        if text.rstrip(_TAIL_PARTICLES) in _BARE_REPEAT:  # see _BARE_REPEAT
+            return self._route_entry(self._registry.by_id("I03"), text, session,
+                                     now_mono_ms, layer="bare_repeat")
         result = classify_text(text, self._registry, self._matcher,
                                large_class_fn=resolve_large_class,
                                addressed=addressed)
@@ -969,6 +1038,11 @@ class TurnOrchestrator:
         # correction (18-B): a degree move -> E10 (rejected), a scan phrased
         # as a move -> E07. A flat keyword match cannot make either call.
         intent_id = refine_ptz_intent(result.intent, text)
+        if intent_id in _MODE_ENTRY_IDS and _MODE_QUESTION_RE.search(text):
+            # Field test 2026-11-14: "能切到报警模式吗" matched C01 by its
+            # longer keyword and really switched. A question about a switch
+            # is C08: answered, nothing sent.
+            intent_id = "C08"
         entry = self._registry.by_id(intent_id)
         return self._route_entry(entry, text, session, now_mono_ms,
                                  layer=result.layer)
@@ -1157,10 +1231,23 @@ class TurnOrchestrator:
         # In production make_status_query_fn (composed last) answers EVERY G id
         # from query_templates.yaml; this constant is only the last resort of a
         # build with no query_fn at all, and it still never echoes.
+        if entry.id == "C08":
+            # Field test 2026-11-14 V0108-V0114: "能切到X吗" answered "收到" and
+            # went to cmd/task, where P3 drops it. It is a question: answered
+            # here from state/mode and health/summary, nothing is sent.
+            state = self._state_fn() if self._state_fn else {}
+            answer = mode_switch_answer(text, state)
+            return TurnDecision(
+                kind="reply", intent_id=entry.id, intent_name=entry.name,
+                route=entry.route, auth=entry.auth, layer=layer,
+                reply_text=answer, tts_text=answer)
+
         if entry.id[:1] == "G":
             answer = self._query_fn(entry) if self._query_fn is not None else None
             if answer is None:
                 answer = _G_NO_QUERY_FN
+            if entry.id == "G17":  # one sensor named -> only that one
+                answer = _only_named_sensors(answer, text)
             return TurnDecision(
                 kind="reply", intent_id=entry.id, intent_name=entry.name,
                 route=entry.route, auth=entry.auth, layer=layer,
@@ -1541,6 +1628,13 @@ class TurnOrchestrator:
         # complete, so the fast leg below never enters the LLM for them.
         if rule_slots:
             extra = {**(extra or {}), **rule_slots}
+        ptz_limit = _ptz_limit(entry.id, text, extra or {})  # see _ptz_limit
+        if ptz_limit is not None:
+            spoken = self._chitchat.limit_reply(ptz_limit)
+            return TurnDecision(kind="denied", intent_id=entry.id,
+                                intent_name=entry.name, route=entry.route,
+                                auth=eff_auth, level=eff_auth, layer=layer,
+                                reply_text=spoken, tts_text=spoken)
         # Merge the tier-2 LLM slots OVER the fastpath ones: the LLM fills the
         # slots the fastpath regex cannot (free text, names), and the fastpath
         # fills the closed-set enums. LLM values win a key collision.
@@ -1783,6 +1877,10 @@ class TurnOrchestrator:
         # never one picked from the clock (field test 4.9, 99 U101).
         tod = next((t for w, t in _SAID_TIME if w in text), None) if entry.name == "greeting" else None
         reply = self._chitchat.respond(entry.name, session.chitchat, time_of_day=tod)
+        if entry.name == "identity" and "型号" in text:
+            # Field test V0907: "什么型号" got a rotated line without the
+            # model. A model question gets a line that names it.
+            reply = self._chitchat.reply_containing("identity", "型号") or reply
         return TurnDecision(
             kind="reply", intent_id=entry.id, intent_name=entry.name,
             route=entry.route, auth=entry.auth, layer=layer,

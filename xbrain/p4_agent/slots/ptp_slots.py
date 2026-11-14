@@ -179,6 +179,22 @@ _Q_WHERE = re.compile(r"^(?:查询|查一下|请问|告诉我)?(?P<x>.+?)(?:在�
 #: G23 answers ("充电桩在哪" lists every charging point).
 _WHERE_NOT_OURS = frozenset({"我", "你", "我们", "机器人", "机器狗", "你现在", "我现在", "现在",
                              "充电桩", "充电站"})
+
+
+def _asks_own_position(x: str) -> bool:
+    """True when X of "X在哪" is the robot itself, not a place.
+
+    Field test 2026-11-14: "你的位置在哪" / "海卫, 你在哪儿" were answered as
+    the waypoint "你的位置" / "海卫你" (G53). A possessive "的位置" or a
+    wake word in front of a pronoun is the speaker asking G01.
+    """
+    core = re.sub(r"的?位置$", "", x)  # "你的位置" -> "你"
+    for wake in ("海卫", "机器人", "机器狗"):  # "海卫你" -> "你"
+        if core.startswith(wake) and len(core) > len(wake):
+            core = core[len(wake):]
+    return core in _WHERE_NOT_OURS or core in ("", "现", "现在的", "当前")  # "现在什么位置": X = "现"
+
+
 #: 99 U136 G52: "X路径多长" -- X must end like a route name.
 _Q_LENGTH = re.compile(r"^(?:查询|查一下|请问|告诉我)?(?P<x>.+?(?:路径|路线|线路|环线|线))"
                        r"(?:有)?(?:多长|多少米|长度是多少|全长多少)(?:呢|啊)?$")  # route length
@@ -478,7 +494,8 @@ def parse_ptp(text: str) -> Optional[PtpParse]:
             return PtpParse("route_length", m.group("x"))  # how long is route X
         m = _Q_WHERE.match(t)  # G53 (U149), before goto and patrol
         if (m and when is None and m.group("x") not in _DEICTIC
-                and m.group("x") not in _WHERE_NOT_OURS):  # a named place
+                and m.group("x") not in _WHERE_NOT_OURS
+                and not _asks_own_position(m.group("x"))):  # a named place
             return PtpParse("where", _head(m.group("x")))  # where is X
         pat = _patrol(t, when)  # a named patrol (U121), before goto: "去X巡逻"
         if pat is not None:  # the route is named
