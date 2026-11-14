@@ -74,14 +74,14 @@ intents:
   # were removed from A04 B05 B07 B12 C04 C07 D12 F02 -- the safety bypass matches
   # by substring first (16 S4.1), so they could only ever trigger an estop. B05 now
   # uses 暂缓任务/等一下/先别巡了. E05/E08 keep theirs (bypass yield, 16 S4.1).
-  hold: { id: A04, keywords: ["原地待命", "别动", "待命"], slots: [], route: fastpath, auth: L0 }
-  move_forward: { id: A05, keywords: ["前进", "往前走", "向前"], slots: [distance_m], route: fastpath_then_llm, auth: L1a }
-  move_backward: { id: A06, keywords: ["后退", "往后退", "倒退"], slots: [distance_m], route: fastpath_then_llm, auth: L1a }
-  move_left: { id: A07, keywords: ["左移", "向左平移"], slots: [distance_m], route: fastpath_then_llm, auth: L1b }
-  move_right: { id: A08, keywords: ["右移", "向右平移"], slots: [distance_m], route: fastpath_then_llm, auth: L1b }
-  turn_left: { id: A09, keywords: ["左转", "向左转"], slots: [angle_deg], route: fastpath_then_llm, auth: L1b }
-  turn_right: { id: A10, keywords: ["右转", "向右转"], slots: [angle_deg], route: fastpath_then_llm, auth: L1b }
-  turn_around: { id: A11, keywords: ["转身", "掉头"], slots: [], route: fastpath, auth: L1b }
+  hold: { id: A04, keywords: ["原地待命", "别动", "待命", "在原地等着", "原地等着", "保持不动", "不要移动", "不要动"], slots: [], route: fastpath, auth: L0 }
+  move_forward: { id: A05, keywords: ["前进", "往前走", "向前", "往前", "往前挪", "往前一点", "往前移", "朝前走", "朝前挪", "向前走", "向前挪", "向前移"], slots: [distance_m], route: fastpath_then_llm, auth: L1a }
+  move_backward: { id: A06, keywords: ["后退", "往后退", "倒退", "往后", "向后", "向后走", "往后走", "向后移", "往后移", "向后挪", "往后挪", "向后退"], slots: [distance_m], route: fastpath_then_llm, auth: L1a }
+  move_left: { id: A07, keywords: ["左移", "向左平移", "往左平移", "往左挪", "往左移", "往左边移", "往左边挪", "左边挪", "左边移", "向左横移", "向左移", "向左挪", "左平移"], slots: [distance_m], route: fastpath_then_llm, auth: L1b }
+  move_right: { id: A08, keywords: ["右移", "向右平移", "往右平移", "往右挪", "往右移", "往右边移", "往右边挪", "右边挪", "右边移", "向右横移", "向右移", "向右挪", "右平移"], slots: [distance_m], route: fastpath_then_llm, auth: L1b }
+  turn_left: { id: A09, keywords: ["左转", "向左转", "向左旋转", "往左旋转", "往左转", "左旋转"], slots: [angle_deg], route: fastpath_then_llm, auth: L1b }
+  turn_right: { id: A10, keywords: ["右转", "向右转", "向右旋转", "往右旋转", "往右转", "右旋转"], slots: [angle_deg], route: fastpath_then_llm, auth: L1b }
+  turn_around: { id: A11, keywords: ["转身", "掉头", "转个身", "向后转"], slots: [], route: fastpath, auth: L1b }
   # A12 keywords widened 2026-11-04 (99 U108): "朝北" was the only 朝 form, so
   # "朝东 / 朝南 / 朝西", "面朝西边", "朝向南方", "转向南" missed the fast leg although
   # parse_heading reads all of them. 面朝 / 朝向 / 转向 are keyed WITH a direction
@@ -103,7 +103,7 @@ intents:
   # only: the M1 / M2 LLM missions do not emit it yet.
   move_heading: { id: A17, keywords: ["向东北走", "向东北面走", "向东北边走", "向西北走", "向西北面走", "向西北边走", "向东南走", "向东南面走", "向东南边走", "向西南走", "向西南面走", "向西南边走", "向东走", "向东面走", "向东边走", "向南走", "向南面走", "向南边走", "向西走", "向西面走", "向西边走", "向北走", "向北面走", "向北边走", "往东北走", "往东北面走", "往东北边走", "往西北走", "往西北面走", "往西北边走", "往东南走", "往东南面走", "往东南边走", "往西南走", "往西南面走", "往西南边走", "往东走", "往东面走", "往东边走", "往南走", "往南面走", "往南边走", "往西走", "往西面走", "往西边走", "往北走", "往北面走", "往北边走", "朝东北走", "朝东北面走", "朝东北边走", "朝西北走", "朝西北面走", "朝西北边走", "朝东南走", "朝东南面走", "朝东南边走", "朝西南走", "朝西南面走", "朝西南边走", "朝东走", "朝东面走", "朝东边走", "朝南走", "朝南面走", "朝南边走", "朝西走", "朝西面走", "朝西边走", "朝北走", "朝北面走", "朝北边走"], slots: [heading, distance_m], route: fastpath, auth: L1b }
   set_move_speed: { id: A16, keywords: ["移动速度快一点", "移动速度慢一点", "移动速度最快", "移动速度最慢", "移动速度调到最快", "移动速度调到最慢", "移动速度调快一点", "移动速度调慢一点", "行走速度快一点", "行走速度慢一点", "行走速度最快", "行走速度最慢", "行走速度调到最快", "行走速度调到最慢", "行走速度调快一点", "行走速度调慢一点"], slots: [move_speed], route: fastpath, auth: L1a }
-  set_turn_speed: { id: A15, keywords: ["机器人转速快一点", "机器人转速慢一点", "机器人转速最快", "机器人转速最慢", "机器人转速调到最快", "机器人转速调到最慢", "机器人转快一点", "机器人转慢一点", "机器人转快点", "机器人转慢点", "机器人转得快一点", "机器人转得慢一点", "机身转速快一点", "机身转速慢一点", "机身转速最快", "机身转速最慢", "转向速度快一点", "转向速度慢一点", "转向速度最快", "转向速度最慢", "转身速度快一点", "转身速度慢一点", "转身速度最快", "转身速度最慢"], slots: [turn_speed], route: fastpath, auth: L1a }
+  set_turn_speed: { id: A15, keywords: ["机器人转速快一点", "机器人转速慢一点", "机器人转速最快", "机器人转速最慢", "机器人转速调到最快", "机器人转速调到最慢", "机器人转快一点", "机器人转慢一点", "机器人转快点", "机器人转慢点", "机器人转得快一点", "机器人转得慢一点", "机身转速快一点", "机身转速慢一点", "机身转速最快", "机身转速最慢", "转向速度快一点", "转向速度慢一点", "转向速度最快", "转向速度最慢", "转身速度快一点", "转身速度慢一点", "转身速度最快", "转身速度最慢", "机器人转速调慢", "机器人转速调快", "机身转速调慢", "机身转速调快"], slots: [turn_speed], route: fastpath, auth: L1a }
 
   # -- B 导航与任务 --
   goto_waypoint: { id: B01, keywords: ["去", "到", "前往"], slots: [waypoint], route: fastpath_then_llm, auth: L1a }
@@ -128,7 +128,7 @@ intents:
   enter_patrol_mode: { id: C05, keywords: ["进入巡逻模式", "开始工作"], slots: [], route: fastpath, auth: L1b }
   standby: { id: C06, keywords: ["待命", "休息", "别工作了"], slots: [], route: fastpath, auth: L1a }
   set_motion_behavior: { id: C07, keywords: ["跟着目标走"], slots: [behavior], route: llm, auth: L1b }
-  query_mode_switch_ok: { id: C08, keywords: ["能切到喊话吗", "能切到", "能切换到", "可以切到", "能不能切到", "现在能切", "可以切换到"], slots: [target_mode], route: fastpath, auth: L0 }
+  query_mode_switch_ok: { id: C08, keywords: ["能切到喊话吗", "能切到", "能切换到", "可以切到", "能不能切到", "现在能切", "可以切换到", "允许切换"], slots: [target_mode], route: fastpath, auth: L0 }
 
   # -- D 载荷 --
   light_on: { id: D01, keywords: ["打开照明灯", "把灯打开", "打开灯", "开启照明", "开灯", "打开照明", "前灯打开"], slots: [which], route: fastpath, auth: L0 }
@@ -164,7 +164,7 @@ intents:
   ptz_stop_track: { id: E05, keywords: ["停止跟踪", "别盯了"], slots: [], route: fastpath_then_llm, auth: L0 }
   ptz_zoom: { id: E06, keywords: ["拉近", "推近", "拉远", "推远", "放大", "放大点", "缩小", "变焦", "近一点", "远一点", "云台放大", "云台缩小", "平台放大", "平台缩小"], slots: [direction, amount], route: fastpath, auth: L0 }
   ptz_scan: { id: E07, keywords: ["左右扫一遍", "左右扫", "扫一遍", "云台扫描", "云台左右扫", "平台左右扫", "环视", "环视一周", "环视一圈", "转一圈", "转一周", "云台环视", "平台环视", "云台向左环视", "云台向右环视", "向左环视", "向右环视", "云台转一圈", "云台转一周", "云台向左转一圈", "云台向右转一圈"], slots: [scan_mode, direction], route: fastpath, auth: L1b }
-  ptz_stop_scan: { id: E08, keywords: ["停止扫描", "别扫了", "停止环视", "云台别转了"], slots: [], route: fastpath, auth: L0 }
+  ptz_stop_scan: { id: E08, keywords: ["停止扫描", "别扫了", "停止环视", "云台别转了", "不要环视", "别环视了", "结束扫描", "结束环视", "平台别转了"], slots: [], route: fastpath, auth: L0 }
   # E09/E10 from 18-B S1 (GWY-P4-23, 2026-08-07). E09 three speed levels await
   # T-PTZ-3 measurement. E10 conflicts with the contract's PTZ-C1 (PELCO-D has
   # no absolute-position readback): until T-PTZ-3 closes, the executor answers
@@ -197,53 +197,53 @@ intents:
   set_active_fence: { id: F15, keywords: ["启用营区外围围栏", "换成2号围栏"], slots: [fence], route: fastpath_then_llm, auth: L2 }
 
   # -- G 查询 --
-  query_position: { id: G01, keywords: ["在哪", "什么位置"], slots: [], route: fastpath, auth: L0 }
-  query_battery: { id: G02, keywords: ["电量", "还有多少电"], slots: [], route: fastpath, auth: L0 }
-  query_range: { id: G03, keywords: ["还能跑多久", "剩余续航"], slots: [], route: fastpath, auth: L0 }
-  query_speed: { id: G04, keywords: ["现在多快", "什么速度"], slots: [], route: fastpath, auth: L0 }
-  query_mode: { id: G05, keywords: ["当前什么模式", "在什么状态"], slots: [], route: fastpath, auth: L0 }
-  query_task: { id: G06, keywords: ["当前任务", "在干什么"], slots: [], route: fastpath, auth: L0 }
+  query_position: { id: G01, keywords: ["在哪", "什么位置", "当前位置", "你的位置", "现在的位置", "位置在哪"], slots: [], route: fastpath, auth: L0 }
+  query_battery: { id: G02, keywords: ["电量", "还有多少电", "剩多少电", "还剩多少电", "电池还剩", "电池状态"], slots: [], route: fastpath, auth: L0 }
+  query_range: { id: G03, keywords: ["还能跑多久", "剩余续航", "跑多远", "走多远", "多少公里", "剩多少续航", "续航"], slots: [], route: fastpath, auth: L0 }
+  query_speed: { id: G04, keywords: ["现在多快", "什么速度", "当前速度", "走多快", "跑多快", "行驶速度"], slots: [], route: fastpath, auth: L0 }
+  query_mode: { id: G05, keywords: ["当前什么模式", "在什么状态", "什么模式", "哪个模式", "当前模式", "什么状态"], slots: [], route: fastpath, auth: L0 }
+  query_task: { id: G06, keywords: ["当前任务", "在干什么", "有没有任务", "任务排队", "几个任务"], slots: [], route: fastpath, auth: L0 }
   query_progress: { id: G07, keywords: ["还有多久完成", "巡逻到哪了"], slots: [], route: fastpath, auth: L0 }
-  query_heading: { id: G08, keywords: ["朝哪个方向", "面向哪"], slots: [], route: fastpath, auth: L0 }
-  query_uptime: { id: G09, keywords: ["开机多久了", "开机多久", "运行多久", "运行多长时间", "开机多长时间", "跑了多久", "上电多久", "启动多久"], slots: [], route: fastpath, auth: L0 }
-  query_events_recent: { id: G10, keywords: ["最近有什么情况", "有报警吗", "最近都发生了什么", "最近发生了什么", "都发生了什么"], slots: [count, time_range], route: fastpath_then_llm, auth: L0 }
-  query_events_period: { id: G11, keywords: ["今天有几次告警", "这一周的报警", "报警了几次", "报警几次", "有几次报警", "告警了几次"], slots: [date_range], route: llm, auth: L0 }
+  query_heading: { id: G08, keywords: ["朝哪个方向", "面向哪", "朝哪边", "朝向哪", "当前航向"], slots: [], route: fastpath, auth: L0 }
+  query_uptime: { id: G09, keywords: ["开机多久了", "开机多久", "运行多久", "运行多长时间", "开机多长时间", "跑了多久", "上电多久", "启动多久", "工作多久", "启动到现在", "运行了多久", "开机了多久"], slots: [], route: fastpath, auth: L0 }
+  query_events_recent: { id: G10, keywords: ["最近有什么情况", "有报警吗", "最近都发生了什么", "最近发生了什么", "都发生了什么", "最近什么情况", "最近的事件", "新的报警", "有没有告警", "有没有报警"], slots: [count, time_range], route: fastpath_then_llm, auth: L0 }
+  query_events_period: { id: G11, keywords: ["今天有几次告警", "这一周的报警", "报警了几次", "报警几次", "有几次报警", "告警了几次", "报警多少次", "告警多少次"], slots: [date_range], route: llm, auth: L0 }
   query_events_by_type: { id: G12, keywords: ["有入侵报警吗", "有故障事件吗"], slots: [category], route: llm, auth: L0 }
-  query_last_alarm: { id: G13, keywords: ["最近一次报警什么时候", "上次警报"], slots: [], route: fastpath, auth: L0 }
-  query_event_detail: { id: G14, keywords: ["刚才那个报警什么情况"], slots: [event_ref], route: llm, auth: L0 }
-  query_faults: { id: G15, keywords: ["有故障吗", "哪里不正常", "有问题吗"], slots: [], route: fastpath, auth: L0 }
-  query_health: { id: G16, keywords: ["系统状态怎么样", "一切正常吗"], slots: [], route: fastpath, auth: L0 }
-  query_sensor: { id: G17, keywords: ["雷达正常吗", "相机好使吗", "定位怎么样"], slots: [sensor], route: fastpath, auth: L0 }
-  query_bit_result: { id: G18, keywords: ["自检结果怎么样", "开机检查过了吗"], slots: [], route: fastpath, auth: L0 }
-  query_detection: { id: G19, keywords: ["前面有人吗", "看到什么了", "有情况吗"], slots: [], route: fastpath, auth: L0 }
-  query_target_count: { id: G20, keywords: ["有几个人", "几个目标"], slots: [], route: fastpath, auth: L0 }
-  query_routes: { id: G21, keywords: ["有哪些路径", "都能巡哪些线"], slots: [], route: fastpath, auth: L0 }
-  query_waypoints: { id: G22, keywords: ["有哪些位置点", "能去哪些地方"], slots: [], route: fastpath, auth: L0 }
-  query_docks: { id: G23, keywords: ["充电桩在哪", "有几个充电桩"], slots: [], route: fastpath, auth: L0 }
-  query_time: { id: G24, keywords: ["几点了", "现在几点", "几点钟", "现在时间", "现在什么时候", "今天几号", "系统时间", "机器人时间", "现在几号"], slots: [], route: fastpath, auth: L0 }
+  query_last_alarm: { id: G13, keywords: ["最近一次报警什么时候", "上次警报", "最近的报警是", "上一次报警", "上次报警的时间"], slots: [], route: fastpath, auth: L0 }
+  query_event_detail: { id: G14, keywords: ["刚才那个报警什么情况", "报警的具体情况", "具体情况"], slots: [event_ref], route: llm, auth: L0 }
+  query_faults: { id: G15, keywords: ["有故障吗", "哪里不正常", "有问题吗", "有没有故障", "出问题", "故障有哪些", "哪些故障"], slots: [], route: fastpath, auth: L0 }
+  query_health: { id: G16, keywords: ["系统状态怎么样", "一切正常吗", "系统健康", "系统状态", "运行正常", "健康状态", "允许运动", "限速多少"], slots: [], route: fastpath, auth: L0 }
+  query_sensor: { id: G17, keywords: ["雷达正常吗", "相机好使吗", "定位怎么样", "深度相机", "麦克风", "云台正常", "传感器", "相机正常"], slots: [sensor], route: fastpath, auth: L0 }
+  query_bit_result: { id: G18, keywords: ["自检结果怎么样", "开机检查过了吗", "自检有没有通过", "自检结果", "自检有问题", "自检通过"], slots: [], route: fastpath, auth: L0 }
+  query_detection: { id: G19, keywords: ["前面有人吗", "看到什么了", "有情况吗", "前方有什么", "前面有什么", "检测到什么", "看见什么", "看到了什么", "障碍物"], slots: [], route: fastpath, auth: L0 }
+  query_target_count: { id: G20, keywords: ["有几个人", "几个目标", "多少人", "几个人", "目标数量"], slots: [], route: fastpath, auth: L0 }
+  query_routes: { id: G21, keywords: ["有哪些路径", "都能巡哪些线", "几条路线", "几条路径", "已有巡逻路线", "路径列表", "路线列表", "哪些路线"], slots: [], route: fastpath, auth: L0 }
+  query_waypoints: { id: G22, keywords: ["有哪些位置点", "能去哪些地方", "位置点有哪些", "位置点列表", "哪些地点", "记录了哪些"], slots: [], route: fastpath, auth: L0 }
+  query_docks: { id: G23, keywords: ["充电桩在哪", "有几个充电桩", "充电桩列表", "充电位置", "配置充电桩", "哪些充电桩"], slots: [], route: fastpath, auth: L0 }
+  query_time: { id: G24, keywords: ["几点了", "现在几点", "几点钟", "现在时间", "现在什么时候", "今天几号", "系统时间", "机器人时间", "现在几号", "几点", "几月几号", "现在的时间", "当前时间", "日期"], slots: [], route: fastpath, auth: L0 }
   query_payload_all: { id: G25, keywords: ["声光现在什么状态", "载荷都开着吗"], slots: [], route: fastpath, auth: L0 }
   query_light_state: { id: G26, keywords: ["灯开着吗", "照明什么状态"], slots: [which], route: fastpath, auth: L0 }
   query_siren_state: { id: G27, keywords: ["警笛响着吗", "警报开了没"], slots: [], route: fastpath, auth: L0 }
   query_strobe_state: { id: G28, keywords: ["爆闪开着吗", "警灯亮着吗", "红蓝开着吗"], slots: [], route: fastpath, auth: L0 }
   query_volume: { id: G29, keywords: ["音量多大", "现在几档"], slots: [], route: fastpath, auth: L0 }
   query_speaking: { id: G30, keywords: ["在喊话吗", "还剩几遍", "喊的哪条"], slots: [], route: fastpath, auth: L0 }
-  query_speak_presets: { id: G31, keywords: ["能喊哪些", "有哪些预设语句"], slots: [], route: fastpath, auth: L0 }
-  query_ptz_pose: { id: G32, keywords: ["云台朝哪", "现在看哪边"], slots: [], route: fastpath, auth: L0 }
-  query_ptz_zoom: { id: G33, keywords: ["放大了几倍", "现在什么倍率"], slots: [], route: fastpath, auth: L0 }
-  query_ptz_track: { id: G34, keywords: ["在跟踪吗", "盯着谁呢"], slots: [], route: fastpath, auth: L0 }
-  query_ptz_preset: { id: G35, keywords: ["在哪个预置位", "现在是几号位"], slots: [], route: fastpath, auth: L0 }
-  query_ptz_presets: { id: G36, keywords: ["有哪些预置位", "能看哪几个方向"], slots: [], route: fastpath, auth: L0 }
+  query_speak_presets: { id: G31, keywords: ["能喊哪些", "有哪些预设语句", "播放哪些", "喊话列表", "预设喊话", "哪些警告", "哪几条"], slots: [], route: fastpath, auth: L0 }
+  query_ptz_pose: { id: G32, keywords: ["云台朝哪", "现在看哪边", "镜头朝哪", "镜头朝哪个方向", "云台在转", "镜头在转"], slots: [], route: fastpath, auth: L0 }
+  query_ptz_zoom: { id: G33, keywords: ["放大了几倍", "现在什么倍率", "当前倍率", "多少倍", "变焦档位", "拉近多少", "放大多少", "放大了多少"], slots: [], route: fastpath, auth: L0 }
+  query_ptz_track: { id: G34, keywords: ["在跟踪吗", "盯着谁呢", "在跟踪谁", "有没有跟踪", "正在跟着", "跟着人吗"], slots: [], route: fastpath, auth: L0 }
+  query_ptz_preset: { id: G35, keywords: ["在哪个预置位", "现在是几号位", "当前云台预置位", "哪个预设位置", "当前预置位"], slots: [], route: fastpath, auth: L0 }
+  query_ptz_presets: { id: G36, keywords: ["有哪些预置位", "能看哪几个方向", "预置位列表", "哪些预设位置", "哪些预置位"], slots: [], route: fastpath, auth: L0 }
   query_ptz_owner: { id: G37, keywords: ["云台谁在控", "我为什么转不动云台"], slots: [], route: fastpath, auth: L0 }
-  query_fences: { id: G38, keywords: ["有哪些围栏", "都设了什么围栏"], slots: [], route: fastpath, auth: L0 }
-  query_active_fence: { id: G39, keywords: ["现在用的哪个围栏", "生效的是哪个"], slots: [], route: fastpath, auth: L0 }
+  query_fences: { id: G38, keywords: ["有哪些围栏", "都设了什么围栏", "围栏列表", "哪些电子围栏", "哪些围栏"], slots: [], route: fastpath, auth: L0 }
+  query_active_fence: { id: G39, keywords: ["现在用的哪个围栏", "生效的是哪个", "生效围栏", "生效的围栏"], slots: [], route: fastpath, auth: L0 }
   query_fence_health: { id: G40, keywords: ["围栏还管用吗", "保护降级了吗"], slots: [], route: fastpath, auth: L0 }
   query_fence_relation: { id: G41, keywords: ["我在围栏里吗", "离边界还有多远"], slots: [], route: fastpath, auth: L0 }
   query_fence_detail: { id: G42, keywords: ["围栏什么情况", "围栏多大"], slots: [fence], route: fastpath, auth: L0 }
   # -- 18-C 定位/RTK 状态查询 (G43-G47, 全 L0 fastpath) --
   query_rtk_fix: { id: G43, keywords: ["定位状态", "RTK固定", "定位精度", "什么定位", "RTK状态"], slots: [], route: fastpath, auth: L0 }
   query_satellites: { id: G44, keywords: ["几颗卫星", "几颗星", "卫星信号"], slots: [], route: fastpath, auth: L0 }
-  query_heading_status: { id: G45, keywords: ["航向准", "航向有效", "航向状态", "航向能用"], slots: [], route: fastpath, auth: L0 }
-  query_heading_source: { id: G46, keywords: ["航向来源", "航向哪来", "双天线还是航迹"], slots: [], route: fastpath, auth: L0 }
+  query_heading_status: { id: G45, keywords: ["航向准", "航向有效", "航向状态", "航向能用", "航向什么状态"], slots: [], route: fastpath, auth: L0 }
+  query_heading_source: { id: G46, keywords: ["航向来源", "航向哪来", "双天线还是航迹", "航向靠什么"], slots: [], route: fastpath, auth: L0 }
   query_clock_sync: { id: G47, keywords: ["授时同步", "时钟同步", "RTK授时"], slots: [], route: fastpath, auth: L0 }
   # G48 / G49 (2026-11-05, 99 U130): route membership, answered by the PTP
   # rule layer (slots/ptp_slots.py) from state/geo/objects with
@@ -262,7 +262,7 @@ intents:
   query_waypoint_location: { id: G53, keywords: ["那个航点在哪里"], slots: [waypoint], route: fastpath, auth: L0 }
 
   # -- H 系统 (H01/H03 carry auth_by_slot; see header) --
-  run_bit: { id: H01, keywords: ["做个自检", "自检一下", "检查系统", "做个深度自检", "全面检查一遍"], slots: [scope], route: fastpath, auth: L1a, auth_by_slot: { scope: { quick: L1a, deep: L2 } } }
+  run_bit: { id: H01, keywords: ["做个自检", "自检一下", "检查系统", "做个深度自检", "全面检查一遍", "快速自检", "检查一下系统"], slots: [scope], route: fastpath, auth: L1a, auth_by_slot: { scope: { quick: L1a, deep: L2 } } }
   generate_report: { id: H02, keywords: ["报告", "汇报", "说说情况"], slots: [scope, date_range], route: llm, auth: L1a }
   set_time_sync: { id: H03, keywords: ["校时", "同步时间"], slots: [force_step], route: fastpath, auth: L1b, auth_by_slot: { force_step: { false: L1b, true: L2 } } }
   reload_config: { id: H04, keywords: ["重新加载配置", "刷新规则"], slots: [scope], route: fastpath, auth: L2 }
@@ -276,13 +276,13 @@ intents:
   # I02 (99 U111): + "取消", as 18 I02 lists it; the pending command's own
   # keywords are removed before matching, so "取消任务" repeated is not a deny.
   deny: { id: I02, keywords: ["不是", "不", "算了", "不用", "取消"], slots: [], route: fastpath, auth: L0 }
-  repeat: { id: I03, keywords: ["再说一遍", "什么", "没听清"], slots: [], route: fastpath, auth: L0 }
-  cancel_session: { id: I04, keywords: ["没事了", "不用了", "结束对话"], slots: [], route: fastpath, auth: L0 }
-  help: { id: I05, keywords: ["你能做什么", "帮助", "怎么用"], slots: [], route: fastpath, auth: L0 }
+  repeat: { id: I03, keywords: ["再说一遍", "没听清", "再说一次", "重复上一条", "再重复一遍", "再讲一遍", "重复一遍", "再说一下"], slots: [], route: fastpath, auth: L0 }
+  cancel_session: { id: I04, keywords: ["没事了", "不用了", "结束对话", "结束本次对话", "先聊到这里", "不用继续", "没事"], slots: [], route: fastpath, auth: L0 }
+  help: { id: I05, keywords: ["你能做什么", "帮助", "怎么用", "可以做哪些", "做哪些事情", "怎么使用", "哪些指令"], slots: [], route: fastpath, auth: L0 }
   clarify_answer: { id: I06, keywords: [], slots: [pending_slot_value], route: llm, auth: L0 }
 
   # -- J 闲聊 --
-  greeting: { id: J01, keywords: ["你好", "您好", "在吗", "在不在", "嗨", "早上好", "晚上好", "上午好", "中午好", "下午好", "早安", "晚安"], slots: [], route: fastpath, auth: L0 }
-  identity: { id: J02, keywords: ["你是谁", "你叫什么", "你叫什么名字", "你叫啥", "什么型号", "你的型号", "介绍自己", "介绍一下", "自我介绍", "你是什么机器人", "报个名"], slots: [], route: fastpath, auth: L0 }
+  greeting: { id: J01, keywords: ["你好", "您好", "在吗", "在不在", "嗨", "早上好", "晚上好", "上午好", "中午好", "下午好", "早安", "晚安", "hi", "Hi", "hello", "能听见我吗", "听得见吗", "听到吗"], slots: [], route: fastpath, auth: L0 }
+  identity: { id: J02, keywords: ["你是谁", "你叫什么", "你叫什么名字", "你叫啥", "什么型号", "你的型号", "介绍自己", "介绍一下", "自我介绍", "你是什么机器人", "报个名", "介绍你自己", "介绍下你自己"], slots: [], route: fastpath, auth: L0 }
   thanks: { id: J04, keywords: ["谢谢", "谢了", "多谢", "感谢", "辛苦了", "谢谢你"], slots: [], route: fastpath, auth: L0 }
   farewell: { id: J05, keywords: ["再见", "拜拜", "回头见", "下次见", "先这样"], slots: [], route: fastpath, auth: L0 }
