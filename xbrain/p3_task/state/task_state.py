@@ -60,6 +60,8 @@ _STATE_COLUMNS = (
     # 只为 waypoint_total: 航点随命令而来, 冻结在 mission_json 里(见
     # _waypoint_total). NO 不为此加 SELECT *.
     "mission_json",
+    # 99 U199: the words that created the task; P4 names it in "继续 / 取消任务".
+    "command_text",
 )
 
 #: Non-terminal = every state that is not terminal. Derived, not listed: a state
@@ -251,6 +253,9 @@ def suspended_item(row: Mapping[str, Any]) -> Dict[str, Any]:
         "route_id": row.get("route_geo_id"),
         "started_ts": wall_iso_to_epoch(row.get("started_at")),
         "state": row.get("state"),
+        # 99 U199: the words that created it, so "继续 / 取消任务" can say
+        # WHICH task it woke or dropped (a suspended one may be a day old).
+        "command_text": row.get("command_text"),
         # passive = something stopped it (estop, low battery, operator); yielding
         # = it stepped aside for a higher-priority task. The distinction drives
         # auto-resume: only yielding comes back on its own, so showing the pair
