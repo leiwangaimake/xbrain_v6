@@ -140,6 +140,8 @@ def g46_render(heading_source: Optional[str]) -> str:
     if heading_source not in _HEADING_SRC_DESC:
         raise QueryBindingError(
             f"G46 heading_source out of closed set: {heading_source!r}")
+    if heading_source == "none":  # 99 U198: "航向来自 无" read as nonsense
+        return BINDINGS_C["G45"].templates["invalid"]  # "当前没有可用航向"
     return BINDINGS_C["G46"].templates["ok"].format(
         src_desc=_HEADING_SRC_DESC[heading_source])
 

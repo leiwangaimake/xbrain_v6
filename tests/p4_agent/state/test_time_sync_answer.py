@@ -99,10 +99,12 @@ def test_chronyd_down_is_said():
     assert TS["daemon_off"] in got and ON not in got
 
 
-@pytest.mark.parametrize("text", ["强制校时", "强制同步时间", "强行校时"])
+@pytest.mark.parametrize("text", ["强制校时", "强制同步时间", "强行校时", "时间跳过来"])
 def test_forced_sync_says_not_wired(text):
     """MUTATION: drop the force check -> "强制校时" reads the status as if done -> fails."""
-    assert _ans(_cache({"sync": True, "source": "ntp"}), text=text) == _fill("force_unwired", now=NOW_SPOKEN)
+    # 99 U199: not done, then the same status a plain "校时" gives
+    status = _ans(_cache({"sync": True, "source": "ntp"}))  # the plain answer
+    assert _ans(_cache({"sync": True, "source": "ntp"}), text=text) == _fill("force_unwired", status=status)
 
 
 def test_spoken_clock_is_to_the_second_in_the_site_zone():
@@ -161,7 +163,7 @@ def test_forced_time_sync_turn_is_not_wired():
     """"强制校时" reaches H03 and answers force_unwired; nothing is sent."""
     d, spoken, keys, _s = _turn(_orch(StateCache()), "强制校时")
     assert d.intent_id == "H03" and keys == []
-    assert spoken[0].startswith(TS["force_unwired"].split("{now}")[0])  # the not-wired reply
+    assert spoken[0].startswith(TS["force_unwired"].split("{status}")[0])  # the not-wired reply
 
 
 def test_without_system_fn_h03_says_unwired():

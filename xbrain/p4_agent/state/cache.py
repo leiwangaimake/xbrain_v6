@@ -68,6 +68,9 @@ STATE_TOPICS: FrozenSet[str] = frozenset({
     "state/clock",         # p1 mirror of ClockStatus, 1 Hz (P1-13 / CLK-A1)
     # 2026-10-30 (99 U103): G10 / G11 / G13 read p5's record.db summary.
     "state/event/stats",   # p5_gateway, 1 Hz -- event counts per sev (11 S4.7)
+    # 99 U199: the chassis lock (hes_lock / timeout_lock). Without it a locked
+    # chassis answered "好的,前进2米" then "底盘锁定中", and G16 said "允许运动".
+    "state/robot",         # p2_core, 10 Hz -- RobotState (11 S4.1)
 })
 
 

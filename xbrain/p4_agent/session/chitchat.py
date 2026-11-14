@@ -177,7 +177,7 @@ class ChitchatResponder:
         if intent_name == "help":
             state.reset_out_of_scope()
             return self._p["help"]["reply"]
-        if intent_name == "out_of_scope":
+        if intent_name in ("out_of_scope", "out_of_scope_text"):
             state.consecutive_out_of_scope += 1
             if state.consecutive_out_of_scope >= self._threshold:
                 # 18 S12.5: consecutive out_of_scope means the command set
@@ -185,6 +185,11 @@ class ChitchatResponder:
                 # the run so it fires again only after another full streak.
                 state.reset_out_of_scope()
                 return self._p["help"]["reply"]
+            if intent_name == "out_of_scope_text":  # 99 U199: typed text nothing matched
+                # "我只能处理巡逻相关的事情" was untrue for "云台" / "电池" / "云台转到
+                # 30度": they ARE patrol words, just not a command. One line that holds
+                # for every case: not understood, not done, and how to find out more.
+                return self._p["out_of_scope"].get("text_reply") or self._p["out_of_scope"]["reply"]
             return self._p["out_of_scope"]["reply"]
         raise ChitchatPresetError(
             "intent %r is not a chitchat-family intent (greeting/identity/"

@@ -121,6 +121,7 @@ from xbrain.p4_agent.runtime.system_request import (
 )
 from xbrain.p4_agent.runtime.task_control_request import (
     TaskControlError,
+    control_target,  # 99 U199: name the task in the ack
     current_task_from_state,
     is_task_control_intent,
     to_task_control_command,
@@ -147,6 +148,9 @@ from xbrain.p4_agent.safety_bypass import matcher as bypass_matcher
 from xbrain.p4_agent.safety_bypass import recording_gate
 from xbrain.p4_agent.session.chitchat import ChitchatResponder, ChitchatState
 from xbrain.p4_agent.state.mode_switch_answer import mode_switch_answer  # C08 (field test 2026-11-14)
+from xbrain.p4_agent.state.mode_switch_answer import mode_precheck  # 99 U199: C01-C05
+from xbrain.p4_agent.state.mode_switch_answer import payload_precheck  # 99 U199: D class
+from xbrain.p4_agent.state.chassis_lock import chassis_locked  # 99 U199: A class
 
 # Spoken wording for the F-class build failures. Hot-tunable phrasing, ASCII
 # punctuation per CLAUDE.md 2.2; the keys are the English reasons the builders
@@ -248,6 +252,10 @@ _PTP_CN = {
     "where_off_routes": "{name}不在任何路径上{dist}",
     "where_route": "{name}离你最近约{dist}米",
     "no_pose": "现在拿不到定位, 算不出距离",
+    # 99 U198
+    # 99 U199: also answers "到那里要多久" -- say both, not only distance
+    "distance_no_target": "没有说去哪里, 算不出距离和时间. 可以这样问: 去1号测试点多远",
+    "past_ampm": "今天这个时刻已经过了. 如果是下午或晚上, 请带上下午或晚上再说一遍",
 }
 
 #: 99 U133 recording replies (ASCII punctuation, Chinese words). {name} is the
@@ -259,7 +267,10 @@ _REC_CN = {
     "fence_type": ("围栏名字里要说明类型: 活动区域, 报警区域, 限速区域或禁止区域, "
                    "比如: 现在开始录制营区活动区域围栏"),
     "taken": "已经有叫{name}的{what}了, 请换个名字再录制",
-    "ack_start": "好的,开始录制{name}. 请用键盘控制机器人移动, 说退出录制结束并保存",
+    # 99 U198: the arming checks run AFTER this line, so it must not claim the
+    # recording has started ("好的,开始录制X" then "现在不能开始录制: ..." read as
+    # a contradiction). The started line comes with the ack (ack_speech).
+    "ack_start": "好的,准备开始录制{name}",
     "busy_start": "正在录制{name}, 不能开始新的录制. 要结束请说退出录制",
     "busy": "正在录制{name}, 录制期间只能用键盘控制机器人. 要结束请说退出录制",
     "ack_exit": "好的,退出录制, 正在保存{name}",
@@ -694,7 +705,10 @@ _UNWIRED_SYSTEM = frozenset({"H01", "H02", "H04", "H05", "H06", "H07", "H08"})
 #: B10 skip_waypoint was here until 2026-11-05: the user ruled it out of
 #: scope ("不支持, 不需要实现, 删除", 99 U129) and the intent itself was removed
 #: from the registry, so there is nothing left to answer as "not connected".
-_UNWIRED_ACTIONS = frozenset({"A13"})
+#: 99 U198 (field run 2026-11-14): A14 / C06 / D03 / D04 / D05 / D11 / D12 / D13
+#: answered "收到 / 好的" while P2 or P3 dropped them ("not in the p2 handled
+#: set", "no contract action"). Until an executor exists they say so.
+_UNWIRED_ACTIONS = frozenset({"A13", "A14", "C06", "D03", "D04", "D05", "D11", "D12", "D13"})
 
 #: Level intents whose adjustment an elliptical phrase may continue (D10
 #: volume, D17 brightness), and the phrases that name no device. 2026-10-30.
@@ -706,6 +720,159 @@ _ELLIPTICAL_LEVELS = frozenset({
 #: Reply for a G query in a build with no query_fn (smoke / tests). Production
 #: answers every G id from query_templates.yaml (state/status_answers.py).
 _G_NO_QUERY_FN = "这项查询还没有接通数据,暂时答不了"
+
+# -- 99 U198 (field run 2026-11-14): replies that say what was understood ---------
+
+#: F10 with no name: the generic keypoint line says "某某点", which is not what
+#: a charging point is called.
+#: 99 U198: pause looks at the running task only; cancel also at the latest
+#: suspended one, so "现在没有正在执行的任务" undersold what cancel checked.
+_NO_TASK_FOR = {"pause_task": "现在没有正在执行的任务, 没有可暂停的",
+                "cancel_task": "现在没有正在执行或挂起的任务, 没有可取消的"}
+#: 99 U199: the motion intents that move the body; hold / resume are accepted
+#: by P1 while locked (live run: "在原地等着" -> "好的,原地待命").
+_MOVES = frozenset({"move_forward", "move_backward", "move_left", "move_right",
+                    "turn_left", "turn_right", "turn_around", "face_heading",
+                    "move_heading"})
+_LOCKED_NO_MOVE = "底盘锁定中, 请先解锁, 这个动作没有执行"  # 99 U199
+_DOCK_NEEDS_NAME = "没有说充电站的名字,没有记录.请说:把这里记为1号充电站"
+#: F03 / F09 are checked before the LLM (see _dispatch_entry).
+_SAVE_INTENTS = frozenset({"record_route_save", "record_fence_save"})
+#: The name after 保存为 / 命名为 / 名字叫 / 叫做 / 叫, up to the end.
+_SAVE_NAME_RE = re.compile(r"(?:保存为|命名为|名字叫|叫做|叫)(?P<n>[^\s,.!?]{2,12})")
+#: (action, something running) -> the restatement of a task control (U198):
+#: with nothing running, cancel acts on the latest suspended task.
+_TASK_ACK = {("pause", True): "好的,暂停当前任务", ("pause", False): "好的,暂停当前任务",
+             ("resume", True): "好的,继续最近挂起的任务", ("resume", False): "好的,继续最近挂起的任务",
+             ("cancel", True): "好的,取消当前任务", ("cancel", False): "好的,取消最近挂起的任务"}
+#: Whole-sentence confirm / deny words (I01 / I02); see _early_refusal.
+_BARE_CONFIRM = frozenset({"是", "是的", "对", "对的", "确认", "好的", "好", "可以", "行", "覆盖"})
+_BARE_DENY = frozenset({"不", "不是", "不对", "算了", "不用", "不要", "取消"})
+#: "重命名X" / "给X改个名" / "把X改名" with no new name.
+_RENAME_NO_NEW_RE = re.compile(r"^(?:请|麻烦|帮我)?(?:给|把|将)?(?P<x>.{0,14}?)"
+                               r"(?:重新命名|重命名|改个名字|改个名|改名字|改名)(?:一下)?$")
+_RENAME_HEAD_RE = re.compile(r"^(?:请|麻烦|帮我)?重命名(?P<x>.{1,14})$")
+_RENAME_NO_NEW = "没有说新名字,没有改名.请说:把{name}改名为新的名字"
+#: "三天后" -- beyond the one-day bound of a relative time (16 S8.0.4).
+_DAYS_LATER_RE = re.compile(r"(?:\d+|[一二两三四五六七八九十]+)天(?:后|之后|以后)")
+_TIMED_VERBS = ("去", "巡逻", "返航", "回来", "充电", "回桩", "前往", "导航")
+#: Words that already say which half of the day a clock time is in.
+_DAY_PART_WORDS = ("上午", "早上", "凌晨", "中午", "下午", "晚上", "今晚", "傍晚", "明天", "后天", "明早")
+_CN_DIGITS = {"一": 1, "二": 2, "两": 2, "三": 3, "四": 4, "五": 5, "六": 6, "七": 7, "八": 8,
+              "九": 9, "十": 10}
+_PRESET_NO_RE = re.compile(r"第(?P<n>\d+|[一二两三四五六七八九十])条")
+#: Restatement words (_restate).
+_MOVE_CN = {"A05": "前进", "A06": "后退", "A07": "左移", "A08": "右移"}
+_TURN_CN = {"A09": "左转", "A10": "右转"}
+_HEADING_CN = {"north": "正北", "northeast": "东北", "east": "正东", "southeast": "东南",
+               "south": "正南", "southwest": "西南", "west": "正西", "northwest": "西北"}
+_MODE_ACK = {"C01": "好的,进入报警模式", "C02": "好的,退出报警模式", "C03": "好的,进入喊话模式",
+             # 99 U199 B12: P4 cannot see whether a follow is on (P2 does not
+             # publish it), so the words are true either way.
+             "C04": "好的,退出喊话模式", "C05": "好的,进入巡逻模式", "B12": "好的,不再跟随",
+             "F05": "好的,加一个点"}
+_LIGHT_CN = {"up": "调亮一些", "down": "调暗一些", "max": "调到最亮", "min": "调到最暗",
+             "mid": "调到中等亮度", "low": "调暗一些"}
+_PTZ_DIR_CN = {"left": "向左", "right": "向右", "up": "向上", "down": "向下"}
+_PTZ_AMOUNT_CN = {"small": "一点", "normal": "", "large": "多一些"}
+_ZOOM_CN = {"in": "放大", "out": "缩小"}
+_PTZ_SPEED_CN = {"fast": "调到最快", "slow": "调到最慢", "up": "调快一档", "down": "调慢一档",
+                 "normal": "恢复正常"}
+
+
+def _task_words(item: Any) -> str:
+    """99 U199: what the operator said for a task (state/task command_text)."""
+    text = item.get("command_text") if isinstance(item, dict) else None  # P3 field
+    return text.strip()[:24] if isinstance(text, str) and text.strip() else ""  # capped
+
+
+def _num_cn(v: Any) -> str:
+    """A spoken number: 0.5 -> "0.5", 2.0 -> "2"."""
+    return "%g" % round(float(v), 2)
+
+
+def _bare_morning(when: Any, text: str) -> bool:
+    """True when a clock time before noon was said with no day-part word
+    ("3点" at 13:00): the refusal then says how to name the afternoon."""
+    at = getattr(when, "at_local", None)  # "HH:MM" or None
+    if not isinstance(at, str) or ":" not in at:
+        return False  # a relative time
+    return int(at.split(":")[0]) < 12 and not any(w in text for w in _DAY_PART_WORDS)
+
+
+def _rename_no_new(text: str) -> Optional[str]:
+    """The object of a rename that names no new name, or None."""
+    if "为" in text or "成" in text or "叫" in text:  # a new name follows
+        return None
+    m = _RENAME_HEAD_RE.match(text) or _RENAME_NO_NEW_RE.match(text)  # either word order
+    return (m.group("x") or "X") if m else None
+
+
+def _presets_answer(presets: tuple) -> str:
+    """G31: the preset library read out, or that there is none."""
+    if not presets:
+        return "现在没有配置预设语句"
+    items = ";".join("第%d条,%s" % (i, t) for i, t in enumerate(presets, 1))
+    return "可以喊%d条预设语句:%s" % (len(presets), items)
+
+
+def _preset_pick(text: str, presets: tuple) -> Any:
+    """D08: (number, preset text), or a refusal sentence."""
+    if not presets:
+        return "现在没有配置预设语句,没有喊话"
+    m = _PRESET_NO_RE.search(text)  # "喊第二条"
+    raw = m.group("n") if m else "1"  # the first by default
+    idx = int(raw) if raw.isdigit() else _CN_DIGITS.get(raw, 0)
+    if not 1 <= idx <= len(presets):
+        return "预设语句只有第1到第%d条,没有喊话" % len(presets)
+    return idx, presets[idx - 1]
+
+
+def _restate(intent_id: str, slots: Mapping[str, Any], text: str) -> Optional[str]:
+    """99 U198: the restatement with what was understood ("好的,前进0.5米"),
+    or None for the plain label. Values come from the parsed slots only."""
+    if intent_id in _MODE_ACK:
+        return _MODE_ACK[intent_id]
+    if intent_id in _MOVE_CN and slots.get("distance_m") is not None:
+        return "好的,%s%s米" % (_MOVE_CN[intent_id], _num_cn(slots["distance_m"]))
+    if intent_id in _TURN_CN and slots.get("angle_deg") is not None:
+        return "好的,%s%s度" % (_TURN_CN[intent_id], _num_cn(slots["angle_deg"]))
+    heading = _HEADING_CN.get(str(slots.get("heading")))
+    if intent_id == "A12" and heading:
+        return "好的,转向%s" % heading
+    if intent_id == "A17" and heading and slots.get("distance_m") is not None:
+        return "好的,向%s走%s米" % (heading, _num_cn(slots["distance_m"]))
+    if intent_id == "B04":  # 99 U199: the keyword leg ("接着巡") said "收到"
+        rt = bool(slots.get("round_trip"))  # P3 takes 1 lap when none was said
+        return _PTP_CN["ack_repeat"].format(when="", how=_laps_cn(slots.get("loops") or 1, rt))
+    if intent_id == "D10" and isinstance(slots.get("volume"), Mapping):
+        vol = slots["volume"]
+        if "abs" in vol:
+            asked = [int(n) for n in re.findall(r"\d+", text)]
+            if any(n > 100 for n in asked):  # "音量调到200": clamped, said so
+                return "音量最大是100,已调到100"
+            return "好的,静音" if vol["abs"] == 0 else "好的,音量调到%d" % vol["abs"]
+        return "好的,音量调大一些" if vol.get("rel", 0) > 0 else "好的,音量调小一些"
+    if intent_id == "D17" and slots.get("level") in _LIGHT_CN:
+        return "好的,照明%s" % _LIGHT_CN[slots["level"]]
+    if intent_id == "D18":
+        mode = slots.get("mode")
+        return ("好的,警示灯换成第%d种闪法" % mode) if isinstance(mode, int) else "好的,警示灯换一种闪法"
+    if intent_id == "E01" and slots.get("direction") in _PTZ_DIR_CN:
+        return "好的,云台%s转%s" % (_PTZ_DIR_CN[slots["direction"]],
+                                _PTZ_AMOUNT_CN.get(str(slots.get("amount")), ""))
+    if intent_id == "E06" and slots.get("zoom_dir") in _ZOOM_CN:
+        return "好的,云台%s%s" % (_ZOOM_CN[slots["zoom_dir"]],
+                              _PTZ_AMOUNT_CN.get(str(slots.get("amount")), ""))
+    if intent_id == "E07":
+        if slots.get("scan_mode") == "sweep":
+            return "好的,云台左右扫描一遍"
+        return "好的,云台%s环视一周" % _PTZ_DIR_CN.get(str(slots.get("direction")), "")
+    if intent_id == "E09" and slots.get("level") in _PTZ_SPEED_CN:
+        return "好的,云台转速%s" % _PTZ_SPEED_CN[slots["level"]]
+    if intent_id in ("F03", "F09") and isinstance(slots.get("name"), str):
+        return "好的,保存为%s" % slots["name"]
+    return None  # the plain label
 
 #: Field test 2026-11-14: "什么" was an I03 keyword, and as a substring it
 #: turned every question holding it ("现在是什么模式", "前方有什么目标",
@@ -762,6 +929,10 @@ def _ptz_limit(intent_id: str, text: str, slots: Dict[str, Any]) -> Optional[str
         return None if slots.get("level") else "ptz_speed_no_level"
     if intent_id == "E01" and not slots.get("direction"):  # "云台微调"
         return "ptz_move_no_direction"
+    if intent_id == "D10" and not slots.get("volume"):  # 99 U198 "把喇叭拆了"
+        return "volume_no_level"
+    if intent_id == "D17" and not slots.get("level"):  # 99 U198
+        return "brightness_no_level"
     return None  # not a PTZ command, or complete
 
 
@@ -807,7 +978,12 @@ class TurnOrchestrator:
         site_timezone: Optional[str] = None,
         membership_fn: Optional[Callable[[str, str, Any], Any]] = None,
         geo_query_fn: Optional[Callable[..., Any]] = None,
+        # 99 U198: configs/speech_presets.yaml texts, in order (D08 plays one,
+        # G31 lists them). Empty = none configured: D08 / G31 say so.
+        speech_presets: Optional[tuple] = None,
     ) -> None:
+        self._speech_presets = tuple(speech_presets or ())  # preset texts
+        self._turn_text = ""  # the turn's words, set per turn (_restate)
         self._registry = registry
         self._matcher = matcher or KeywordMatcher(registry)
         self._chitchat = chitchat
@@ -935,8 +1111,15 @@ class TurnOrchestrator:
         self._turn_t_first = (now_mono_ms if t_first_word is None
                               else t_first_word)
         self._turn_ptp_ack = None
+        self._turn_text = text or ""  # 99 U198: _restate reads the words
         decision = self._handle_turn(text, session, now_mono_ms, raw_text,
                                      addressed)
+        if decision.kind == "denied" and not decision.tts_text and modality == "text":
+            # 99 U198: typed text was received exactly, so "没太听清" (the voice
+            # line) is the wrong answer; say what the robot does instead.
+            # 99 U199: the text_reply variant -- see ChitchatResponder.respond.
+            spoken = self._chitchat.respond("out_of_scope_text", session.chitchat)
+            decision.reply_text = decision.tts_text = spoken
         decision.channel = channel  # every branch, one place
         return decision
 
@@ -1021,6 +1204,9 @@ class TurnOrchestrator:
         # keyword MISSES for PTZ (E) and payload (D) so a slightly-reworded
         # command ("云台朝左", "把照明灯搞亮点") still resolves. It runs only
         # when layer 2 missed, so exact keywords are never overridden.
+        early = self._early_refusal(text, addressed)  # 99 U198, see there
+        if early is not None:
+            return early
         if text.rstrip(_TAIL_PARTICLES) in _BARE_REPEAT:  # see _BARE_REPEAT
             return self._route_entry(self._registry.by_id("I03"), text, session,
                                      now_mono_ms, layer="bare_repeat")
@@ -1048,6 +1234,40 @@ class TurnOrchestrator:
                                  layer=result.layer)
 
     # -- recording mode (99 U133) ---------------------------------------
+
+    def _early_refusal(self, text: str, addressed: bool) -> Optional[TurnDecision]:
+        """99 U198: sentences that need an answer before classification.
+
+        * a bare "是 / 好的 / 不 / 算了" (addressed only: a bystander's "是" stays
+          silent) -> I01 / I02 "现在没有需要确认的操作": it got no reply or
+          "没太听清";
+        * "重命名X" / "给X改个名" with no new name -> say what is missing
+          (the LLM built a rename with no target name);
+        * "N天后去 / 巡逻 / 返航 ..." -> the 1-day bound (it fell to B03 and
+          answered "没找到你说的那条路径").
+        """
+        bare = text.rstrip(_TAIL_PARTICLES)  # particles trimmed
+        if addressed and (bare in _BARE_CONFIRM or bare in _BARE_DENY):
+            iid = "I01" if bare in _BARE_CONFIRM else "I02"  # confirm / deny
+            entry = self._registry.by_id(iid)
+            spoken = self._chitchat.session_reply("no_pending_confirm")
+            return TurnDecision(kind="reply", intent_id=entry.id, intent_name=entry.name,
+                                route=entry.route, auth=entry.auth, layer="bare_confirm",
+                                reply_text=spoken, tts_text=spoken)
+        target = _rename_no_new(bare)  # rename with no new name
+        if target is not None:
+            entry = self._registry.by_id("F14")
+            spoken = _RENAME_NO_NEW.format(name=target)
+            return TurnDecision(kind="reply", intent_id=entry.id, intent_name=entry.name,
+                                route=entry.route, auth=entry.auth, layer="ptp_rule",
+                                reply_text=spoken, tts_text=spoken)
+        if _DAYS_LATER_RE.search(bare) and any(v in bare for v in _TIMED_VERBS):
+            entry = self._registry.by_id("B01")
+            spoken = _PTP_CN["too_far"]
+            return TurnDecision(kind="reply", intent_id=entry.id, intent_name=entry.name,
+                                route=entry.route, auth=entry.auth, layer="ptp_rule",
+                                reply_text=spoken, tts_text=spoken)
+        return None  # nothing to say early
 
     def _recording(self) -> Optional[Dict[str, Any]]:
         """The open recording session from state/teach when it is in
@@ -1242,6 +1462,38 @@ class TurnOrchestrator:
                 route=entry.route, auth=entry.auth, layer=layer,
                 reply_text=answer, tts_text=answer)
 
+        if entry.id in ("C01", "C02", "C03", "C04", "C05"):
+            # 99 U199: live run 2026-11-14 -- "退出报警" in idle answered "好的,
+            # 退出报警模式", and "报警模式" with the siren down said "好的,进入
+            # 报警模式" and then "没有成功". What state/mode and health/summary
+            # already show is answered here and nothing is sent.
+            state = self._state_fn() if self._state_fn else {}
+            answer = mode_precheck(entry.name, state)
+            if answer:
+                return TurnDecision(
+                    kind="reply", intent_id=entry.id, intent_name=entry.name,
+                    route=entry.route, auth=entry.auth, layer=layer,
+                    reply_text=answer, tts_text=answer)
+
+        if entry.id.startswith("D"):
+            # 99 U199: a command whose device health/summary reports down is not answered "好的".
+            state = self._state_fn() if self._state_fn else {}
+            answer = payload_precheck(entry.id, state)
+            if answer:
+                return TurnDecision(
+                    kind="reply", intent_id=entry.id, intent_name=entry.name,
+                    route=entry.route, auth=entry.auth, layer=layer,
+                    reply_text=answer, tts_text=answer)
+
+        if entry.id == "G31":
+            # 99 U198: the preset library is a config file P4 now holds, so the
+            # question has a real answer (it said "还没有接到语音查询").
+            answer = _presets_answer(self._speech_presets)
+            return TurnDecision(
+                kind="reply", intent_id=entry.id, intent_name=entry.name,
+                route=entry.route, auth=entry.auth, layer=layer,
+                reply_text=answer, tts_text=answer)
+
         if entry.id[:1] == "G":
             answer = self._query_fn(entry) if self._query_fn is not None else None
             if answer is None:
@@ -1259,6 +1511,10 @@ class TurnOrchestrator:
         # dispatched), and the envelope says L1a because no confirm happened.
         # L2 stays in the registry for the HMI, where it is a button confirm.
         eff_auth = "L1a" if entry.auth == "L2" else entry.auth
+        if entry.id == "C07":
+            # 99 U198: "跟着目标走" is a follow behaviour; B11 follow needs cloud
+            # approval (L3), so the mode-command door must not be a way round it.
+            eff_auth = "L3"
         if eff_auth == "L3":
             # Cloud approval flow (GWY-P4-38 hand-off to P5). Not dispatched
             # until the cloud confirm_token arrives.
@@ -1287,6 +1543,8 @@ class TurnOrchestrator:
         def _reply(intent_id: str, key: str, **fmt) -> TurnDecision:
             entry = self._registry.by_id(intent_id)
             spoken = _PTP_CN[key].format(**fmt)
+            if key == "past" and _bare_morning(ptp.when, text):  # 99 U198
+                spoken = _PTP_CN["past_ampm"]  # "3点" said at 13:00
             return TurnDecision(kind="reply", intent_id=entry.id,
                                 intent_name=entry.name, route=entry.route,
                                 auth=entry.auth, layer="ptp_rule",
@@ -1565,6 +1823,8 @@ class TurnOrchestrator:
         state/geo/objects, state/pose and state/mode. No geo_query_fn (tests /
         tools) answers "not loaded", never a guess."""
         intent = _GEO_QUERY_IDS[ptp.kind]
+        if ptp.kind == "distance_to" and not ptp.name:  # 99 U198: "去那里有多远"
+            return reply(intent, "distance_no_target")
         if self._geo_query_fn is None:  # not configured
             return reply(intent, "geo_unloaded")
         state = self._state_fn() if self._state_fn else {}
@@ -1591,7 +1851,8 @@ class TurnOrchestrator:
         # the LLM and without a follow-up question.
         if (entry.name in _CAPTURE_INTENTS and llm_slots is None
                 and not _said_after_keyword(entry, text)):
-            spoken = _F_REASON_CN["a keypoint needs a name"]
+            spoken = (_DOCK_NEEDS_NAME if entry.name == "record_dock"  # 99 U198
+                      else _F_REASON_CN["a keypoint needs a name"])
             # 2026-11-12: "denied" -> verdict rejected, as U165 made every
             # recording refusal; nothing goes to P3, so no teach_result follows.
             return TurnDecision(kind="denied", intent_id=entry.id,
@@ -1599,6 +1860,23 @@ class TurnOrchestrator:
                                 auth=eff_auth, level=eff_auth, layer=layer,
                                 reply_text=spoken, tts_text=spoken)
         # A rule-parsed command (rule_slots, 99 U110) has its slots already.
+        if entry.name in _SAVE_INTENTS and llm_slots is None and not rule_slots:
+            # 99 U198: "保存围栏" with no name went to the LLM, which found
+            # nothing, and the operator heard "没太听清". Checked here: no open
+            # session -> say so; no name after 保存为 / 命名为 -> say how.
+            st = self._state_fn() if self._state_fn else {}
+            if session_id_from_state(st.get("state/teach")) is None:
+                spoken = _F_REASON_CN["no recording session is open"]
+            else:
+                said = _SAVE_NAME_RE.search(text)
+                spoken = None if said else _F_REASON_CN["save needs a name"]
+                if said:
+                    rule_slots = {"name": said.group("n")}  # complete: no LLM
+            if spoken is not None:
+                return TurnDecision(kind="reply", intent_id=entry.id,
+                                    intent_name=entry.name, route=entry.route,
+                                    auth=eff_auth, level=eff_auth, layer=layer,
+                                    reply_text=spoken, tts_text=spoken)
         if entry.route == "llm" and llm_slots is None and not rule_slots:
             classified = self._tier2(text, session, now_mono_ms)
             llm_used = True
@@ -1720,6 +1998,7 @@ class TurnOrchestrator:
                 # resume on cmd/motion/intent. P2 releases only the operator's
                 # own hold and refuses a mode's (E_BUSY mode_hold).
                 release_hold = True
+                self._turn_ptp_ack = "好的,解除原地待命"  # 99 U198: what "继续" did here
                 extra = {**(extra or {}), "motion_intent": to_motion_intent(
                     "resume", slots={}, cmd_id="mi-" + uuid.uuid4().hex[:12],
                     turn_id="vt-" + uuid.uuid4().hex[:12],
@@ -1752,6 +2031,8 @@ class TurnOrchestrator:
             except TaskControlError as exc:
                 spoken = _TASK_CONTROL_CN.get(
                     str(exc), "现在没有可以操作的任务")
+                if str(exc) == "no_active_task":  # 99 U198: say what each verb looked for
+                    spoken = _NO_TASK_FOR.get(entry.name, spoken)
                 return TurnDecision(kind="reply", intent_id=entry.id,
                                     intent_name=entry.name, route=entry.route,
                                     auth=eff_auth, level=eff_auth, layer=layer,
@@ -1760,6 +2041,13 @@ class TurnOrchestrator:
                                     prompt_assembled=llm_used)
             if tc is not None:
                 extra = {**(extra or {}), "task_command": tc}
+                # 99 U198: say WHICH task: with nothing running, cancel acts on
+                # the latest suspended task, and resume always does.
+                running = current_task_from_state(_state) is not None
+                self._turn_ptp_ack = _TASK_ACK[(tc.get("action"), running)]
+                said = _task_words(control_target(tc.get("action"), _state))  # 99 U199
+                if said:  # name it: "继续" may wake a task from yesterday
+                    self._turn_ptp_ack += ":" + said
         # 18 A class -> 11 S9.3.2A.3 MotionIntent for cmd/motion/intent
         # (2026-08-21). The routing already pointed at this key, but P4 sent
         # its own p4_intent_v1 envelope -- no data wrapper, no intent/slots/
@@ -1781,6 +2069,18 @@ class TurnOrchestrator:
                                     reply_text=spoken, tts_text=spoken,
                                     llm_used=llm_used,
                                     prompt_assembled=llm_used)
+            if mi is not None and entry.name in _MOVES:
+                # 99 U199: a chassis known to be locked is answered here, once,
+                # instead of "好的,前进2米" and then the executor's refusal.
+                # Unknown (no recent state/robot) sends, and P1 / P2 decide.
+                _st = self._state_fn() if self._state_fn else {}
+                if chassis_locked(_st.get("state/robot")) is True:
+                    return TurnDecision(kind="reply", intent_id=entry.id,
+                                        intent_name=entry.name, route=entry.route,
+                                        auth=eff_auth, level=eff_auth, layer=layer,
+                                        reply_text=_LOCKED_NO_MOVE,
+                                        tts_text=_LOCKED_NO_MOVE,
+                                        llm_used=llm_used, prompt_assembled=llm_used)
             if mi is not None:
                 extra = {**(extra or {}), "motion_intent": mi}
         # 18 C class -> 11 S7.3 ModeCommand for cmd/mode (2026-08-21). Before
@@ -1828,7 +2128,19 @@ class TurnOrchestrator:
                                     prompt_assembled=llm_used)
         # Build the envelope (EV-1..7) and dispatch.
         env = self._build_envelope(entry, eff_auth, slots=dict(extra))
-        result = dispatch(entry.id, text, extra or None)
+        spoken_text = text  # what a speak-family frame carries
+        if entry.id == "D08":
+            # 99 U198: the frame's text is what P2 speaks; it carried the
+            # command words ("喊话") instead of the preset (field run 11-14).
+            pick = _preset_pick(text, self._speech_presets)
+            if isinstance(pick, str):  # a refusal sentence
+                return TurnDecision(kind="reply", intent_id=entry.id,
+                                    intent_name=entry.name, route=entry.route,
+                                    auth=eff_auth, level=eff_auth, layer=layer,
+                                    reply_text=pick, tts_text=pick)
+            idx, spoken_text = pick  # 1-based number, preset text
+            self._turn_ptp_ack = "好的,喊第%d条预设语句" % idx
+        result = dispatch(entry.id, spoken_text, extra or None)
         if release_hold:
             # B06 is a B-class id (cmd/task); its hold release is a motion frame.
             result = DispatchResult(intent_id=result.intent_id,
@@ -2082,7 +2394,9 @@ class TurnOrchestrator:
         )
 
     def _approval_prompt(self, entry: IntentEntry) -> str:
-        return "该操作需要云端审批,已上报等待批准"
+        # 99 U198: nothing is sent anywhere on this branch (decision_to_publishes
+        # only speaks), so "已上报等待批准" was untrue.
+        return "这个操作需要云端审批,语音和文本不能直接执行,没有执行"
 
     def _dispatch_ack(self, entry: IntentEntry,
                       extra: Optional[Dict[str, Any]] = None) -> str:
@@ -2106,5 +2420,8 @@ class TurnOrchestrator:
             label = _MOVE_SPEED_LABELS.get(level)
             if label:
                 return "好的," + label
+        said = _restate(entry.id, extra or {}, self._turn_text)  # 99 U198 values
+        if said:
+            return said
         label = _CN_LABELS.get(entry.id)
         return ("好的," + label) if label else "收到"

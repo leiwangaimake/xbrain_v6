@@ -106,7 +106,7 @@ _DEL_BACK = re.compile(r"^(?:把|将)(?:航点|点位|关键点)?(?P<x>.+?)"
 #: Rename: the verb must say 名 -- "改名为 / 更名为 / 重命名为 / 名字改成 ...".
 _RENAME = re.compile(r"^(?:把|将)?(?:航点|点位|关键点)?(?P<old>.+?)(?:这个点)?"
                      r"(?:的名字改为|的名字改成|的名字改叫|名字改为|名字改成"  # only verbs that say 名
-                     r"|改名为|改名成|改名叫|更名为|重命名为)(?P<new>.+?)(?:吧|了)*$")  # the new name last
+                     r"|改名为|改名成|改名叫|更名为|重命名为|改叫)(?P<new>.+?)(?:吧|了)*$")  # the new name last; 改叫: 99 U198 (18 S3.8 lists it)
 
 #: Trailing filler after a goto object ("去1号测试点一趟吧").
 _GOTO_TAIL = ("那里", "那边", "那儿", "一趟", "一下", "看看", "去", "吧", "呀",
@@ -179,6 +179,12 @@ _Q_WHERE = re.compile(r"^(?:查询|查一下|请问|告诉我)?(?P<x>.+?)(?:在�
 #: G23 answers ("充电桩在哪" lists every charging point).
 _WHERE_NOT_OURS = frozenset({"我", "你", "我们", "机器人", "机器狗", "你现在", "我现在", "现在",
                              "充电桩", "充电站"})
+
+
+#: 99 U198: words that end up as X of "去X / 到X" or "离X多远" but name no
+#: place: a light or volume level ("开到最亮") or the fence boundary.
+_NOT_A_PLACE = frozenset({"最亮", "最暗", "最大", "最小", "最高", "最低", "一半", "中等",
+                          "边界", "围栏边界", "围栏"})
 
 
 def _asks_own_position(x: str) -> bool:
@@ -487,6 +493,10 @@ def parse_ptp(text: str) -> Optional[PtpParse]:
         if when is None and _Q_NEAREST.match(t):  # G50 (U136)
             return PtpParse("nearest_point", "")  # the robot's nearest keypoint
         m = _Q_DISTANCE.match(t)  # G51 (U136), before goto: "去X多远" is not a goto
+        if m and when is None and m.group("x") in _DEICTIC:  # 99 U198 "去那里有多远"
+            return PtpParse("distance_to", "")  # no place named: answered as such
+        if m and when is None and m.group("x") in _NOT_A_PLACE:  # 99 U198 "离边界还有多远"
+            return None  # the fence question (G41), not a goto or a distance
         if m and when is None and m.group("x") not in _DEICTIC:  # a named place
             return PtpParse("distance_to", _head(m.group("x")))  # how far to X
         m = _Q_LENGTH.match(t)  # G52 (U136)
@@ -505,6 +515,8 @@ def parse_ptp(text: str) -> Optional[PtpParse]:
             name = _head(_trim(m.group("x"), _GOTO_TAIL))  # destination without filler or type word
             if is_dock_name(name) and name not in DOCK_NAME_KEYWORDS:  # "1号充电站", not bare "充电站"
                 return PtpParse("dock", name, when=when)  # U128: B09 with a name
+            if name in _NOT_A_PLACE:  # 99 U198: "开到最亮" is the searchlight
+                return None  # D17 / D10, classified normally
             if (_keypoint(name) and name not in _DEICTIC  # named, not 这里 / 那边
                     and not any(q in name for q in _QUESTION)):
                 return PtpParse("goto", name, when=when)  # a named place

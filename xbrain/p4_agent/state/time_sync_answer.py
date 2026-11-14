@@ -56,7 +56,7 @@ from xbrain.p4_agent.templates.query_engine import render_reply  # 16 S8.2 step 
 SOURCE_NAMES = {"ntp": "NTP", "rtk": "RTK 授时", "rtc": "本机实时时钟"}  # spoken labels
 
 #: Words that mark a forced time sync (force_step: a wall-clock step).
-FORCE_WORDS = ("强制", "强行")  # "强制校时" / "强行校时"
+FORCE_WORDS = ("强制", "强行", "跳过来")  # "强制校时" / "强行校时" / "时间跳过来" (99 U199)
 
 TEMPLATE = "time_sync"  # configs/query_templates.yaml block name
 
@@ -108,7 +108,12 @@ def time_sync_answer(cache: StateCache, templates: Mapping, text: str, now_mono_
     """The H03 reply: sync status + chronyd clause + current time; forced -> not wired."""
     values = {"now": spoken_clock(now_fn(), tz_name)}  # the time, always spoken
     if any(w in text for w in FORCE_WORDS):  # a wall-clock step was asked for
-        return QueryAnswer(False, render_reply(templates, TEMPLATE, "force_unwired", values))  # not wired
+        # 99 U199: "强行对时" said only "not wired" while "时间跳过来" said
+        # "已同步" -- one request, two stories. Now: not done, plus the real state.
+        plain = time_sync_answer(cache, templates, "", now_mono_ms, max_age_ms=max_age_ms,
+                                 tz_name=tz_name, now_fn=now_fn, daemon_fn=daemon_fn)  # status
+        return QueryAnswer(False, render_reply(templates, TEMPLATE, "force_unwired",
+                                               {"status": plain.text}))  # not wired + state
     values["daemon"] = render_reply(templates, TEMPLATE,  # the chronyd clause
                                     "daemon_on" if daemon_fn() else "daemon_off", {})  # read, not assumed
     d = _clock(cache, now_mono_ms, max_age_ms)  # rtk_driver's judgment, via p1

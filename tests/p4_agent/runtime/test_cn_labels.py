@@ -67,13 +67,14 @@ def test_no_label_is_another_intent_s_keyword():
 
 
 @pytest.mark.parametrize("text,ack", [
-    ("前进三米", "好的,前进"),      # A05, was "好的,站起来"
-    ("后退半米", "好的,后退"),      # A06, was "好的,趴下"
-    ("左转九十度", "好的,左转"),    # A09, was the generic "收到"
-    ("朝北", "好的,调整朝向"),      # A12, heading read since 2026-10-26
+    ("前进三米", "好的,前进3米"),      # A05, was "好的,站起来"; 99 U198 says the value
+    ("后退半米", "好的,后退0.5米"),    # A06, was "好的,趴下"
+    ("左转九十度", "好的,左转90度"),  # A09, was the generic "收到"
+    ("朝北", "好的,转向正北"),        # A12, heading read since 2026-10-26
 ])
 def test_a_motion_command_is_acknowledged_with_its_own_action(text, ack):
-    """The spoken ack names the action, and carries no requested number."""
+    """The spoken ack names the action and, since 99 U198, the value that was
+    understood (the operator hears what will be done, not just "前进")."""
     with open(_CHITCHAT, encoding="utf-8") as fh:  # production content
         cc = ChitchatResponder(yaml.safe_load(fh))  # chitchat presets
     orch = build_orchestrator(_registry(), cc)  # no tier-2 needed

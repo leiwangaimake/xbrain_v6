@@ -93,7 +93,7 @@ def test_task_control_reaches_the_running_task(text, key, task):
 def test_without_a_running_task_it_says_so():
     """The honest reply survives: no current task -> no command."""
     d, pubs, spoken = _turn(_orch(make_state_fn(_cache(task={**TASK, "current": None}))), "暂缓任务")
-    assert "cmd/task" not in pubs and spoken == ["现在没有正在执行的任务"]  # nothing to control
+    assert "cmd/task" not in pubs and spoken == ["现在没有正在执行的任务, 没有可暂停的"]  # nothing to control (99 U198 wording)
 
 
 def test_recording_stop_names_the_live_session():

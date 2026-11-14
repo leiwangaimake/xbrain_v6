@@ -149,10 +149,11 @@ def test_an_accepted_task_command_adds_nothing():  # accepted task
 
 
 @pytest.mark.parametrize("code,reason,text", [
-    ("E_BUSY", "voice_hold", "现在处于原地待命, 请先说继续"),  # 99 U111
-    ("E_BUSY", "mode_hold", "喊话或报警进行中, 现在不能动"),  # B / D
-    ("E_LOCKED", None, "底盘锁定中, 现在不能动"),  # G-9
-    ("E_NO_HEADING", None, "现在没有可靠的航向, 不能转向"),  # G-6
+    # 99 U199: "没有执行: " first -- the turn already said "好的,前进2米"
+    ("E_BUSY", "voice_hold", "没有执行: 现在处于原地待命, 请先说继续"),  # 99 U111
+    ("E_BUSY", "mode_hold", "没有执行: 喊话或报警进行中, 现在不能动"),  # B / D
+    ("E_LOCKED", None, "没有执行: 底盘锁定中, 请先解锁"),  # G-9
+    ("E_NO_HEADING", None, "没有执行: 现在没有可靠的航向, 不能转向"),  # G-6
 ])
 def test_a_refused_motion_says_why(code, reason, text):  # case body
     """The motion frame is enveloped; its cmd_id is inside data."""
@@ -243,11 +244,14 @@ def test_a_refused_recording_start_says_why(code, detail, text):  # start
     assert _said(out)[1] == text  # the reason
 
 
-def test_an_accepted_recording_start_adds_nothing():  # start accepted
+def test_an_accepted_recording_start_says_it_started():  # start accepted
+    """99 U198: the turn says "准备开始录制X" before the arming checks, so the
+    start itself is confirmed with the ack. MUTATION: keep it silent -> red."""
     sp = AckSpeaker()  # fresh
     sp.note_turn(_sent("cmd/teach", {"cmd_id": "t-1", "action": "start",
                                      "start": {"kind": "route", "name": "1号路径"}}))
-    assert sp.on_ack(_b({"cmd_id": "t-1", "result": "accepted", "code": "OK"})) is None  # turn said it
+    _k, frame = sp.on_ack(_b({"cmd_id": "t-1", "result": "accepted", "code": "OK"}))  # spoken
+    assert json.loads(frame)["text"].startswith("已开始录制1号路径. 请用键盘控制机器人移动")  # the started line
 
 
 @pytest.mark.parametrize("ack,text", [  # 99 U133 finish = save
@@ -305,8 +309,8 @@ def test_a_discard_says_what_was_thrown_away():  # 99 U137
 
 def test_session_actions_are_not_voiced_here():  # sessions
     sp = AckSpeaker()  # fresh
-    sp.note_turn([("cmd/teach", _b({"cmd_id": "c-1", "action": "start"})),
-                  ("cmd/audio/speak", _b({"source": "tts_local"}))])  # a start
+    sp.note_turn([("cmd/teach", _b({"cmd_id": "c-1", "action": "mark"})),
+                  ("cmd/audio/speak", _b({"source": "tts_local"}))])  # a mark (99 U198: start is voiced now)
     assert sp.on_ack(_b({"cmd_id": "c-1", "result": "accepted"})) is None  # state/teach's job
 
 
@@ -461,7 +465,7 @@ def test_low_battery_repeats_and_other_reports_are_silent():
 
 @pytest.mark.parametrize("cleared,text", [(["t-1"], "已取消1个定时任务"),
                                           (["t-1", "t-2"], "已取消2个定时任务"),
-                                          ([], "现在没有定时任务")])
+                                          ([], "本来就没有定时任务, 没有需要取消的")])
 def test_clear_scheduled_speaks_p3s_count(cleared, text):  # 99 U147 race fix
     """The count comes from P3's cleared_ids, not P4's snapshot. MUTATION:
     stay silent on an accepted clear_queue -> no sentence -> red; count the
@@ -677,11 +681,12 @@ def test_an_accepted_start_is_published_but_not_spoken():
     sp.note_turn(_start_turn())  # the start turn is noted
     out = sp.on_ack_frames(_b({"cmd_id": "c-s", "result": "accepted", "code": "OK",  # P3 accepted
                                "detail": {"session_id": "ts-1", "state": "recording"}}))
-    assert [k for k, _ in out] == [_VT_KEY]  # nothing spoken: the turn already said it
+    assert [k for k, _ in out] == ["cmd/audio/speak", _VT_KEY]  # 99 U198: spoken, then the record
     (rec,) = _turns(out)  # the start result
     assert rec["layer"] == "teach_result" and rec["verdict"] == "accepted"  # started
-    assert rec["intent"] == "record_route_start" and rec["reply_text"] == "已开始录制1号路径"
-    assert rec["reply_kind"] == "none"  # not spoken
+    assert rec["intent"] == "record_route_start" and rec["reply_text"] == (
+        "已开始录制1号路径. 请用键盘控制机器人移动, 说退出录制结束并保存")  # the started line
+    assert rec["reply_kind"] == "stream"  # spoken (99 U198)
 
 
 def test_a_refused_start_is_published_as_rejected_with_its_reason():
@@ -759,7 +764,7 @@ def test_a_refused_capture_is_published_as_rejected():
 
 # -- 99 U174: the count of a whole-queue cancel is P3's -------------------------
 @pytest.mark.parametrize("ids,said", [(["t-1", "t-2"], "已取消2个排队中的任务"),
-                                      ([], "现在没有排队中的任务")])
+                                      ([], "排队中本来就没有任务, 没有需要取消的")])
 def test_a_whole_queue_cancel_says_how_many_p3_cleared(ids, said):
     """MUTATION: no unfiltered branch -> accepted says nothing -> red."""
     sp = AckSpeaker()  # fresh

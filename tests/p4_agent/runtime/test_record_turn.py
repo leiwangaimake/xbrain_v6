@@ -107,7 +107,7 @@ def test_a_named_start_sends_the_name(text, kind, name):  # start
     d, frames = _turn(text)  # idle
     start = _teach(frames)["start"]  # the block
     assert d.kind == "dispatch" and start["kind"] == kind and start["name"] == name  # bound name
-    assert name in d.tts_text and "键盘" in d.tts_text  # tells the operator how to drive
+    assert name in d.tts_text and "准备开始录制" in d.tts_text  # 99 U198: the started line comes with the ack
 
 
 @pytest.mark.parametrize("text,said", [

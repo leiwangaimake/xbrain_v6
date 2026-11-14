@@ -110,7 +110,7 @@ def test_l2_intent_runs_at_once_as_l1a():
     assert d.auth == "L1a"  # what actually happened
     assert d.envelope.level == "L1a"  # EV-4 routing level: what happened
     assert d.envelope.auth == "L2"  # EV-3 base level stays the registry's
-    assert d.tts_text == "好的,取消任务"  # the ack, not a question
+    assert d.tts_text == "好的,取消当前任务"  # the ack, not a question (99 U198: which task)
 
 
 #: A live state snapshot with one running task, as P3 broadcasts it: the 11 S4.4

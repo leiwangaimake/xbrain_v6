@@ -63,6 +63,15 @@ _IDLE_OK = "当前是{cur}模式,要回到空闲待命请说:{say}"  # leaving b
 _IDLE_NO_WAY = "当前是{cur}模式,语音没有直接切到空闲待命的指令"  # dialog -> idle has no voice sentence
 
 
+#: 99 U199: C01-C05 -> (family, spoken name) for mode_precheck.
+_ENTER = {"enter_alarm": ("alarm", "报警"), "enter_broadcast": ("broadcast", "喊话"),
+          "enter_patrol_mode": ("dialog", "巡逻")}  # set_voice_mode targets
+_EXIT = {"exit_alarm": ("alarm", "报警"), "exit_broadcast": ("broadcast", "喊话")}  # exits
+_PRE_ALREADY = "现在已经是{name}模式了"  # entering the current mode
+_PRE_NOT_IN = "现在不在{name}模式, 不需要退出"  # leaving a mode not entered
+_PRE_ALARM_BLOCKED = "现在不能进入报警模式: {items}状态{state}, 报警需要警笛和警示灯"  # deter
+
+
 def _data(v: Any) -> Optional[Mapping[str, Any]]:
     """A state value's body, the S3.0 envelope unwrapped; None when absent."""
     if not isinstance(v, Mapping):  # never received
@@ -77,6 +86,70 @@ def _target(text: str) -> Optional[Tuple[str, str, str]]:
         if any(w in text for w in words):  # a target word
             return family, name, say  # found
     return None  # no target word
+
+
+def _alarm_blockers(state: Mapping[str, Any]) -> Tuple[list, str]:
+    """The deter items not ok, and their spoken state (C08 and the precheck)."""
+    health = _data((state or {}).get("health/summary")) or {}  # P2 health
+    items = health.get("items") if isinstance(health.get("items"), Mapping) else {}  # per item
+    bad = [i for i in _ALARM_ITEMS
+           if not isinstance(items.get(i), Mapping) or items[i].get("state") != "ok"]  # not ok
+    states = {str((items.get(i) or {}).get("state") or "unknown") for i in bad}  # fail / unknown
+    return bad, ("故障" if states == {"fail"} else "异常或未知")  # spoken state
+
+
+def mode_precheck(intent_name: str, state: Mapping[str, Any]) -> Optional[str]:
+    """99 U199: the answer to a C01-C05 command that live state already
+    settles, or None to send it. Only the two refusals P4 can see for itself
+    (same mode / not in the mode, and the alarm's deter items) are answered;
+    an unreadable state/mode sends the command and lets P2 decide."""
+    mode = _data((state or {}).get("state/mode"))  # P2's live mode
+    cur = str(mode.get("voice_mode")) if mode is not None else ""  # e.g. dialog_a
+    if not cur or cur == "None":  # nothing to compare against
+        return None  # P2 decides
+    if intent_name in _EXIT:  # leaving a mode
+        family, name = _EXIT[intent_name]  # which one
+        return None if cur == family else _PRE_NOT_IN.format(name=name)  # in it -> send
+    if intent_name not in _ENTER:  # not a mode command
+        return None  # nothing to say
+    family, name = _ENTER[intent_name]  # the target
+    if cur == family or (family == "dialog" and cur.startswith("dialog")):  # same mode
+        return _PRE_ALREADY.format(name=name)  # nothing to switch
+    if family == "alarm" and _data((state or {}).get("health/summary")) is not None:  # heard
+        bad, word = _alarm_blockers(state)  # siren / strobe
+        if bad:  # P2 would refuse it after "好的"
+            return _PRE_ALARM_BLOCKED.format(
+                items="和".join(_ITEM_WORDS[i] for i in bad), state=word)  # say why
+    return None  # no known blocker: send
+
+
+#: 99 U199: D-class id -> (health item, spoken device, what was not done).
+_PAYLOAD_ITEM = {"D01": ("payload_light", "照明灯", "开灯"),
+                 "D02": ("payload_light", "照明灯", "关灯"),
+                 "D17": ("payload_light", "照明灯", "调亮度"),
+                 "D06": ("payload_strobe", "警示灯", "开警示灯"),
+                 "D07": ("payload_strobe", "警示灯", "关警示灯"),
+                 "D18": ("payload_strobe", "警示灯", "换闪法"),
+                 "D08": ("payload_speaker", "喇叭", "喊话"),
+                 "D10": ("payload_speaker", "喇叭", "调音量")}  # the device each needs
+_PAYLOAD_DOWN = "{device}现在故障, 这次没有{what}"  # the device reports fail
+
+
+def payload_precheck(intent_id: str, state: Mapping[str, Any]) -> Optional[str]:
+    """99 U199: the refusal of a D-class command whose device health/summary
+    reports "fail", or None to send it. The live run answered "好的,音量调到50"
+    with the three-in-one device unplugged, while "能切到报警模式吗" in the
+    same minute said the siren and strobe were down. Only an explicit fail
+    refuses: unknown or a missing item sends, and P2 decides."""
+    if intent_id not in _PAYLOAD_ITEM:  # not a device command
+        return None  # nothing to say
+    item, device, what = _PAYLOAD_ITEM[intent_id]  # what it needs
+    health = _data((state or {}).get("health/summary")) or {}  # P2 health
+    items = health.get("items") if isinstance(health.get("items"), Mapping) else {}  # per item
+    row = items.get(item)  # this device
+    if isinstance(row, Mapping) and row.get("state") == "fail":  # reported down
+        return _PAYLOAD_DOWN.format(device=device, what=what)  # say so
+    return None  # ok / unknown: send
 
 
 def mode_switch_answer(text: str, state: Mapping[str, Any]) -> str:
@@ -99,12 +172,7 @@ def mode_switch_answer(text: str, state: Mapping[str, Any]) -> str:
         return (_IDLE_OK.format(cur=cur_name, say=leave) if leave
                 else _IDLE_NO_WAY.format(cur=cur_name))  # dialog has no voice exit
     if family == "alarm":  # the deter step needs the device
-        health = _data((state or {}).get("health/summary")) or {}  # P2 health
-        items = health.get("items") if isinstance(health.get("items"), Mapping) else {}  # per item
-        bad = [i for i in _ALARM_ITEMS
-               if not isinstance(items.get(i), Mapping) or items[i].get("state") != "ok"]  # not ok
+        bad, word = _alarm_blockers(state)  # 99 U199: shared with mode_precheck
         if bad:  # the switch would be refused
-            states = {str((items.get(i) or {}).get("state") or "unknown") for i in bad}  # fail / unknown
-            word = "故障" if states == {"fail"} else "异常或未知"  # spoken state
             return _ALARM_BLOCKED.format(items="和".join(_ITEM_WORDS[i] for i in bad), state=word)
     return _OK.format(cur=cur_name, name=name, say=say)  # no known blocker

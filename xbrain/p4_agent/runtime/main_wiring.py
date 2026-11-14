@@ -291,7 +291,9 @@ def run_voice_loop_wiring(cfg: TurnLoopConfig,
                 # navigates by (common.geo.route_membership_m)
                 membership_fn=make_membership_fn(orch.route_membership_m),
                 # 99 U136: G50 / G51 / G52, the same plan and distance key
-                geo_query_fn=make_geo_query_fn(orch.route_membership_m))
+                geo_query_fn=make_geo_query_fn(orch.route_membership_m),
+                # 99 U198: D08 plays a preset, G31 lists them
+                speech_presets=orch.speech_presets)
             session = OrchestratorSession()
             # 11 S8.7.6 state/voice_turn (2026-10-26): robot-prefixed like the
             # cloud inputs, so it needs the robot id. Without one there is no

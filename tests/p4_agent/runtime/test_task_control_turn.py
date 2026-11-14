@@ -126,5 +126,5 @@ def test_cancel_task_runs_on_its_own_turn():  # one question, one answer
     -> red."""
     st = _task_state({"task_id": "t-run", "state": "running"})  # one running
     d = _turn("取消任务", st, OrchestratorSession())[0]  # one turn
-    assert d.kind == "dispatch" and d.tts_text == "好的,取消任务"  # done, said
+    assert d.kind == "dispatch" and d.tts_text == "好的,取消当前任务"  # done, said (99 U198: which task)
     assert d.dispatch_result.payload["task_command"]["task_id"] == "t-run"  # by id

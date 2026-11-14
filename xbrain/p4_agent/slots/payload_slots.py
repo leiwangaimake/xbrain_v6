@@ -119,7 +119,7 @@ _VOL_ABS = {
     "音量调到最小": _VOL_MIN_AUDIBLE, "音量最小": _VOL_MIN_AUDIBLE,
     "最小声": _VOL_MIN_AUDIBLE, "声音最小": _VOL_MIN_AUDIBLE,
     "音量调到最低": _VOL_MIN_AUDIBLE,
-    "静音": 0, "关掉声音": 0,
+    "静音": 0, "关掉声音": 0, "别出声": 0, "不要出声": 0,  # 99 U198: 18-A D10 examples
     "音量一半": 50, "中等音量": 50, "音量中等": 50,
     # 2026-10-30: bare "中等" / "一半" reach D10 only through the session-context
     # ellipsis rule (the operator was just adjusting volume), field test P147.

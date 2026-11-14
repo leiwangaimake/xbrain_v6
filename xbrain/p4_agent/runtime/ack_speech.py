@@ -82,6 +82,7 @@ from xbrain.common.errors import (  # the 11 S13 closed set, never literals
 from xbrain.p4_agent.runtime.intent_dispatch import (  # the command keys
     CMD_AUDIO_SPEAK,
     CMD_GEO,
+    CMD_MODE,  # 99 U198: mode refusals are answered too
     CMD_MOTION_INTENT,
     CMD_TASK,
     CMD_TEACH,
@@ -119,7 +120,7 @@ COMMAND_RESULT_LAYER = "command_result"  # voice_turn.layer of those records
 
 #: The answer keys this speaker subscribes, one per command key (11 S2.2.4).
 ACK_KEYS = tuple(k + "/ack" for k in (CMD_TEACH, CMD_TASK, CMD_GEO,
-                                      CMD_MOTION_INTENT))  # wiring subscribes these
+                                      CMD_MOTION_INTENT, CMD_MODE))  # wiring subscribes these
 
 #: 11 S6.2 task events, every severity (info carries completed, warn failed).
 TASK_EVENT_KEY = "event/*/task"  # wiring subscribes this (16 S8.3C)
@@ -249,15 +250,17 @@ _REC_FINISH_OTHER = "录制没有正确结束"  # any other refusal
 _REC_RETAINED = "{name}没有保存: {why}. 录制数据还在, 请说保存为新的名字, 或者放弃录制"
 #: 99 U165: the start result record of an accepted start (not spoken: the turn
 #: already said "好的,开始录制X"; this is what a client waits for).
-_REC_STARTED = "已开始录制{name}"
+_REC_STARTED = "已开始录制{name}. 请用键盘控制机器人移动, 说退出录制结束并保存"  # 99 U198: spoken now
 _REC_DISCARDED = "已取消录制{name}, 录到的{count}个点已丢弃"  # 99 U137 discard
 #: 99 U147 race fix: "取消所有定时任务" -- the count P3 actually cleared, never
 #: the one P4's (possibly stale) state/task snapshot showed at the turn.
 _SCHED_CLEARED = "已取消{n}个定时任务"
-_SCHED_NONE_LEFT = "现在没有定时任务"
+# 99 U199: these follow "好的,取消全部..."; "本来就没有" makes the pair one story
+# (live run: "好的,取消全部排队中的任务" then "现在没有排队中的任务").
+_SCHED_NONE_LEFT = "本来就没有定时任务, 没有需要取消的"
 #: 99 U174: "取消所有任务" -- clear_queue with no filter, the count P3 cleared.
 _QUEUE_CLEARED = "已取消{n}个排队中的任务"
-_QUEUE_NONE_LEFT = "现在没有排队中的任务"
+_QUEUE_NONE_LEFT = "排队中本来就没有任务, 没有需要取消的"  # 99 U199 wording
 
 #: cmd/task/ack: what the refused action was, in words.
 _TASK_VERB = {"pause": "暂停", "resume": "继续", "cancel": "取消",
@@ -296,13 +299,14 @@ _MOTION_BUSY = {
     "teach_session_active": "正在录制路线, 现在不能执行这个动作",  # G-8
 }
 _MOTION_REFUSED = {
-    E_LOCKED: "底盘锁定中, 现在不能动",  # G-9
+    E_LOCKED: "底盘锁定中, 请先解锁",  # G-9 (99 U199: what to do about it)
     E_UNHEALTHY: "设备状态不允许移动",  # G-4 / G-5
     E_NO_HEADING: "现在没有可靠的航向, 不能转向",  # G-6
     E_CAPABILITY: "这个动作机器人做不到",  # G-7
     E_SCHEMA: "这个动作超出了允许的范围",  # G-2 / G-3
 }
 _MOTION_OTHER = "这个动作没有执行"  # any other code
+_MOTION_NOT_DONE = "没有执行: "  # 99 U199: put before a known reason
 
 #: 16 S8.3C task failure speech (99 U140). FS-3 sentence and names.
 _TASK_FAILED = "{label}没有完成: {why}"  # with a known cause
@@ -371,13 +375,13 @@ class AckSpeaker:  # one per process
         turn = next(((k, _json(d)) for k, d in pairs
                      if k.endswith("/state/voice_turn")), None)  # the turn's record
         for key, data in pairs:  # find the commands
-            if key not in (CMD_TEACH, CMD_TASK, CMD_GEO, CMD_MOTION_INTENT):
+            if key not in (CMD_TEACH, CMD_TASK, CMD_GEO, CMD_MOTION_INTENT, CMD_MODE):
                 continue  # not a command this speaker answers for
             cmd = _body(_json(data))  # the command body
             if not isinstance(cmd, dict) or not isinstance(cmd.get("cmd_id"), str):
                 continue  # nothing to match an answer to
             if key == CMD_TEACH and cmd.get("action") not in ("mark_once", "start",
-                                                                  "finish", "discard"):
+                                                                  "finish", "discard", "save"):
                 continue  # the other session actions answer through state/teach
             self._pending[cmd["cmd_id"]] = (key, cmd, source)  # newest last
             while len(self._pending) > _PENDING_MAX:  # bounded
@@ -785,6 +789,9 @@ def _layout_notes(detail: Dict[str, Any]) -> str:
     for i in issues:  # advisory issues of a save, warnings of an enable
         if not isinstance(i, dict):  # malformed entry
             continue  # skipped
+        if i.get("code") == "close_gap_large":  # 99 U198: auto-closed over a gap
+            out.append(_GAP_NOTE.format(gap=_num(i.get("gap_m")) or "?"))
+            continue  # one note per issue
         if i.get("code") == "outside_activity_area":  # this fence, outside the area
             out.append(_LAYOUT_NOTE["outside_activity_area"].format(area=i.get("activity_area") or ""))
         elif i.get("code") == "activity_area_excludes":  # a new area leaving fences out
@@ -816,6 +823,10 @@ def _sentence(key: str, cmd: Dict[str, Any], ack: Dict[str, Any]) -> Optional[st
     detail = ack.get("detail") if isinstance(ack.get("detail"), dict) else {}
     accepted = ack.get("result") == "accepted"  # the executor did it
     code = ack.get("code")  # the refusal code, if any
+    if key == CMD_MODE:  # 99 U198
+        return _mode_sentence(cmd, detail, accepted, code)
+    if key == CMD_TEACH and cmd.get("action") == "save":  # 99 U198
+        return _save_sentence(cmd, detail, accepted, code)
     if key == CMD_TEACH and cmd.get("action") == "start":
         return _start_sentence(cmd, ack, detail, accepted, code)  # 99 U133
     if key == CMD_TEACH and cmd.get("action") == "finish":
@@ -854,22 +865,89 @@ def _sentence(key: str, cmd: Dict[str, Any], ack: Dict[str, Any]) -> Optional[st
         return None  # the turn already said what it does
     if key == CMD_TASK:
         if detail.get("reason") in _TASK_BY_REASON:  # a refusal with its own sentence
-            return _TASK_BY_REASON[detail["reason"]]  # U131
-        verb = _TASK_VERB.get(cmd.get("action"), "执行")  # the refused action
-        return _TASK_REFUSED.get(code, _TASK_OTHER).format(verb=verb)  # by code
+            said = _TASK_BY_REASON[detail["reason"]]  # U131
+        else:
+            verb = _TASK_VERB.get(cmd.get("action"), "执行")  # the refused action
+            said = _TASK_REFUSED.get(code, _TASK_OTHER).format(verb=verb)  # by code
+        # 99 U199: a refused submit follows "好的,去X" -- say it was not done
+        # first, as a motion refusal does (live: "好的,再巡逻1圈" then "定位失效,
+        # 现在不接受新任务"). Sentences that already say "没有" are left as they are.
+        if cmd.get("action") == "submit" and "没有" not in said:
+            said = _MOTION_NOT_DONE + said  # "没有执行: 定位失效, ..."
+        return said  # one sentence
     if key == CMD_GEO:
         return _GEO_REFUSED.get(code, _GEO_OTHER)  # by code
+    # 99 U199: the turn already said "好的,前进2米"; the refusal now says the
+    # move was NOT done before the reason (live run: "好的,前进2米" then
+    # "底盘锁定中, 现在不能动" read as two answers that disagree).
     if code == E_BUSY:
-        return _MOTION_BUSY.get(detail.get("reason"), _MOTION_OTHER)  # by reason
-    return _MOTION_REFUSED.get(code, _MOTION_OTHER)  # motion, by code
+        why = _MOTION_BUSY.get(detail.get("reason"))  # by reason
+    else:
+        why = _MOTION_REFUSED.get(code)  # motion, by code
+    return (_MOTION_NOT_DONE + why) if why else _MOTION_OTHER  # one sentence
+
+
+#: 99 U198: a fence ring whose ends were more than the closing tolerance apart
+#: (p3_task/teach/validate.py close_gap_large) -- saved, and now said.
+_GAP_NOTE = "注意: 首尾没有回到一起, 相距{gap}米, 已直接连起来"
+#: 99 U198: what a mode command was, for its refusal sentence.
+_MODE_DOING = {("set_voice_mode", "alarm"): "进入报警模式", ("set_voice_mode", "broadcast"): "进入喊话模式",
+               ("set_voice_mode", "dialog"): "进入巡逻模式", ("exit_alarm", None): "退出报警模式",
+               ("exit_broadcast", None): "退出喊话模式", ("set_move_speed", None): "调整移动速度",
+               ("set_turn_speed", None): "调整机器人转速", ("set_behavior", None): "切换运动行为"}
+
+
+def _mode_sentence(cmd: Dict[str, Any], detail: Dict[str, Any], accepted: bool,  # 99 U198
+                   code: Any) -> Optional[str]:
+    """99 U198: a mode command's answer. A refusal was never spoken ("报警模式"
+    answered "收到" and P2 refused it for the payload device); a speed step now
+    reads back the value P2 applied, never a predicted one."""
+    action = cmd.get("action")  # the ModeCommand action
+    applied = detail.get("applied") if isinstance(detail.get("applied"), dict) else {}  # see the docstring
+    if accepted and action in ("set_move_speed", "set_turn_speed"):  # see the docstring
+        move = action == "set_move_speed"  # which speed
+        v = _num(applied.get("move_speed_mps" if move else "turn_speed_radps"))  # see the docstring
+        if v is None:  # no value in the ack
+            return None  # nothing true to add
+        what, unit = ("移动速度", "米每秒") if move else ("机器人转速", "弧度每秒")  # see the docstring
+        limit = applied.get("at_limit") if applied.get("changed") is False else None  # see the docstring
+        if limit in ("max", "min"):  # asked past the end
+            return "%s已经是最%s的%s%s了" % (what, "快" if limit == "max" else "慢", v, unit)  # see the docstring
+        return "%s现在是%s%s" % (what, v, unit)  # the applied value
+    if accepted:  # taken or not
+        return None  # the turn already said it
+    doing = _MODE_DOING.get((action, cmd.get("voice_mode")), _MODE_DOING.get((action, None), "这个模式指令"))  # see the docstring
+    if code == E_UNHEALTHY and detail.get("reason") == "payload_deter":  # see the docstring
+        why = "三合一设备的警笛或警示灯不可用"  # the deter step failed
+    elif code == E_UNHEALTHY:  # any other health refusal
+        why = "设备状态不允许"  # health
+    elif code == E_BUSY:  # P2 transition refused
+        why = "有其它功能正在占用, 请稍后再试"  # a held domain / dwell
+    else:  # any other code
+        why = ""  # said without a reason, never guessed
+    return ("%s没有成功: %s" % (doing, why)) if why else ("%s没有成功" % doing)  # see the docstring
+
+
+def _save_sentence(cmd: Dict[str, Any], detail: Dict[str, Any], accepted: bool,  # 99 U198
+                   code: Any) -> Optional[str]:
+    """99 U198: "保存为Y" after a failed save (F03 / F09) had no answer."""
+    applied = detail.get("applied") if isinstance(detail.get("applied"), dict) else {}  # see the docstring
+    name = applied.get("name") or (cmd.get("save") or {}).get("name") or ""  # the stored name
+    if accepted:  # taken or not
+        return _with_notes("已保存%s" % name, detail)  # with any layout notes
+    if code == E_NAME_CONFLICT:  # the name was taken meanwhile
+        return "%s这个名字已经有了, 请换个名字" % name  # see the docstring
+    if code == E_TEACH_STATE:  # no open session
+        return "现在没有在录制"  # see the docstring
+    return "%s没有保存成功" % name  # see the docstring
 
 
 def _start_sentence(cmd: Dict[str, Any], ack: Dict[str, Any], detail: Dict[str, Any],
                     accepted: bool, code: Any) -> Optional[str]:
     """A recording start's answer (99 U133): nothing when accepted (the turn
     said "开始录制 X"), the reason when P3 refused it."""
-    if accepted:
-        return None  # the turn already said it
+    if accepted:  # 99 U198: the turn said "准备开始录制"; this confirms it
+        return _REC_STARTED.format(name=(cmd.get("start") or {}).get("name") or "")
     name = (cmd.get("start") or {}).get("name") or ""  # the name said
     reason = detail.get("reason")  # told apart below
     if (reason == "recording_config_missing"  # 99 U176: told apart by the key P3 names

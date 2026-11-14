@@ -167,6 +167,21 @@ def _build_tier2_fn(config_dir, registry, *, base_url, model, timeout_s):
         return None
 
 
+def _load_speech_presets(config_dir: str) -> tuple:
+    """99 U198: the preset texts of configs/speech_presets.yaml, in order.
+
+    A missing or unreadable file gives () -- D08 and G31 then say no preset
+    is configured, which is the truth; the loop itself does not depend on it."""
+    import yaml  # content file
+    try:
+        with open(os.path.join(config_dir, "speech_presets.yaml"), encoding="utf-8") as fh:
+            rows = (yaml.safe_load(fh) or {}).get("presets") or []
+    except (OSError, ValueError, AttributeError) as exc:
+        _logger.warning("speech presets not loaded: %s", exc)
+        return ()
+    return tuple(str(r["text"]) for r in rows if isinstance(r, dict) and r.get("text"))
+
+
 def _build_asr_post(cfg, registry):
     """16 S3 post-processor from the resolved asr_post.* keys, or None.
 
@@ -423,7 +438,8 @@ def main(argv: Optional[list] = None) -> int:
             query_low_soc_pct=args.query_battery_low_pct,
             site_timezone=site_tz,
             tier2_fn=tier2_fn,
-            route_membership_m=float(_member))
+            route_membership_m=float(_member),
+            speech_presets=_load_speech_presets(args.config_dir))
         from xbrain.p4_agent.runtime.cloud_input import VoiceInLimits
         cloud_limits = VoiceInLimits(
             max_utterance_ms=args.voice_in_max_utterance_ms,

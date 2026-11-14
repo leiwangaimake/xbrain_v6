@@ -149,6 +149,9 @@ class VoiceOrchestratorInputs:
     # 16 S4 bypass word groups (matcher.BypassTokens) from the resolved
     # bypass.* keys; None only where no config was loaded.
     bypass_tokens: Any = None
+    # 99 U198: configs/speech_presets.yaml texts in order (D08 plays one, G31
+    # lists them); empty only where the file was not loaded.
+    speech_presets: tuple = ()
 
 
 def null_tier2(text: str, session: OrchestratorSession,
@@ -176,6 +179,7 @@ def build_orchestrator(
     site_timezone=None,
     membership_fn=None,
     geo_query_fn=None,
+    speech_presets=None,  # 99 U198: preset texts for D08 / G31
 ) -> TurnOrchestrator:
     """Construct the voice-loop orchestrator (built once, reused per turn).
 
@@ -207,7 +211,8 @@ def build_orchestrator(
         query_fn=query_fn, bypass_tokens=bypass_tokens,
         system_fn=system_fn, state_fn=state_fn, pose_snap_fn=pose_snap_fn,
         wall_now_fn=wall_now_fn, site_timezone=site_timezone,
-        membership_fn=membership_fn, geo_query_fn=geo_query_fn)
+        membership_fn=membership_fn, geo_query_fn=geo_query_fn,
+        speech_presets=speech_presets)
 
 
 def make_battery_query_fn(cache, templates, *, max_age_ms: int,
@@ -283,6 +288,10 @@ def make_status_query_fn(cache, templates, *, max_age_ms: int):
     return _query
 
 
+#: 99 U199: state/robot older than this is "unknown" (10 Hz; 20 frames missed).
+ROBOT_MAX_AGE_MS = 2000
+
+
 def make_state_fn(cache):
     """Return the orchestrator's state_fn: {zenoh key: latest value} for every
     STATE_TOPICS key (None when never received).
@@ -302,7 +311,12 @@ def make_state_fn(cache):
     from xbrain.p4_agent.state.cache import STATE_TOPICS
 
     def _snapshot():
-        return {key: cache.latest(key) for key in STATE_TOPICS}
+        snap = {key: cache.latest(key) for key in STATE_TOPICS}
+        # 99 U199: state/robot is a 10 Hz stream, not an on-change key: an
+        # old frame says nothing about the lock now, so only a recent one.
+        snap["state/robot"] = cache.get_fresh("state/robot", int(time.monotonic() * 1000),
+                                             ROBOT_MAX_AGE_MS)
+        return snap
 
     return _snapshot
 

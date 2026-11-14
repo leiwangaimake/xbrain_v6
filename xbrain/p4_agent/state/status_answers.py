@@ -60,6 +60,7 @@ from typing import Callable, Dict, Mapping, Optional
 
 from xbrain.common.geo import is_dock_name  # 99 U119 dock-by-name rule (G23)
 from xbrain.p4_agent.state.cache import StateCache  # freshness-aware cache
+from xbrain.p4_agent.state.chassis_lock import chassis_locked  # 99 U199: G16 lock clause
 from xbrain.p4_agent.state.query_data import QueryAnswer  # the shared answer type
 from xbrain.p4_agent.templates.query_engine import render_reply  # 16 S8.2 step 3
 
@@ -86,6 +87,8 @@ _TASK_STATE_WORDS = {"running": "执行中", "ready": "排队中", "suspended": 
 # the raw id ("rtk_fixed") in English on every answer.
 _FIX_WORDS = {"rtk_fixed": "当前定位固定", "rtk_float": "当前定位浮点",
               "dgps": "当前定位差分", "single": "当前定位单点"}
+#: 99 U198: compass sectors from north, clockwise (G08).
+_COMPASS_WORDS = ("正北", "东北", "正东", "东南", "正南", "西南", "正西", "西北")
 _PTZ_HOLDER_WORDS = {"manual_cloud": "人工操控", "auto_track": "报警或喊话模式的自动跟踪",
                      "preset_patrol": "预置位巡视"}  # id -> spoken label
 
@@ -173,10 +176,16 @@ def health_answer(cache, t, now_mono_ms, *, max_age_ms) -> QueryAnswer:  # one q
     speed = ("限速%d%%" % round(float(sf) * 100)) if limited else "不限速"  # local read of the state field
     bad = _not_ok(h["items"])  # local read of the state field
     real = [k for k, v in bad.items() if v.get("state") in ("fail", "degraded")]  # local read of the state field
+    # 99 U199: health/summary does not know the chassis lock; "系统允许运动"
+    # with the chassis locked read as a promise the next "前进" broke.
+    locked = chassis_locked(cache.get_fresh("state/robot", now_mono_ms, max_age_ms)) is True
+    lead = "底盘锁定中,解锁前不能走;" if locked else ""  # said first
+    if locked:  # the health verdict is then only the health verdict
+        motion = "健康检查" + motion  # "系统健康检查允许运动"
     if not real:  # guard: nothing usable
-        return QueryAnswer(True, _say(t, "query_health", "ok", motion=motion, speed=speed))  # answer built from the live field
-    return QueryAnswer(True, _say(t, "query_health", "some", motion=motion, speed=speed,  # answer built from the live field
-                                  items=",".join(_item_phrase(k, bad[k]) for k in real)))
+        return QueryAnswer(True, lead + _say(t, "query_health", "ok", motion=motion, speed=speed))  # answer built from the live field
+    return QueryAnswer(True, lead + _say(t, "query_health", "some", motion=motion, speed=speed,  # answer built from the live field
+                                         items=",".join(_item_phrase(k, bad[k]) for k in real)))
 
 
 def sensor_answer(cache, t, now_mono_ms, *, max_age_ms) -> QueryAnswer:  # one query answer: sensor answer
@@ -216,6 +225,13 @@ def task_answer(cache, t, now_mono_ms, *, max_age_ms) -> QueryAnswer:  # one que
     queue = (",另有%d个任务排队" % queued) if queued else ""  # value used below
     cur = s.get("current")  # local read of the state field
     if not isinstance(cur, Mapping):  # guard: nothing usable
+        # 99 U199: "还有几个任务排队" got only "当前没有执行中的任务" -- the queue
+        # (empty) and the suspended tasks "继续" would wake were never said.
+        queue = queue or ",也没有排队的任务"  # an empty queue said, not left out
+        held = sum(1 for i in (s.get("suspended") or [])
+                   if isinstance(i, Mapping) and i.get("suspend_kind") == "passive")  # "继续" targets
+        if held:  # what "继续" would act on
+            queue += ";有%d个挂起的任务,说继续会恢复最近挂起的那个" % held  # the hint
         return QueryAnswer(True, _say(t, "query_task", "none", queue=queue))  # answer built from the live field
     kind = str(cur.get("type"))  # local read of the state field
     st = str(cur.get("state"))  # local read of the state field
@@ -275,8 +291,12 @@ def heading_answer(cache, t, now_mono_ms, *, max_age_ms) -> QueryAnswer:  # one 
     rad = p.get("heading_rad")  # value used below
     if not p.get("heading_valid") or not isinstance(rad, (int, float)):  # guard: nothing usable
         return QueryAnswer(True, _say(t, "query_heading", "invalid"))  # answer built from the live field
-    return QueryAnswer(True, _say(t, "query_heading", "ok",  # answer built from the live field
-                                  deg="%.0f" % ((math.degrees(float(rad)) + 360.0) % 360.0)))
+    # 99 U198: heading_rad is ENU (east 0, counter-clockwise); people read a
+    # compass (north 0, clockwise). Spoken as a direction plus compass degrees.
+    compass = (90.0 - math.degrees(float(rad))) % 360.0  # ENU -> compass
+    word = _COMPASS_WORDS[int(((compass + 22.5) % 360.0) // 45.0)]  # nearest of eight
+    return QueryAnswer(True, _say(t, "query_heading", "ok", dir=word,
+                                  deg="%.0f" % compass))
 
 
 def range_answer(cache, t, now_mono_ms, *, max_age_ms) -> QueryAnswer:  # one query answer: range answer
@@ -324,8 +344,7 @@ def ptz_owner_answer(cache, t, now_mono_ms, *, max_age_ms) -> QueryAnswer:  # on
         return QueryAnswer(False, _say(t, "query_ptz_owner", "stale"))  # honest reply: source missing or stale
     h = a.get("holder")  # local read of the state field
     if not isinstance(h, Mapping):  # guard: nothing usable
-        return QueryAnswer(True, _say(t, "query_ptz_owner", "held", holder="没有人",  # answer built from the live field
-                                      note="空闲"))
+        return QueryAnswer(True, _say(t, "query_ptz_owner", "free"))  # 99 U198 wording
     sid = str(h.get("source_id"))  # value used below
     return QueryAnswer(True, _say(t, "query_ptz_owner", "held",  # answer built from the live field
                                   holder=_PTZ_HOLDER_WORDS.get(sid, sid),
@@ -339,11 +358,31 @@ def _payload(cache) -> Optional[Mapping]:  # one query answer: payload
     return p if isinstance(p, Mapping) else None  # result to the caller
 
 
+#: 99 U199: health/summary item -> spoken device (the three-in-one parts).
+_PAYLOAD_DEVICES = {"payload_speaker": "喇叭", "payload_light": "照明灯",
+                    "payload_siren": "警笛", "payload_strobe": "警示灯"}
+
+
+def _payload_unreadable(cache, t, now_mono_ms, max_age_ms, what: str, items) -> QueryAnswer:
+    """99 U199: no payload state. When health/summary reports the device(s)
+    failed, say that -- "暂时读不到,请稍后再问" promised a retry would help,
+    while "能切到报警模式吗" in the same minute said the siren was down."""
+    h = _health(cache, now_mono_ms, max_age_ms)  # P2 health, if fresh
+    down = [i for i in items if h is not None and isinstance(h["items"].get(i), Mapping)
+            and h["items"][i].get("state") == "fail"]  # reported failed
+    if not down:  # no known cause
+        return _unreadable(t, what)  # the honest generic reply
+    who = ("三合一设备" if len(down) == len(_PAYLOAD_DEVICES)
+           else "和".join(_PAYLOAD_DEVICES[i] for i in down))  # the failed parts
+    return QueryAnswer(True, "%s现在故障,读不到%s" % (who, what))  # the cause
+
+
 def payload_all_answer(cache, t, now_mono_ms, *, max_age_ms) -> QueryAnswer:  # one query answer: payload all answer
     """G25 声光现在什么状态 / 载荷都开着吗."""
     p = _payload(cache)  # local read of the state field
     if p is None:  # no usable value: take the honest branch
-        return _unreadable(t, "载荷状态")  # result to the caller
+        return _payload_unreadable(cache, t, now_mono_ms, max_age_ms, "载荷状态",  # 99 U199
+                                   tuple(_PAYLOAD_DEVICES))  # the device it needs
     return QueryAnswer(True, _say(
         t, "query_payload_all", "ok",
         siren="在响" if p.get("siren") else "关着", strobe="开着" if p.get("strobe") else "关着",
@@ -355,7 +394,8 @@ def light_state_answer(cache, t, now_mono_ms, *, max_age_ms) -> QueryAnswer:  # 
     """G26 灯开着吗: QT-2, light_effective is the b7 readback."""
     p = _payload(cache)  # local read of the state field
     if p is None:  # no usable value: take the honest branch
-        return _unreadable(t, "灯光状态")  # result to the caller
+        return _payload_unreadable(cache, t, now_mono_ms, max_age_ms, "灯光状态",  # 99 U199
+                                   ("payload_light",))  # the device it needs
     return QueryAnswer(True, _say(t, "query_light_state", "payload",  # answer built from the live field
                                   on_off="开着" if p.get("light_effective") else "关着"))
 
@@ -364,7 +404,8 @@ def siren_state_answer(cache, t, now_mono_ms, *, max_age_ms) -> QueryAnswer:  # 
     """G27 警笛响着吗."""
     p = _payload(cache)  # local read of the state field
     if p is None:  # no usable value: take the honest branch
-        return _unreadable(t, "警笛状态")  # result to the caller
+        return _payload_unreadable(cache, t, now_mono_ms, max_age_ms, "警笛状态",  # 99 U199
+                                   ("payload_siren",))  # the device it needs
     return QueryAnswer(True, _say(t, "query_siren_state", "ok",  # answer built from the live field
                                   on_off="正在响" if p.get("siren") else "没有响"))
 
@@ -373,7 +414,8 @@ def strobe_state_answer(cache, t, now_mono_ms, *, max_age_ms) -> QueryAnswer:  #
     """G28 警灯亮着吗: red/blue is read back, so the readback branch (not QT-3 shadow)."""
     p = _payload(cache)  # local read of the state field
     if p is None:  # no usable value: take the honest branch
-        return _unreadable(t, "警示灯状态")  # result to the caller
+        return _payload_unreadable(cache, t, now_mono_ms, max_age_ms, "警示灯状态",  # 99 U199
+                                   ("payload_strobe",))  # the device it needs
     return QueryAnswer(True, _say(t, "query_strobe_state", "readback",  # answer built from the live field
                                   on_off="开着" if p.get("strobe") else "关着"))
 
@@ -383,7 +425,8 @@ def volume_answer(cache, t, now_mono_ms, *, max_age_ms) -> QueryAnswer:  # one q
     p = _payload(cache)  # local read of the state field
     v = p.get("volume_pct") if p is not None else None  # local read of the state field
     if not isinstance(v, int) or isinstance(v, bool):  # guard: nothing usable
-        return _unreadable(t, "音量")  # result to the caller
+        return _payload_unreadable(cache, t, now_mono_ms, max_age_ms, "音量",  # 99 U199
+                                   ("payload_speaker",))  # the device it needs
     return QueryAnswer(True, _say(t, "query_volume", "ok", v=v))  # answer built from the live field
 
 
@@ -391,7 +434,8 @@ def speaking_answer(cache, t, now_mono_ms, *, max_age_ms) -> QueryAnswer:  # one
     """G30 在喊话吗."""
     p = _payload(cache)  # local read of the state field
     if p is None:  # no usable value: take the honest branch
-        return _unreadable(t, "喊话状态")  # result to the caller
+        return _payload_unreadable(cache, t, now_mono_ms, max_age_ms, "喊话状态",  # 99 U199
+                                   ("payload_speaker",))  # the device it needs
     return QueryAnswer(True, _say(t, "query_speaking", "plain" if p.get("speaking") else "idle"))  # answer built from the live field
 
 
