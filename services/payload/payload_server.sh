@@ -54,8 +54,9 @@ PYTHON="${PAYLOAD_PYTHON:-python3}"
 # authority on what each means. Repeated here so `cat payload_server.sh` answers
 # "what is this box running" without reading Python.
 
-# The GZH-2 module and its two ports. The Orin reaches it over enP8p1s0
-# (192.168.144.100/24); measured LAN RTT is about 1 ms.
+# The GZH-2 module and its two ports. Since 2026-11-15 the robot reaches it over
+# lan2 (NM connection lan2-vxworks, 192.168.144.200/24 next to 192.168.188.200);
+# lan0 no longer carries 192.168.144.x. Measured LAN RTT is about 1 ms.
 export DEVICE_HOST="${DEVICE_HOST:-192.168.144.38}"
 export PORT_AUDIO="${PORT_AUDIO:-8519}"    # speech, siren, microphone uplink
 export PORT_LIGHTS="${PORT_LIGHTS:-8529}"  # searchlight, brightness, red/blue
