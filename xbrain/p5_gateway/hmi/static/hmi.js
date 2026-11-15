@@ -337,6 +337,7 @@
     fence: "围栏",
     // 99 U188: P2's warning-zone autonomous alarm is the first intrusion producer
     intrusion: "报警",
+    teleop: "遥控",  // 99 U203: P1's keyboard_refused (event/warn/teleop)
   };
   // ~~intrusion / audio / voice (and a planned mode_change)~~ removed 2026-11-12
   // (user): no process publishes events of these categories (grep of every
@@ -369,10 +370,80 @@
     "ptz deadman stop": "云台遥控松手, 已停止", grant: "仲裁授予", release: "仲裁释放",
     preempt: "仲裁抢占", suspend: "仲裁挂起", rearm: "仲裁重新武装",
     // 99 U188 warning-zone autonomous alarm (p2 runtime/alarm_wiring.py titles)
-    zone_intrusion: "报警区域发现可疑目标", zone_rules_suspended: "报警区域判定暂停(定位或航向失效)",
+    // zone_intrusion: worded by intrusionText (99 U203, with zone and target)
+    zone_rules_suspended: "报警区域判定暂停(定位或航向失效)",
     zone_rules_resumed: "报警区域判定恢复", alarm_clock_unsynced: "时钟未同步, 报警时段按全天",
   };
   const EV_ARB_CN = { grant: "占用", release: "释放", preempt: "抢占" };
+
+  // 99 U203 (user 2026-11-15: "breach 是啥? soft_exit, contact_end ... 中文清晰
+  // 表达, 不然客户不知道什么意思"): every fence row words its zone by ROLE,
+  // never a fixed one -- zone_enter used to read 进入报警区域 for the speed
+  // zone too, and looked up d.zone_name while P1 sends poly_name, so no name
+  // ever showed. Role word first, the operator's name after it in 「」.
+  const EV_ROLE_CN = { allow: "活动区域", forbid: "禁止区域", warning: "报警区域", speed_limit: "限速区域" };
+  const EV_TARGET_CN = { person: "人员", vehicle: "车辆", animal: "动物" };  // P2 rule groups
+  function evZone(d) {
+    const role = EV_ROLE_CN[d.role] || "围栏区域";
+    const name = d.poly_name || d.zone_name || "";
+    return name ? role + "「" + name + "」" : role;
+  }
+  // breach depth: d_nom_m is the signed distance to the nominal line, < 0 past it
+  function evDepth(d) {
+    return typeof d.d_nom_m === "number" && d.d_nom_m < 0 ? " " + (-d.d_nom_m).toFixed(2) + " 米" : "";
+  }
+  function evSpeed(v) {
+    return typeof v === "number" ? ", 限速每秒 " + String(Number(v.toFixed(2))) + " 米" : "";
+  }
+  // P1 fence / zone rows (11 S9A.9 episodes, U186 contact, zones.py), P3's
+  // objects_unreachable, P1's keyboard refusal; null = not a fence row.
+  function fenceText(sub, d) {
+    const z = evZone(d), forbid = d.role === "forbid";
+    switch (sub) {
+      case "zone_enter":
+        return "进入" + z + (d.role === "speed_limit" ? evSpeed(d.speed_limit_mps) : "");
+      case "zone_exit":
+        return "离开" + z + (d.role === "speed_limit" ? ", 恢复正常速度" : "");
+      case "soft_enter": return "接近" + z + "边界, 开始减速";
+      case "soft_exit": return "远离" + z + "边界, 恢复正常速度";
+      case "hard_clip": return "到达" + z + "边界, 已禁止" + (forbid ? "向内" : "向外") + "运动";
+      case "breach": return "越界: " + (forbid ? "已进入" : "已越出") + z + evDepth(d);
+      case "recovered": return (forbid ? "已退出" : "已回到") + z + (forbid ? "" : "内") + ", 越界解除";
+      case "contact_start":
+      case "contact_hold": {
+        const more = sub === "contact_hold" ? "(持续)" : "";
+        if (d.recording === "fence") {  // recording a fence: told once, the robot is not stopped
+          return "录制围栏: " + (forbid ? "进入了" + z : "已在活动区域外");
+        }
+        if (d.recording === "route") return "录制路径撞线: 碰到" + z + "边界, 请往回开" + more;
+        return "撞线: 到达" + z + "边界, " + (forbid ? "不能进入" : "停止前进") + more;
+      }
+      case "contact_end": return "离开" + z + "边界, 撞线解除";
+      case "fence_degraded":
+        return d.enforcement === "disabled" ? "没有可用围栏, 自主运动暂停"
+          : "围栏判定暂停(定位或航向不可用), 自主运动暂停";
+      case "fence_restored": return "围栏判定恢复正常";
+      case "fence_clip_degenerate": return "围栏夹角处无法确定退出方向, 已停车";
+      case "fence_source_stale":
+        return "围栏数据中断" + (typeof d.src_age_s === "number" ? "(" + Math.round(d.src_age_s) + " 秒未更新)" : "");
+      case "fence_source_restored": return "围栏数据恢复";
+      case "keyboard_refused": return "现在没有在录制, 键盘不能控制机器人";
+      case "objects_unreachable": {
+        const objs = Array.isArray(d.objects) ? d.objects : [];
+        const list = objs.slice(0, 3).join("、") + (objs.length > 3 ? " 等 " + objs.length + " 个" : "");
+        const where = d.reason === "inside_forbid" ? "在" + z + "内" : "在活动区域外";
+        return (d.trigger === "save" ? "保存围栏后, " : d.trigger === "enable" ? "启用围栏后, " : "")
+          + (list || "部分航点或路径") + " " + where + ", 到不了";
+      }
+      default: return null;
+    }
+  }
+  // P2's warning-zone intrusion (title zone_intrusion, no detail.kind)
+  function intrusionText(d) {
+    const who = EV_TARGET_CN[String(d.alarm_type || "").replace(/_in_region$/, "")];
+    const zone = d.zone_name ? "报警区域「" + d.zone_name + "」" : "报警区域";
+    return zone + "发现可疑" + (who || "目标");
+  }
 
   function evDevice(name) { return EV_DEVICE_CN[name] || name || "设备"; }
   function evSoc(d) { return typeof d.soc_pct === "number" ? "(" + d.soc_pct + "%)" : ""; }
@@ -424,8 +495,6 @@
       case "unclean_shutdown": return word("上次为非正常关机");
       case "teach.time_warning": return word("录制即将到达时长上限");
       case "teach.expired": return word("录制已超时结束");
-      case "zone_enter": return word("进入报警区域" + (d.zone_name ? " " + d.zone_name : ""));
-      case "zone_exit": return word("离开报警区域" + (d.zone_name ? " " + d.zone_name : ""));
       case "perception.reason_changed": return word("感知状态变化");
       case "config_digest": return word("感知配置摘要");
       case "config_digest_mismatch": return word("配置摘要不一致");
@@ -433,6 +502,11 @@
       case "config_manifest_unreadable": return word("配置清单不可读");
       default: break;
     }
+    if (ev && (ev.cat === "fence" || ev.cat === "teleop")) {  // 99 U203
+      const f = fenceText(sub, d);
+      if (f) return word(f);
+    }
+    if (title === "zone_intrusion") return word(intrusionText(d));  // 99 U203: zone + target
     if (ev && ev.cat === "task" && EV_TASK_CN[sub]) {
       return word("任务 " + (d.task_id || idIn(/^task (\S+)/)) + " " + EV_TASK_CN[sub]);
     }
@@ -528,11 +602,28 @@
 
   // Alarm / fault entries of the last windowS, newest first, at most max, minus
   // the families already pinned as "持续中".
+  // 99 U203: an alarm whose closing row already came is history, not pinned:
+  // a 报警区域 entry after its exit, a breach after its recovery, same
+  // polygon. Pinned, 进入报警区域 read as "still inside" for 10 min with the
+  // exit nowhere in sight (live test 2026-11-15).
+  const EV_CLOSED_BY = { zone_enter: "zone_exit", breach: "recovered" };
+  function evClosed(it, items) {
+    const d = it.detail || {};
+    const endKind = EV_CLOSED_BY[d.kind];
+    if (!endKind || !d.poly_id) return false;
+    return items.some((o) => {
+      const od = o.detail || {};
+      return o !== it && o.cat === it.cat && od.kind === endKind && od.poly_id === d.poly_id &&
+        (o.ts || 0) >= (it.ts || 0);
+    });
+  }
+
   function pinnedAlarms(items, nowS, active, windowS, max) {
     const fams = (active || []).map((a) => a.fam);
     return (items || []).filter((it) => {
       if (it.sev !== "alarm" && it.sev !== "fault") return false;
       if (typeof it.ts !== "number" || nowS - it.ts > windowS) return false;
+      if (evClosed(it, items)) return false;
       const f = eventFamily(it);
       return !(f && fams.indexOf(f.fam) >= 0);
     }).sort((a, b) => b.ts - a.ts).slice(0, max);

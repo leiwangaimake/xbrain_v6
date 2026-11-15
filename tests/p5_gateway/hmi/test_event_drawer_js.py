@@ -189,6 +189,73 @@ def test_the_zone_alarm_events_are_worded():
         assert _text({"cat": "intrusion", "title": t})["text"] != t  # worded, not raw
 
 
+_N = "北段报警区域围栏"  # a P1 poly_name as recorded on site
+
+
+def _fence(kind, role, **more):
+    """One P1 fence row as the ring carries it (cat fence, detail.kind = title)."""
+    d = dict({"kind": kind, "role": role, "poly_name": _N, "poly_id": "f-1"}, **more)  # 11 S9A.9
+    return {"cat": "fence", "title": kind, "detail": d}  # the ring entry
+
+
+@pytest.mark.parametrize("ev,text", [  # 99 U203: every fence row by role, with the zone's name
+    (_fence("zone_enter", "warning"), "进入报警区域「%s」" % _N),
+    (_fence("zone_exit", "warning"), "离开报警区域「%s」" % _N),
+    (_fence("zone_enter", "speed_limit", speed_limit_mps=0.6), "进入限速区域「%s」, 限速每秒 0.6 米" % _N),
+    (_fence("zone_exit", "speed_limit"), "离开限速区域「%s」, 恢复正常速度" % _N),
+    (_fence("soft_enter", "allow"), "接近活动区域「%s」边界, 开始减速" % _N),
+    (_fence("soft_exit", "forbid"), "远离禁止区域「%s」边界, 恢复正常速度" % _N),
+    (_fence("hard_clip", "allow"), "到达活动区域「%s」边界, 已禁止向外运动" % _N),
+    (_fence("hard_clip", "forbid"), "到达禁止区域「%s」边界, 已禁止向内运动" % _N),
+    (_fence("breach", "allow", d_nom_m=-0.846), "越界: 已越出活动区域「%s」 0.85 米" % _N),
+    (_fence("breach", "forbid", d_nom_m=-0.3), "越界: 已进入禁止区域「%s」 0.30 米" % _N),
+    (_fence("recovered", "allow"), "已回到活动区域「%s」内, 越界解除" % _N),
+    (_fence("recovered", "forbid"), "已退出禁止区域「%s」, 越界解除" % _N),
+    (_fence("contact_start", "allow", recording=None), "撞线: 到达活动区域「%s」边界, 停止前进" % _N),
+    (_fence("contact_hold", "forbid", recording=None), "撞线: 到达禁止区域「%s」边界, 不能进入(持续)" % _N),
+    (_fence("contact_hold", "allow", recording="route"), "录制路径撞线: 碰到活动区域「%s」边界, 请往回开(持续)" % _N),
+    (_fence("contact_start", "allow", recording="fence"), "录制围栏: 已在活动区域外"),
+    (_fence("contact_end", "forbid"), "离开禁止区域「%s」边界, 撞线解除" % _N),
+    (_fence("fence_degraded", "", enforcement="warn_only"), "围栏判定暂停(定位或航向不可用), 自主运动暂停"),
+    (_fence("fence_restored", ""), "围栏判定恢复正常"),
+    ({"cat": "fence", "title": "objects_unreachable", "detail": {  # P3 reach.py
+        "kind": "objects_unreachable", "trigger": "enable", "role": "allow", "reason": "outside_activity_area",
+        "objects": ["10号测试点", "3号测试点", "5号测试点", "环形路径"]}},
+     "启用围栏后, 10号测试点、3号测试点、5号测试点 等 4 个 在活动区域外, 到不了"),
+    ({"cat": "teleop", "title": "keyboard_refused", "detail": {"kind": "keyboard_refused"}},
+     "现在没有在录制, 键盘不能控制机器人"),
+    ({"cat": "fence", "title": "breach", "detail": {"kind": "breach", "truncated": True}},  # old stub
+     "越界: 已越出围栏区域"),  # no role: still Chinese, never a guessed zone
+])
+def test_fence_rows_are_worded_by_role(ev, text):
+    """99 U203 (user 2026-11-15: breach / soft_exit / contact_end were shown
+    raw; the speed zone read 进入报警区域). MUTATION: zone_enter worded
+    without the role -> the speed rows red; poly_name not read -> every
+    named row red; a kind missing -> its raw English title -> red."""
+    assert _text(ev)["text"] == text  # exact wording
+
+
+def test_the_intrusion_says_which_zone_and_what():
+    """99 U203: P2's zone_intrusion names the zone and the target group."""
+    ev = {"cat": "intrusion", "title": "zone_intrusion",
+          "detail": {"alarm_type": "person_in_region", "zone_name": _N}}  # P2 auto_alarm.py
+    assert _text(ev) == {"cat": "报警", "text": "报警区域「%s」发现可疑人员" % _N}
+
+
+def test_a_closed_zone_entry_or_breach_is_not_pinned():
+    """99 U203: 进入报警区域 stayed pinned for 10 min after the exit and read as
+    "still inside". MUTATION: no closing check -> [3, 1] -> red; closing by
+    any zone's exit -> the open f-2 entry dropped -> red."""
+    def row(kind, sev, pid, ts):  # one ring entry
+        return {"cat": "fence", "sev": sev, "ts": ts, "title": kind,
+                "detail": {"kind": kind, "poly_id": pid}}
+    items = [row("zone_enter", "alarm", "f-1", 1.0), row("zone_exit", "info", "f-1", 2.0),  # closed
+             row("breach", "alarm", "f-9", 3.0), row("recovered", "info", "f-9", 4.0),  # closed
+             row("zone_enter", "alarm", "f-2", 5.0)]  # still inside
+    expr = "pinnedAlarms(%s, 10, [], 600, 5).map(e => e.ts)" % json.dumps(items)
+    assert _node(expr) == [5.0]  # only the open entry
+
+
 def test_pinned_alarms_skip_live_families_old_ones_and_infos():
     """MUTATION: no family exclusion -> the low-battery alarm pinned twice -> red;
     no window -> yesterday's fault pinned forever -> red."""

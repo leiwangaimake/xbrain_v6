@@ -109,7 +109,37 @@ def test_detail_rides_along_but_is_capped():
     small = er.ring_item({"detail": {"type": "rtk_lost"}}, "alarm", "rtk", None)  # small
     assert small["detail"] == {"type": "rtk_lost"}  # carried whole
     big = er.ring_item({"detail": {"kind": "k", "blob": "x" * 5000}}, "info", "x", None)  # 5 kB
-    assert big["detail"] == {"type": None, "kind": "k", "truncated": True}  # stub only
+    assert big["detail"] == {"kind": "k", "truncated": True}  # the long string cut, kind kept
+
+
+def test_an_oversized_fence_detail_keeps_the_zone():
+    """99 U203: a breach is ~590 B (velocities, normal); cut to type/kind it
+    lost role and poly_name and the drawer could not say which zone.
+    MUTATION: the old type/kind-only stub -> role / poly_name gone -> red."""
+    detail = {"kind": "breach", "episode_id": 3, "poly_id": "f-001", "role": "allow",  # P1 S9A.9 row
+              "poly_name": "营区活动区域围栏", "d_nom_m": -0.85, "inset_m": 0.3,  # the words
+              "v_before": {"vx": 0.4, "vy": 0.0, "wz": 0.1},  # nested: dropped
+              "v_after": {"vx": 0.0, "vy": 0.0, "wz": 0.1},  # nested: dropped
+              "outward_normal": [0.70710678, -0.70710678], "pad": "x" * 300}  # list, long string
+    got = er.ring_item({"detail": detail}, "alarm", "fence", None)["detail"]  # through the cap
+    assert got["truncated"] is True  # it was cut
+    assert {k: got[k] for k in ("kind", "role", "poly_name", "poly_id", "d_nom_m")} == {  # kept
+        "kind": "breach", "role": "allow", "poly_name": "营区活动区域围栏",
+        "poly_id": "f-001", "d_nom_m": -0.85}
+    assert not {"v_before", "v_after", "outward_normal", "pad"} & set(got)  # the bulk dropped
+
+
+def test_two_zones_never_merge_one_zone_does():
+    """99 U203: leaving the warning zone then the speed zone 6 s later are two
+    zone_exit rows of one cat / sev / title. MUTATION: no zone in the key ->
+    the warning-zone exit folds under the speed-zone one -> red."""
+    def exit_of(pid, ts):  # one P1 zones.py row
+        return {"title": "zone_exit", "ts": ts, "detail": {"kind": "zone_exit", "poly_id": pid}}
+    ring = _push([], exit_of("f-1", 1.0), sev="info", cat="fence")  # warning zone
+    ring = _push(ring, exit_of("f-speed", 7.0), sev="info", cat="fence")  # speed zone
+    assert len(ring) == 2  # two zones, two entries
+    ring = _push(ring, exit_of("f-speed", 9.0), sev="info", cat="fence")  # same zone again
+    assert len(ring) == 2 and ring[-1]["count"] == 2  # a real repeat still folds
 
 
 def _db(path, rows):

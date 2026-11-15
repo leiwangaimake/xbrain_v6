@@ -19,13 +19,14 @@ could not say which battery, which device, which task.
 Rules (user ruling 2026-11-12, recommendations 5 / 7 / 8)
 ---------------------------------------------------------
   * RING_MAX entries, newest last;
-  * an exact repeat -- same cat, sev, title and detail.type (or detail.kind) --
-    within MERGE_WINDOW_S of that entry's last occurrence is folded into it:
+  * an exact repeat -- same cat, sev, title, detail.type (or detail.kind) and
+    zone (detail.poly_id / zone_id, 99 U203) -- within MERGE_WINDOW_S of that entry's last occurrence is folded into it:
     count + 1, ts / eid / detail become the newest, first_ts stays, and the
     entry moves to the end. A continuous alarm is ONE entry "since first_ts";
   * a task event carries the task id in its title, so two tasks never merge;
   * detail rides along, capped at DETAIL_MAX_BYTES serialised (the whole group
-    is resent on every WS delta in which it changed);
+    is resent on every WS delta in which it changed); an oversized one keeps
+    its short scalars (99 U203);
   * pos: the event's own pos when it has lat / lon; otherwise the robot's fresh
     position at arrival (pos_src "robot"), because no producer stamps one today
     (record.db location_lat is empty in every row) and the drawer's click-to-
@@ -44,21 +45,36 @@ from typing import Any, Dict, List, Mapping, Optional, Sequence  # signatures
 RING_MAX = 200  # recommendation 7: the list shows the newest 200 entries
 MERGE_WINDOW_S = 10.0  # repeats closer than this fold into one entry (p3 repeats every 2 s)
 DETAIL_MAX_BYTES = 512  # serialised detail cap per entry (low_battery is ~260 B)
+SCALAR_MAX_CHARS = 80  # an oversized detail keeps its scalars up to this length
+
+
+def _size(d: Mapping[str, Any]) -> int:
+    """Serialised wire size; an unserialisable detail counts as oversized."""
+    try:  # a non-JSON value must not break the event callback
+        return len(json.dumps(d, ensure_ascii=False).encode("utf-8"))  # wire size
+    except (TypeError, ValueError):  # unserialisable content
+        return DETAIL_MAX_BYTES + 1  # treat it as oversized
 
 
 def _detail(raw: Any) -> Optional[Dict[str, Any]]:
-    """detail as a dict, or a type/kind stub when it is too large to carry."""
+    """detail as a dict; an oversized one keeps its short scalars."""
     if not isinstance(raw, Mapping):  # absent or not an object
         return None  # nothing to show
     d = dict(raw)  # a private copy: the ring must not alias producer data
-    try:  # a non-JSON value must not break the event callback
-        size = len(json.dumps(d, ensure_ascii=False).encode("utf-8"))  # wire size
-    except (TypeError, ValueError):  # unserialisable content
-        size = DETAIL_MAX_BYTES + 1  # treat it as oversized
-    if size <= DETAIL_MAX_BYTES:  # small enough to carry whole
+    if _size(d) <= DETAIL_MAX_BYTES:  # small enough to carry whole
         return d  # as sent
-    # Oversized: keep the two keys the drawer words its text on, say it was cut.
-    return {"type": d.get("type"), "kind": d.get("kind"), "truncated": True}  # stub
+    # 99 U203: oversized -> drop the nested parts and long strings, keep the
+    # short scalars the drawer words on. The old stub kept type/kind only, and
+    # a fence breach / hard_clip / recovered (~590 B with v_before, v_after,
+    # outward_normal) or a P2 zone_intrusion (~700 B with targets) lost its
+    # role, zone name and target -- the drawer could not say which zone.
+    keep = {k: v for k, v in d.items()
+            if v is None or isinstance(v, (bool, int, float))
+            or (isinstance(v, str) and len(v) <= SCALAR_MAX_CHARS)}  # short scalars
+    keep["truncated"] = True  # say it was cut
+    if _size(keep) <= DETAIL_MAX_BYTES:  # the scalars alone fit
+        return keep  # role / names / numbers kept
+    return {"type": d.get("type"), "kind": d.get("kind"), "truncated": True}  # last resort
 
 
 def _latlon(p: Any) -> Optional[Dict[str, float]]:
@@ -92,7 +108,11 @@ def merge_key(item: Mapping[str, Any]) -> tuple:
     """What makes two entries the same thing happening again."""
     d = item.get("detail") or {}  # may be None
     sub = d.get("type") or d.get("kind")  # producers use one or the other
-    return (item.get("cat"), item.get("sev"), item.get("title"), sub)  # exact repeat
+    # 99 U203: the zone too -- leaving the warning zone and, 10 s later, the
+    # speed zone are two zone_exit rows of one cat / sev / title; folded, the
+    # first exit vanished under the second's newest detail.
+    zone = d.get("poly_id") or d.get("zone_id")  # fence / intrusion rows name it
+    return (item.get("cat"), item.get("sev"), item.get("title"), sub, zone)  # exact repeat
 
 
 def push(ring: Sequence[Mapping[str, Any]], item: Mapping[str, Any],
