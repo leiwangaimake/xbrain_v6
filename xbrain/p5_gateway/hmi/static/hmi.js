@@ -388,9 +388,11 @@
     const name = d.poly_name || d.zone_name || "";
     return name ? role + "「" + name + "」" : role;
   }
-  // breach depth: d_nom_m is the signed distance to the nominal line, < 0 past it
+  // breach depth: d_nom_m is the signed distance to the nominal line, < 0 past it.
+  // Under 1 cm says nothing: a 0.3 mm breach read "0.00 米" live (2026-11-15).
   function evDepth(d) {
-    return typeof d.d_nom_m === "number" && d.d_nom_m < 0 ? " " + (-d.d_nom_m).toFixed(2) + " 米" : "";
+    const m = typeof d.d_nom_m === "number" ? -d.d_nom_m : 0;
+    return m >= 0.01 ? " " + m.toFixed(2) + " 米" : "";
   }
   function evSpeed(v) {
     return typeof v === "number" ? ", 限速每秒 " + String(Number(v.toFixed(2))) + " 米" : "";
