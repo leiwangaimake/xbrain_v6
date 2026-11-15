@@ -40,6 +40,7 @@ Examples:
 
 import argparse
 import math
+import re
 import socket
 import sys
 import threading
@@ -203,21 +204,40 @@ def connect(host, port, timeout):
     return s
 
 
-def drain(s, idle=1.0, maxbytes=1 << 20):
-    """Read a request/reply burst: return once the peer is idle for `idle`s.
-    Only safe when the reply is followed by a gap > idle. For a stream that
-    keeps arriving (e.g. the 2s [99] auto-report), use capture_for()."""
-    s.settimeout(idle)
+# One [99] auto-report: [99]"{...json...}". After the 2026-11 repair the unit
+# sends it every ~0.5 s, so it must not count as reply traffic in drain().
+REPORT_RE = re.compile(rb'\[99\]"\{.*?\}"', re.S)
+
+
+def drain(s, idle=1.0, maxbytes=1 << 20, total=None):
+    """Read a request/reply burst: return once the reply has been idle for
+    `idle`s, or after `total`s at most (default idle + 4).
+    [99] auto-reports are dropped from the result and do not reset the idle
+    timer -- at the post-repair ~0.5 s cadence the line is never idle for 1 s,
+    and the old drain() spun until maxbytes (tts/info hung until killed).
+    For a fixed listening window that keeps the reports, use capture_for()."""
+    total = idle + 4.0 if total is None else total
+    end = time.monotonic() + total
+    quiet_at = time.monotonic() + idle
+    s.settimeout(0.2)
     buf = bytearray()
+    reply_len = 0
     while len(buf) < maxbytes:
+        now = time.monotonic()
+        if now >= quiet_at or now >= end:
+            break
         try:
             d = s.recv(4096)
         except socket.timeout:
-            break
+            continue
         if not d:
             break
         buf += d
-    return bytes(buf)
+        n = len(REPORT_RE.sub(b"", bytes(buf)))
+        if n > reply_len:  # real reply bytes arrived (a half report counts once)
+            reply_len = n
+            quiet_at = time.monotonic() + idle
+    return REPORT_RE.sub(b"", bytes(buf))
 
 
 def capture_for(s, seconds, maxbytes=1 << 20):
@@ -334,7 +354,7 @@ def cmd_info(args):
         rep = capture_for(s, args.listen)
         if cmd_prefix(CMD_REPORT, args.enc) in rep or b"volume_real" in rep:
             show("report [99]", rep)
-            print("  -> device sends the 2s auto-report (standalone / 四合一 behaviour).")
+            print("  -> device sends the [99] auto-report (2 s on the old firmware, ~0.5 s after the 2026-11 repair).")
         else:
             print("  -> no [99] auto-report seen (expected for 三合一, or none in window).")
     finally:
