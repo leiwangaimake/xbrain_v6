@@ -174,7 +174,7 @@ elif [[ -x "$PERCEPTION_BIN" ]]; then
 else
     echo "  perception skipped (no binary at $PERCEPTION_BIN)"
 fi
-if [[ -e /dev/ttyACM0 ]]; then
+if [[ -e /dev/ttyUART_232_A ]]; then   # UM982 COM2 over RS-232 (configs/rtk_driver.yaml)
     start_bg rtk_driver env XBRAIN_RESOLVED_DIR="$RESOLVED" "$INST/rtk_driver/lib/rtk_driver/rtk_driver"
 fi
 sleep 4

@@ -8,7 +8,7 @@
 # CMake build dir. Deploy must have run:
 #   cd /opt/xbrain_v6/ros2_ws/sensor && cmake -B build && cmake --build build
 # LD_LIBRARY_PATH carries libzenohc (installed to /usr/local by the zenoh-c step).
-# SupplementaryGroups=dialout lets it open /dev/ttyACM0 without a chmod.
+# SupplementaryGroups=dialout lets it open the UM982 serial port (/dev/ttyUART_232_A) without a chmod.
 # XBRAIN_ROBOT_ID (the {rid} key segment) comes from deploy/env/robot.env, the
 # same site identity the rest of the stack uses; if absent the process refuses to
 # start (3.1: no default rid). That fail-stop is unchanged by the 2026-09-30 move

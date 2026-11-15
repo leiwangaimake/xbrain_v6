@@ -18,7 +18,9 @@
 # is silently defaulted in code.
 
 serial:
-  port: "/dev/ttyACM0"       # WCH CH343 USB serial -> Unicore UM982-class module
+  port: "/dev/ttyUART_232_A" # MiiVii RS-232 A (CH9344 USB1) -> UM982 COM2. 2026-11-15: moved off
+                             # the CH343 USB link (ttyACM0 = COM1), which EMI kept dropping; COM2
+                             # carries the same 9 logs as COM1 (SAVECONFIG) and takes RTCM input
   baudrate: 115200           # module saved config; 8N1, no flow control
 heading_stddev_deg: 1.0      # L1 heading 1sigma. ~0.35 m baseline bench ~1 deg;
                              # a config value until UNIHEADINGA per-solution cov is parsed

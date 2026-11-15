@@ -51,7 +51,7 @@
  ┌─ main thread, 20 Hz loop (existing) ───────────────────────────────────────────────┼─┐
  │  take frames (never waits) ──> RtcmSink: bounded, drop oldest WHOLE frame    ✅    │ │
  │                                   │                                                │ │
- │  serial fd /dev/ttyACM0  O_RDWR <─┘ non-blocking write, partial-write safe   ✅    │ │
+ │  serial fd ttyUART_232_A O_RDWR <─┘ non-blocking write, partial-write safe   ✅    │ │
  │      │ NMEA read                                                             ✅    │ │
  │      v                                                                             │ │
  │  RtkDriver: nmea_parser (+ GGA field 13 diff age ✅) -> heading_resolver           │ │
@@ -59,7 +59,7 @@
  │      ├──> rt/gnss/heading                                                           │
  │      └──> rt/clock/status (1 Hz)                                                    │
  └──────────────────────────────────────┬──────────────────────────────────────────────┘
-                                        │ UART 115200 (CH343)   RTCM ↓   NMEA ↑
+                                        │ RS-232 115200 (COM2)  RTCM ↓   NMEA ↑
                                  ┌──────┴──────┐
                                  │    UM982    │
                                  └─────────────┘
@@ -79,7 +79,7 @@
 
 ### 1.2 为什么串口只归主线程（`11` RTG-2）
 
-UM982 只有一个 COM 口经 CH343 接到 ORIN，NMEA 读和 RTCM 写在同一个 fd 上。只有主线程碰这个 fd：
+UM982 的 COM2 经 RS-232（`/dev/ttyUART_232_A`，2026-11-15 起；此前是 COM1 经 CH343 USB 的 `/dev/ttyACM0`，易受电磁干扰掉线）接到 ORIN，NMEA 读和 RTCM 写在同一个 fd 上。只有主线程碰这个 fd：
 网络线程交出来的是内存里的整帧，写串口由主循环完成，这样也不需要给 fd 加锁。
 
 ---
@@ -89,7 +89,7 @@ UM982 只有一个 COM 口经 CH343 接到 ORIN，NMEA 读和 RTCM 写在同一�
 ### 2.1 数据流
 
 ```
- /dev/ttyACM0 ──read()──> RtkDriver::feed()   按行切分 NMEA，按到达时刻(单调钟)给每条事实打时戳
+ /dev/ttyUART_232_A ──read()──> RtkDriver::feed()   按行切分 NMEA，按到达时刻(单调钟)给每条事实打时戳
                               │  GGA → 位置 / 解质量 / 卫星数 / HDOP
                               │  TRA → 双天线航向 + QF
                               │  RMC → 地速 + 航迹向 (COG)

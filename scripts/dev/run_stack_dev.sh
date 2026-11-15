@@ -161,7 +161,7 @@ _start_bg zenohd-rt  "$ZENOHD" -l tcp/127.0.0.1:7449 --no-multicast-scouting
 _start_bg zenohd-gen "$ZENOHD" -l tcp/127.0.0.1:7447 --no-multicast-scouting
 sleep 2
 
-# --- RT-plane: rtk_driver (real serial /dev/ttyACM0) ----------------------
+# --- RT-plane: rtk_driver (real serial /dev/ttyUART_232_A) ----------------
 echo "==> RT plane"
 if [[ -x "$RTK_BIN" ]]; then
     # XBRAIN_ROBOT_ID comes from the global export above (whitelisted). Only

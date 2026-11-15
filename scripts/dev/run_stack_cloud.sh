@@ -42,7 +42,7 @@
 #                     reconnect warning. This is the acceptance-evidence sink for
 #                     motion commands while quadruped is unbuilt.
 #   2  routers     -- RT first then GEN, mirroring 10 S3.3 stage 0z ordering.
-#   3  rtk_driver  -- RT plane; skipped when the binary or /dev/ttyACM0 is absent
+#   3  rtk_driver  -- RT plane; skipped when the binary or /dev/ttyUART_232_A is absent
 #                     (GATED-HW, and its absence must not stop the cloud test).
 #   4  p1_motion   -- cross-plane; also the process that owns the chassis exit.
 #   5  p2..p5      -- general plane, p5 LAST: the cloud bridge lives inside it
@@ -265,10 +265,10 @@ sleep 2
 
 # ---------------------------------------------------------------- stage 3
 echo "==> [stage 3] RT plane"
-if [[ -x "$RTK_BIN" ]] && [[ -e /dev/ttyACM0 ]]; then
+if [[ -x "$RTK_BIN" ]] && [[ -e /dev/ttyUART_232_A ]]; then
     _start_bg rtk_driver env XBRAIN_RESOLVED_DIR="$RESOLVED_DIR" "$RTK_BIN"
 else
-    echo "  rtk_driver skipped (binary or /dev/ttyACM0 absent -- GATED-HW)"
+    echo "  rtk_driver skipped (binary or /dev/ttyUART_232_A absent -- GATED-HW)"
 fi
 
 # ---------------------------------------------------------------- stage 4
