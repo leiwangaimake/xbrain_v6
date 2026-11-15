@@ -209,7 +209,7 @@ def _fence(kind, role, **more):
     (_fence("hard_clip", "forbid"), "到达禁止区域「%s」边界, 已禁止向内运动" % _N),
     (_fence("breach", "allow", d_nom_m=-0.846), "越界: 已越出活动区域「%s」 0.85 米" % _N),
     (_fence("breach", "forbid", d_nom_m=-0.3), "越界: 已进入禁止区域「%s」 0.30 米" % _N),
-    (_fence("breach", "forbid", d_nom_m=-0.0003), "越界: 已进入禁止区域「%s」" % _N),  # < 1 cm: no 0.00
+    (_fence("breach", "forbid", d_nom_m=-0.0003), "越界: 已进入禁止区域「%s」" % _N),
     (_fence("recovered", "allow"), "已回到活动区域「%s」内, 越界解除" % _N),
     (_fence("recovered", "forbid"), "已退出禁止区域「%s」, 越界解除" % _N),
     (_fence("contact_start", "allow", recording=None), "撞线: 到达活动区域「%s」边界, 停止前进" % _N),
