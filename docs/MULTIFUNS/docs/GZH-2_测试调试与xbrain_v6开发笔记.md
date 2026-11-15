@@ -13,7 +13,7 @@
 - **计算单元**：NVIDIA Jetson Orin（aarch64），hostname `xbrain`。xbrain_v6 与所有对设备的代码都跑在这里。
 - **网络链路**：
   - dev box `Hachist` → `ssh jack@xbrain.local`（192.168.0.112，办公室 WiFi）。
-  - Orin 网卡 `enP8p1s0` = `192.168.144.100/24` → 负载 `192.168.144.38`。
+  - ~~Orin 网卡 `enP8p1s0` = `192.168.144.100/24` → 负载 `192.168.144.38`。~~ 2026-11-15 起：机器人 `lan2`（NetworkManager 连接 `lan2-vxworks`，与 `192.168.188.200` 同口）加挂 `192.168.144.200/24` → 负载 `192.168.144.38`；`lan0`（底盘口）已不再挂 144 网段。
   - 端口：**8519 = 音频**，**8529 = 灯光**。LAN ping ≈ 0.7ms。
 - **依赖（Orin 已装）**：`opuslib`(pip) + `libopus0`(apt)；`numpy` 1.21.5。dev box numpy 2.3.3。
 - **凭据**：SSH 当前免密；sudo 密码按会话临时提供，**不入库**。
