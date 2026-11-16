@@ -123,3 +123,19 @@ def test_stamp_envelope_shape():
     bare = gnss_pose.stamp_envelope({"x": 1}, rid="m20s", boot="", seq=1,
                                     src="p1_motion", ts_sync=True)
     assert "boot" not in bare and "mono" not in bare       # CLK-C4: the pair rides together
+
+
+def test_rtcm_view_goes_unknown_when_stale():  # 99 U204, 11 S3.2A.4
+    """rt/gnss/rtcm older than RTCM_STATUS_STALE_S -> None (the HMI shows
+    "差分 状态未知"), never the last good state. MUTATION: drop the age check
+    -> a dead rtk_driver keeps showing "基站 正常" -> red."""
+    st = {"active": "lan", "lan": {"valid": True}}
+    assert gnss_pose.rtcm_view(st, 100.0, 101.0) is st
+    assert gnss_pose.rtcm_view(st, 100.0, 100.0 + gnss_pose.RTCM_STATUS_STALE_S + 0.1) is None
+    assert gnss_pose.rtcm_view(None, None, 100.0) is None
+
+
+def test_pose_carries_the_receiver_diff_age():  # 99 U204
+    pose = gnss_pose.assemble_pose({}, {"fix_type": "rtk_fixed", "age_s": 1.2})
+    assert pose["diff_age_s"] == 1.2
+    assert gnss_pose.assemble_pose({}, {"fix_type": "single", "age_s": None})["diff_age_s"] is None

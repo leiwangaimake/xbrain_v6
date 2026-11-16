@@ -110,6 +110,11 @@ class RtkDriver {
   // rtk_driver reads chrony, and it does so in the process, not this class).
   void tickClock(const ChronyReading& r, double now_mono_s, int64_t wall_ms);
 
+  // Publish xbrain/{rid}/rt/gnss/rtcm (11 S3.2A.4) with data_json from
+  // CorrectionLink::statusJson(). Called at 1 Hz by main(), whether or not a
+  // source is enabled, so "corrections off" is as visible as "base silent".
+  void publishRtcm(const std::string& data_json, double now_mono_s, int64_t wall_ms);
+
   int level() const { return resolver_.level(); }
 
   // The latest GGA as a position for the RTCM link's GGA uplink (11 S3.2A
@@ -125,10 +130,12 @@ class RtkDriver {
   hachist::xbrain::envelope::EnvelopeWriter envelope_;
   hachist::xbrain::envelope::EnvelopeWriter envelope_fix_;    // own seq for the fix topic
   hachist::xbrain::envelope::EnvelopeWriter envelope_clock_;  // own seq for the clock topic
+  hachist::xbrain::envelope::EnvelopeWriter envelope_rtcm_;   // own seq for the rtcm topic
   std::string rx_;                    // partial-line accumulator
   std::string heading_key_;           // precomputed xbrain/{rid}/rt/gnss/heading
   std::string fix_key_;               // precomputed xbrain/{rid}/rt/gnss/fix
   std::string clock_key_;             // precomputed xbrain/{rid}/rt/clock/status
+  std::string rtcm_key_;              // precomputed xbrain/{rid}/rt/gnss/rtcm
 
   // Wall-step detection for ClockStatus.step_count: a wall delta that disagrees
   // with the monotonic delta by more than a threshold is a clock step (CLK-C6).

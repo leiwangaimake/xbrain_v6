@@ -121,6 +121,7 @@ def pose_group(pose: Optional[Dict[str, Any]]) -> Dict[str, Any]:
             "baseline_valid": None,
             "speed_mps": None, "fix_type": None, "cov_h_m": None,
             "num_satellites": None,
+            "diff_age_s": None, "rtcm": None,
             "yaw_capable": False,
         }
     # Pass through only the fields 17 S6.8 defines; a stray key from the source
@@ -141,6 +142,10 @@ def pose_group(pose: Optional[Dict[str, Any]]) -> Dict[str, Any]:
         "fix_type": pose.get("fix_type"),
         "cov_h_m": pose.get("cov_h_m"),
         "num_satellites": pose.get("num_satellites"),   # 18-C G44 / RTK panel
+        # 11 S3.2A.4: the differential link (rt/gnss/rtcm via p1, None = state
+        # unknown) and the age the receiver itself reports (None = no corrections).
+        "diff_age_s": pose.get("diff_age_s"),
+        "rtcm": pose.get("rtcm"),
         "yaw_capable": bool(pose.get("yaw_capable", False)),
     }
 

@@ -326,6 +326,9 @@ int main() {
     if (mono - last_clock >= 1.0) {
       const int64_t w = wall_ms();
       driver.tickClock(read_chrony(static_cast<double>(w) / 1000.0), mono, w);
+      // rt/gnss/rtcm at the same 1 Hz (11 S3.2A.4): the differential link state
+      // for P1 -> state/pose -> HMI. Published even with no source enabled.
+      driver.publishRtcm(link.statusJson(), mono, w);
       last_clock = mono;
     }
     ++ticks;

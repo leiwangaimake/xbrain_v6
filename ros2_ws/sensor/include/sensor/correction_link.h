@@ -100,6 +100,11 @@ class CorrectionLink {
   void setPosition(const PositionSample& s);
   void takeFrames(std::vector<TaggedFrame>* out);   // appends, oldest first
   std::string statusLine() const;
+  // The same snapshot as statusLine(), as the `data` JSON of xbrain/{rid}/rt/gnss/rtcm
+  // (11 S3.2A.4): which source feeds the receiver, and per source the link state,
+  // health and how long ago bytes / observations / the station message arrived.
+  // Valid before start() too (seeded at construction: everything off or idle).
+  std::string statusJson() const;
 
  private:
   struct Source;     // one connection + its framer / health (defined in the .cc)
@@ -137,9 +142,10 @@ class CorrectionLink {
   std::mutex pos_mu_;
   PositionSample pos_;
 
-  // Status snapshot for the heartbeat log.
+  // Status snapshot for the heartbeat log and rt/gnss/rtcm.
   mutable std::mutex status_mu_;
   std::string status_;
+  std::string status_json_;
 };
 
 }  // namespace sensor

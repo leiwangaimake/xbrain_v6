@@ -1709,8 +1709,38 @@
     // LOSS rather than paint a fake green, but this branch should never fire.
     return { text: "航向 LOSS", cls: "bad" };
   }
+  // Differential link (11 S3.2A.4, 99 U204): rt/gnss/rtcm via p1 state/pose.
+  // pose.rtcm null = rtk_driver silent for 3 s -> the state is UNKNOWN, never the
+  // last good one. "Base OK" needs the bridge feeding the receiver (active=lan)
+  // AND the receiver reporting a differential age; without the age the bytes go
+  // out but the module is not using them, which is a fault, not green.
+  function rtcmStat(pose) {
+    const r = pose.rtcm;
+    if (!r) return { text: "差分 状态未知", cls: "bad", tip: "rtk_driver 3 秒无差分状态" };
+    const lan = r.lan || {}, nt = r.ntrip || {};
+    const sec = (v) => (v == null ? "--" : v.toFixed(1) + "s");
+    const tip = `基站 ${lan.host || "-"}:${lan.port || "-"} ${lan.state || "-"}` +
+      ` 收数 ${sec(lan.rx_age_s)}前 观测 ${sec(lan.obs_age_s)}前 基站坐标 ${sec(lan.station_age_s)}前` +
+      ` 帧 ${lan.frames || 0} CRC错 ${lan.crc_errors || 0} 站号 ${lan.station_id == null ? "-" : lan.station_id}` +
+      ` | 模块差分龄期 ${sec(pose.diff_age_s)}`;
+    if (!lan.enabled && !nt.enabled) return { text: "差分 未启用", cls: "warn", tip };
+    if (r.active === "lan" || r.active === "ntrip") {
+      const who = r.active === "lan" ? "基站" : "千寻";
+      if (pose.diff_age_s == null) return { text: `差分 ${who} 模块未用`, cls: "warn", tip };
+      return { text: `差分 ${who} ${pose.diff_age_s.toFixed(1)}s`, cls: "ok", tip };
+    }
+    if (lan.enabled) {
+      // reachable (rtk_driver): the bridge answered within one retry cycle, so
+      // the idle gap between two dials does not flash "未连接".
+      if (!lan.reachable) return { text: "差分 转发器未连接", cls: "bad", tip };
+      if (lan.rx_age_s == null || lan.rx_age_s > 3) return { text: "差分 基站无数据", cls: "bad", tip };
+      return { text: "差分 等待基站坐标", cls: "warn", tip };
+    }
+    return { text: "差分 千寻未连接", cls: "bad", tip };
+  }
   function setStat(id, s) {
-    const el = $(id); if (el) { el.textContent = s.text; el.className = "stat " + s.cls; }
+    const el = $(id);
+    if (el) { el.textContent = s.text; el.className = "stat " + s.cls; el.title = s.tip || ""; }
   }
 
   function renderStatus(status, pose, origin, clock) {
@@ -1734,6 +1764,7 @@
       `E ${e}m   N ${n}m　航向 ${hdg}°　速度 ${spd}m/s`;
     // Footer status (2026-08-16): fix / heading / sync as coloured text, no dots.
     setStat("fixText", fixStat(pose));
+    setStat("rtcmText", rtcmStat(pose));
     setStat("hdgText", hdgStat(pose));
     // sync (18-C G47): 授时同步 green / 授时未同步 red. Absent source -> unsynced.
     const synced = !!(clock && clock.available && clock.sync);

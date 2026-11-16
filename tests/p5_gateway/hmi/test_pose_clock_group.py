@@ -80,3 +80,12 @@ def test_build_snapshot_exposes_clock_group():
     snap = dr.build_snapshot(clock={"sync": False, "source": "none"})
     assert "clock" in snap
     assert snap["clock"]["sync"] is False
+
+
+def test_pose_group_passes_the_differential_link():  # 99 U204, 11 S3.2A.4
+    rtcm = {"active": "lan", "lan": {"state": "streaming"}}
+    g = dr.pose_group({"fix_type": "rtk_fixed", "diff_age_s": 0.8, "rtcm": rtcm})
+    assert g["rtcm"] == rtcm and g["diff_age_s"] == 0.8
+    # no pose -> both unknown, not a fabricated "off"
+    ng = dr.pose_group(None)
+    assert ng["rtcm"] is None and ng["diff_age_s"] is None

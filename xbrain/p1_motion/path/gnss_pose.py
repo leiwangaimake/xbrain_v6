@@ -89,7 +89,26 @@ def assemble_pose(gnss_heading: Optional[Dict[str, Any]],
         "cov_h_m": gf.get("cov_h_m"),
         "i_fix": _I_FIX_BY_TYPE.get(fix_type) if fix_type else None,
         "num_satellites": gf.get("sats"),
+        # Differential age the RECEIVER reports (GGA field 13, rt/gnss/fix age_s):
+        # the only proof that corrections actually reach the module. None = it
+        # is using none.
+        "diff_age_s": gf.get("age_s"),
     }
+
+
+#: rt/gnss/rtcm is published at 1 Hz (11 S3.2A.4). Three missed frames mean
+#: rtk_driver (or the RT plane) is gone: the link state is then UNKNOWN, which
+#: the HMI must show as such -- never the last good state.
+RTCM_STATUS_STALE_S = 3.0
+
+
+def rtcm_view(rtcm: Optional[Dict[str, Any]], rx_mono: Optional[float],
+              now_mono: float) -> Optional[Dict[str, Any]]:
+    """The rt/gnss/rtcm `data` for state/pose `rtcm`, or None when it never
+    arrived or is older than RTCM_STATUS_STALE_S (by receive time, monotonic)."""
+    if rtcm is None or rx_mono is None or now_mono - rx_mono > RTCM_STATUS_STALE_S:
+        return None
+    return rtcm
 
 
 def mirror_clock(clock_status: Optional[Dict[str, Any]]) -> Dict[str, Any]:

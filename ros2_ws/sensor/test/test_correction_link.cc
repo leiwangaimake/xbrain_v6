@@ -27,6 +27,7 @@
 
 #include <chrono>
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
 #include <string>
 #include <thread>
@@ -268,8 +269,58 @@ static void test_ntrip_401_long_backoff() {
   close(lfd);
 }
 
+// 99 U204: rt/gnss/rtcm data. Seeded before start (off -> the HMI can say
+// "未启用"), active=lan with the station id while the base streams, and once
+// the bridge goes silent the link leaves streaming and rx_age_s keeps growing
+// (the HMI's "基站无数据"), never a frozen "valid".
+static void test_status_json() {
+  CorrectionConfig off = base_cfg();
+  CorrectionLink idle(off);
+  const std::string j0 = idle.statusJson();
+  CHECK(j0.find("\"active\":\"none\"") != std::string::npos);
+  CHECK(j0.find("\"lan\":{\"enabled\":false,\"state\":\"idle\",\"reachable\":false") !=
+        std::string::npos);
+  CHECK(j0.find("\"rx_age_s\":null") != std::string::npos);
+
+  int port = 0;
+  const int lfd = listen_local(&port);
+  CorrectionConfig c = base_cfg();
+  c.lan.enabled = true;
+  c.lan.host = "127.0.0.1";
+  c.lan.port = port;
+  CorrectionLink link(c);
+  link.start();
+  const int cfd = accept_within(lfd, 3.0);
+  CHECK(cfd >= 0);
+  if (cfd >= 0) {
+    const std::string s = make_frame(1006, 7, 15) + make_frame(1074, 7, 40);
+    send(cfd, s.data(), s.size(), MSG_NOSIGNAL);
+    take_within(link, 2, 3.0);
+    const std::string j1 = link.statusJson();
+    CHECK(j1.find("\"active\":\"lan\"") != std::string::npos);
+    CHECK(j1.find("\"state\":\"streaming\",\"reachable\":true,\"valid\":true") != std::string::npos);
+    CHECK(j1.find("\"station_id\":7") != std::string::npos);
+    CHECK(j1.find("\"host\":\"127.0.0.1\"") != std::string::npos);
+    // silent past read_timeout_s: no longer streaming, not valid, age still reported
+    std::this_thread::sleep_for(std::chrono::milliseconds(
+        static_cast<int>((c.lan.read_timeout_s + 0.5) * 1000)));
+    const std::string j2 = link.statusJson();
+    CHECK(j2.find("\"active\":\"none\"") != std::string::npos);
+    CHECK(j2.find("\"valid\":true") == std::string::npos);
+    CHECK(j2.find("\"reachable\":true") != std::string::npos);   // the server still answers
+    // (it may already have redialled the listener; the bytes stay old either way)
+    const std::size_t at = j2.find("\"rx_age_s\":");
+    CHECK(at != std::string::npos &&
+          std::atof(j2.c_str() + at + std::strlen("\"rx_age_s\":")) >= c.lan.read_timeout_s);
+    close(cfd);
+  }
+  link.stop();
+  close(lfd);
+}
+
 int main() {
   test_lan_primary();
+  test_status_json();
   test_ntrip_cold_standby_and_rebase();
   test_ntrip_401_long_backoff();
   if (g_failures == 0) {

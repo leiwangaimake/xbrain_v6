@@ -116,7 +116,9 @@ struct CorrectionLink::Source {
   double next_try = 0.0;
   double backoff = 0.0;        // 0 = next failure uses backoff_min_s
   double t_state = 0.0;
-  double last_rx = 0.0;
+  double last_rx = 0.0;         // read-timeout clock: also set on connect
+  double last_byte = -1.0;      // 99 U204: last real byte, kept across reconnects (status only)
+  double last_connect = -1.0;   // 99 U204: last connection that reached streaming (status only)
   Rtcm3Framer framer;
   SourceHealth health;
   std::string header;          // NTRIP reply accumulation
@@ -130,7 +132,11 @@ CorrectionLink::CorrectionLink(CorrectionConfig cfg)
       lan_(new Source("lan", cfg_.health)),
       ntrip_(new Source("ntrip", cfg_.health)),
       selector_(cfg_.selector),
-      anchor_(cfg_.ntrip.gga_max_pos_age_s, cfg_.ntrip.vrs_rebase_km) {}
+      anchor_(cfg_.ntrip.gga_max_pos_age_s, cfg_.ntrip.vrs_rebase_km) {
+  // Seed the snapshot so rt/gnss/rtcm says "off / idle" from the first second,
+  // and also when no source is enabled and the thread never starts.
+  publishStatus(mono_now_s());
+}
 
 CorrectionLink::~CorrectionLink() { stop(); }
 
@@ -172,6 +178,11 @@ void CorrectionLink::takeFrames(std::vector<TaggedFrame>* out) {
 std::string CorrectionLink::statusLine() const {
   std::lock_guard<std::mutex> lk(status_mu_);
   return status_;
+}
+
+std::string CorrectionLink::statusJson() const {
+  std::lock_guard<std::mutex> lk(status_mu_);
+  return status_json_;
 }
 
 void CorrectionLink::run() {
@@ -390,6 +401,7 @@ void CorrectionLink::onReadable(Source& s, bool is_ntrip, double now,
     }
     s.bytes_rx += static_cast<uint64_t>(n);
     s.last_rx = now;
+    s.last_byte = now;
     if (!is_ntrip || s.state == LinkState::kStreaming) {
       if (s.chunked) {
         std::string dec;
@@ -418,6 +430,7 @@ void CorrectionLink::onReadable(Source& s, bool is_ntrip, double now,
         s.header.clear();
         s.chunked = r.kind == NtripReplyKind::kStreamChunked;
         s.enter(LinkState::kStreaming, now);
+        s.last_connect = now;
         s.backoff = 0.0;
         last_gga_ = -1.0;                       // GGA right away, next pass
         if (!rest.empty()) {
@@ -484,12 +497,57 @@ void CorrectionLink::publishStatus(double now) {
   std::string line = std::string("rtcm active=") + active_source_name(selector_.active()) +
                      " lan=" + one(*lan_, cfg_.lan.enabled) +
                      " ntrip=" + one(*ntrip_, cfg_.ntrip.enabled);
+  uint64_t dropped = 0;
   {
     std::lock_guard<std::mutex> lk(out_mu_);
-    line += " out_dropped=" + std::to_string(out_dropped_);
+    dropped = out_dropped_;
   }
+  line += " out_dropped=" + std::to_string(dropped);
+
+  // rt/gnss/rtcm data (11 S3.2A.4). An age is null when the event never happened;
+  // rx_age_s counts from the last real byte and keeps growing across reconnects,
+  // so the HMI can say how long the base has been silent, not only that it is.
+  // reachable: the server end answers -- streaming now, or it was last heard from
+  // (a connection reaching streaming, or a byte) within one full retry cycle
+  // (read timeout + max back-off + connect timeout), so the idle gap between two
+  // dials does not read as "unreachable". The byte counts too: the first drop
+  // after a long healthy session has an old connect time but fresh bytes.
+  auto age = [now](double t) {
+    char b[32];
+    if (t < 0.0) return std::string("null");
+    std::snprintf(b, sizeof(b), "%.2f", std::max(0.0, now - t));
+    return std::string(b);
+  };
+  auto src = [&](const Source& s, bool enabled, double cycle_s) {
+    const double heard = std::max(s.last_connect, s.last_byte);
+    const bool reachable = enabled && (s.state == LinkState::kStreaming ||
+                                       (heard >= 0.0 && now - heard <= cycle_s));
+    std::string o = "{\"enabled\":" + std::string(enabled ? "true" : "false");
+    o += ",\"state\":\"" + std::string(state_name(s.state)) + "\"";
+    o += ",\"reachable\":" + std::string(reachable ? "true" : "false");
+    o += ",\"valid\":" + std::string(enabled && s.health.valid(now) ? "true" : "false");
+    o += ",\"rx_age_s\":" + age(s.last_byte);
+    o += ",\"obs_age_s\":" + age(s.health.lastObsMono());
+    o += ",\"station_age_s\":" + age(s.health.lastStationMono());
+    o += ",\"station_id\":" +
+         (s.health.stationId() < 0 ? std::string("null") : std::to_string(s.health.stationId()));
+    o += ",\"bytes\":" + std::to_string(s.bytes_rx);
+    o += ",\"frames\":" + std::to_string(s.framer.frames_ok());
+    o += ",\"crc_errors\":" + std::to_string(s.framer.crc_errors());
+    return o;
+  };
+  std::string js = "{\"active\":\"" + std::string(active_source_name(selector_.active())) + "\"";
+  js += ",\"lan\":" + src(*lan_, cfg_.lan.enabled,
+                          cfg_.lan.read_timeout_s + cfg_.lan.backoff_max_s + cfg_.lan.connect_timeout_s);
+  js += ",\"host\":\"" + cfg_.lan.host + "\",\"port\":" + std::to_string(cfg_.lan.port) + "}";
+  js += ",\"ntrip\":" + src(*ntrip_, cfg_.ntrip.enabled,
+                            cfg_.ntrip.read_timeout_s + cfg_.ntrip.backoff_max_s +
+                                cfg_.ntrip.connect_timeout_s) + "}";
+  js += ",\"out_dropped\":" + std::to_string(dropped) + "}";
+
   std::lock_guard<std::mutex> lk(status_mu_);
   status_ = std::move(line);
+  status_json_ = std::move(js);
 }
 
 void CorrectionLink::loopOnce() {
@@ -537,6 +595,7 @@ void CorrectionLink::loopOnce() {
         std::fflush(stdout);
         s.enter(LinkState::kStreaming, now);
         s.last_rx = now;
+        s.last_connect = now;
         s.backoff = 0.0;
         continue;
       }

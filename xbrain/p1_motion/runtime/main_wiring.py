@@ -381,6 +381,7 @@ def run_voice_loop_wiring(chassis_cfg: ChassisClientConfig,
         gnss_cache = {"data": None}
         fix_cache = {"data": None}
         clock_cache = {"data": None}
+        rtcm_cache = {"data": None, "rx": None}   # rt/gnss/rtcm, 11 S3.2A.4
         pose_seq = {"n": 0}
         clock_seq = {"n": 0}
         perc_seq = {"n": 0}
@@ -424,6 +425,14 @@ def run_voice_loop_wiring(chassis_cfg: ChassisClientConfig,
                 except Exception:      # noqa: BLE001
                     _logger.warning("p1 malformed rt/clock/status")
 
+            def _on_rtcm(sample) -> None:
+                try:
+                    msg = json.loads(bytes(sample.payload).decode("utf-8"))
+                    rtcm_cache["data"] = msg.get("data")
+                    rtcm_cache["rx"] = time.monotonic()
+                except Exception:      # noqa: BLE001
+                    _logger.warning("p1 malformed rt/gnss/rtcm")
+
             # Hold sub handles in a long-lived list (CLAUDE.md 4.3: a dropped
             # declare_subscriber return silently unsubscribes on GC).
             gnss_subs.append(rt.declare_subscriber(
@@ -432,6 +441,8 @@ def run_voice_loop_wiring(chassis_cfg: ChassisClientConfig,
                 "xbrain/%s/rt/gnss/fix" % rid, _on_fix))
             gnss_subs.append(rt.declare_subscriber(
                 "xbrain/%s/rt/clock/status" % rid, _on_clock))
+            gnss_subs.append(rt.declare_subscriber(
+                "xbrain/%s/rt/gnss/rtcm" % rid, _on_rtcm))
             pose_pub = gen.declare_publisher("state/pose")
             clock_pub = gen.declare_publisher("state/clock")
             perc_pub = gen.declare_publisher("state/perception")
@@ -486,6 +497,8 @@ def run_voice_loop_wiring(chassis_cfg: ChassisClientConfig,
                     # so the published pose degrades gracefully, never goes silent.
                     ts_sync = bool((clock_cache["data"] or {}).get("sync", False))
                     pose = gnss_pose.assemble_pose(gnss_cache["data"], fix_cache["data"])
+                    # differential link state for the HMI (11 S3.2A.4); None = unknown
+                    pose["rtcm"] = gnss_pose.rtcm_view(rtcm_cache["data"], rtcm_cache["rx"], now)
                     penv = gnss_pose.stamp_envelope(
                         pose, rid=rid, boot=boot, seq=pose_seq["n"],
                         src="p1_motion", ts_sync=ts_sync)

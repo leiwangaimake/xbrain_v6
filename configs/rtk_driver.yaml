@@ -67,16 +67,17 @@ rtcm:                        # RTCM differential input (11 S3.2A); design in ros
     queue_max_bytes: 16384   # main-thread write queue and network out queue cap (>= 1029)
     frame_max_age_s: 2.0     # a frame waiting longer than this is dropped
   lan:                       # primary: customer-LAN base station via the bridge box (RTB; Orange Pi Zero since 2026-11-09, was RPi)
-    enabled: false           # no bridge on site yet
-    host: null               # bridge static IP, numeric only (RTB-1)
-    port: null               # bridge fixed port (RTB-1)
+    enabled: true            # 99 U204 (2026-11-16): bridge live, base via FT232R -> ttyUSB0
+    host: "192.168.188.210"  # bridge static IP, numeric only (RTB-1)
+    port: 9401               # bridge fixed port (RTB-1)
     connect_timeout_s: 3.0
     read_timeout_s: 5.0      # streaming and silent this long -> reconnect
     backoff_min_s: 1.0
-    backoff_max_s: 30.0
+    backoff_max_s: 3.0       # 99 U204: a LAN dial is free; after any device restarts the
+                             # link is back within ~3 s of the bridge answering (was 30)
   ntrip:                     # backup: Qianxun CORS (VRS), cold standby (U-RTCM-2)
-    enabled: true            # account in service since 2026-11-02; without a fresh fix to
-                             # report the link waits and never dials (RTG-7)
+    enabled: false           # 99 U204 (user 2026-11-16): Qianxun channel closed; the LAN base
+                             # is the only source, and with no base data the link waits for it
     host: "rtk.ntrip.qxwz.com"
     port: 8002               # Qianxun: 8001 ITRF2008 (epoch 2016.0), 8002 WGS84 (epoch 2005.0),
                              # 8003 CGCS2000 (epoch 2000.0). WGS84: the geo layer is WGS84.

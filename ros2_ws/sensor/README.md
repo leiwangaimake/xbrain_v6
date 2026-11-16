@@ -611,5 +611,6 @@ python3 /opt/xbrain_v6/scripts/ci/cxx_mutants.py rtcm_age rtcm_select rtcm_proto
 ```
 
 - `rtk_driver` 可执行文件只在找到 `/usr/local/lib/libzenohc` 时构建；离线测试不依赖 zenoh。
+- 差分链路状态（2026-11-16，`99` U204）：主循环每秒把 `CorrectionLink::statusJson()` 发到 `xbrain/{rid}/rt/gnss/rtcm`，没有启用任何源也照发。P1 把它并入 `state/pose.rtcm`，HMI 页脚显示「差分」。契约见 `11` §3.2A.4；这个键只供显示，不进任何闸门。现场配置：只开 LAN（192.168.188.210:9401），千寻关闭，`lan.backoff_max_s` 3 s。
 - 安装：`cmake --install build --prefix /opt/xbrain_v6/data/install/rtk_driver`，产物在 `data/install/rtk_driver/lib/rtk_driver/rtk_driver`（DEC-15），由 `xbrain-rtk-driver.service` 启动。
 - 运行需要环境变量 `XBRAIN_ROBOT_ID` 和冻结产物 `rtk_driver.yaml`（`deploy/env/robot.env`、`xbrain-config-freeze.service`）。

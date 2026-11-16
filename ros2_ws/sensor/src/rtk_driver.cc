@@ -75,9 +75,12 @@ RtkDriver::RtkDriver(DriverConfig cfg, PublishSink* sink)
                     static_cast<double>(cfg.sync_timeout_ms) / 1000.0),
       envelope_clock_(cfg.rid, cfg.src, cfg.boot,
                       static_cast<double>(cfg.sync_timeout_ms) / 1000.0),
+      envelope_rtcm_(cfg.rid, cfg.src, cfg.boot,
+                     static_cast<double>(cfg.sync_timeout_ms) / 1000.0),
       heading_key_("xbrain/" + cfg.rid + "/rt/gnss/heading"),
       fix_key_("xbrain/" + cfg.rid + "/rt/gnss/fix"),
-      clock_key_("xbrain/" + cfg.rid + "/rt/clock/status") {}
+      clock_key_("xbrain/" + cfg.rid + "/rt/clock/status"),
+      rtcm_key_("xbrain/" + cfg.rid + "/rt/gnss/rtcm") {}
 
 void RtkDriver::feed(const char* data, std::size_t n, double now_mono_s) {
   rx_.append(data, n);
@@ -242,6 +245,16 @@ void RtkDriver::tickClock(const ChronyReading& r, double now_mono_s,
   const std::string payload = wrap_envelope(env, to_json_data(cs));
   if (sink_ != nullptr) {
     sink_->publish(clock_key_, payload);
+  }
+}
+
+void RtkDriver::publishRtcm(const std::string& data_json, double now_mono_s,
+                            int64_t wall_ms) {
+  const double wall_s = static_cast<double>(wall_ms) / 1000.0;
+  const hachist::xbrain::envelope::StampedEnvelope env =
+      envelope_rtcm_.stamp(wall_s, now_mono_s);
+  if (sink_ != nullptr) {
+    sink_->publish(rtcm_key_, wrap_envelope(env, data_json));
   }
 }
 
